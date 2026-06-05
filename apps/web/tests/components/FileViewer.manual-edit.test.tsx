@@ -4,8 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FileViewer,
-  cancelManualEditPendingStyleSnapshot,
 } from '../../src/components/FileViewer';
+import { cancelManualEditPendingStyleSnapshot } from '../../src/components/viewer-utils';
 import { emptyManualEditStyles, type ManualEditTarget } from '../../src/edit-mode/types';
 import type { ProjectFile } from '../../src/types';
 

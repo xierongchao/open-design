@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
-import { APP_CHROME_FILE_ACTIONS_ID, APP_CHROME_FILE_ACTIONS_SELECTOR } from './AppChromeHeader';
 import {
   buildSocialSharePayload,
   OPEN_DESIGN_GITHUB_REPO_URL,
@@ -147,101 +146,77 @@ import {
 } from '../edit-mode/source-patches';
 import { MANUAL_EDIT_STYLE_PROPS, type ManualEditBridgeMessage, type ManualEditHistoryEntry, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../edit-mode/types';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
-
-function resolveChromeActionsHost(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(APP_CHROME_FILE_ACTIONS_SELECTOR)
-    ?? document.getElementById(APP_CHROME_FILE_ACTIONS_ID);
-}
-
-type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
-type SlideState = { active: number; count: number };
-type BoardTool = 'inspect' | 'pod';
-type StrokePoint = { x: number; y: number };
-export type ManualEditPendingStyleSave = {
-  id: string;
-  styles: Partial<ManualEditStyles>;
-  label: string;
-  version: number;
-};
-type PreviewViewportId = 'desktop' | 'tablet' | 'mobile';
-type PreviewCanvasSize = { width: number; height: number; scrollLeft?: number; scrollTop?: number };
-type CommentPreviewCanvasOptions = {
-  boardMode: boolean;
-  sidePanelCollapsed: boolean;
-  viewport?: PreviewViewportId;
-};
-type PreviewScaleOptions = {
-  canvasPadding?: number;
-};
-type PreviewViewportPreset = {
-  id: PreviewViewportId;
-  width: number | null;
-  height: number | null;
-  labelKey: keyof Dict;
-  titleKey: keyof Dict;
-};
-const IMAGE_EXPORT_FORMAT_OPTIONS: Array<{
-  value: ImageExportFormat;
-  label: string;
-  extension: string;
-}> = [
-  { value: 'png', label: 'PNG', extension: '.png' },
-  { value: 'jpeg', label: 'JPEG', extension: '.jpg' },
-  { value: 'webp', label: 'WebP', extension: '.webp' },
-];
-type DeployProviderOption = {
-  id: WebDeployProviderId;
-  labelKey: 'fileViewer.vercelProvider' | 'fileViewer.cloudflarePagesProvider';
-  tokenLink: string;
-  tokenLinkKey: 'fileViewer.vercelTokenGetLink' | 'fileViewer.cloudflareApiTokenGetLink';
-  tokenPlaceholderKey:
-    | 'fileViewer.vercelTokenPlaceholder'
-    | 'fileViewer.cloudflareApiTokenPlaceholder';
-  tokenReuseHintKey: 'fileViewer.vercelTokenReuseHint' | 'fileViewer.cloudflareApiTokenReuseHint';
-  tokenRequiredKey: 'fileViewer.vercelTokenRequired' | 'fileViewer.cloudflareApiTokenRequired';
-  tokenLabelKey:
-    | 'fileViewer.vercelToken'
-    | 'fileViewer.cloudflareApiToken';
-  accountIdLabelKey?: 'fileViewer.cloudflareAccountId';
-  accountIdHintKey?: 'fileViewer.cloudflareAccountIdHint';
-};
-type CloudflarePagesZoneOption = {
-  id: string;
-  name: string;
-  status?: string;
-  type?: string;
-};
-type DeployResultCard = {
-  id: string;
-  label: string;
-  url: string;
-  status: string;
-  message?: string;
-};
-const MAX_BRIDGE_COORDINATE = 1_000_000;
-const PREVIEW_VIEWPORT_PRESETS: PreviewViewportPreset[] = [
-  {
-    id: 'desktop',
-    width: null,
-    height: null,
-    labelKey: 'fileViewer.viewportDesktop',
-    titleKey: 'fileViewer.viewportDesktopTitle',
-  },
-  {
-    id: 'tablet',
-    width: 820,
-    height: 1180,
-    labelKey: 'fileViewer.viewportTablet',
-    titleKey: 'fileViewer.viewportTabletTitle',
-  },
-  {
-    id: 'mobile',
-    width: 390,
-    height: 844,
-    labelKey: 'fileViewer.viewportMobile',
-    titleKey: 'fileViewer.viewportMobileTitle',
-  },
-];
+import {
+  type BoardTool,
+  type CommentPreviewCanvasOptions,
+  type DeployProviderOption,
+  type DeployResultCard,
+  type CloudflarePagesZoneOption,
+  type InspectClickedDescendant,
+  type InspectStyleSnapshot,
+  type InspectTarget,
+  type ManualEditPendingStyleSave,
+  type PreviewCanvasSize,
+  type PreviewOverlayTransform,
+  type PreviewScaleOptions,
+  type PreviewViewportId,
+  type PreviewViewportPreset,
+  type SlideState,
+  type StrokePoint,
+  type TranslateFn,
+  COMMENT_SIDE_DOCK_GAP,
+  COMMENT_SIDE_DOCK_MIN_CANVAS_WIDTH,
+  COMMENT_SIDE_DOCK_NON_DESKTOP_PADDING,
+  COMMENT_SIDE_DOCK_PADDING,
+  COMMENT_SIDE_DOCK_RAIL_WIDTH,
+  COMMENT_SIDE_DOCK_STACKED_COLLAPSED_HEIGHT_DEDUCTION,
+  COMMENT_SIDE_DOCK_STACKED_HEIGHT_DEDUCTION,
+  COMMENT_SIDE_DOCK_WIDTH,
+  DEPLOY_PROVIDER_OPTIONS,
+  EXPORT_READY_NUDGE_STORAGE_PREFIX,
+  HOVER_CARD_DISMISS_DELAY_MS,
+  IMAGE_EXPORT_FORMAT_OPTIONS,
+  MARKDOWN_CODE_BLOCK_ATTR,
+  MARKDOWN_COPY_BLOCK_ATTR,
+  MARKDOWN_COPY_BUTTON_CLASS,
+  MARKDOWN_COPY_TOAST_CLASS,
+  MAX_BRIDGE_COORDINATE,
+  PREVIEW_VIEWPORT_PRESETS,
+  cancelManualEditPendingStyleSnapshot,
+  canonicalManualEditStyleValue,
+  commentPreviewCanvasSize,
+  compareDeploymentsByNewest,
+  copyTextToClipboard,
+  decorateMarkdownCodeBlocks,
+  deployResultState,
+  effectivePreviewScale,
+  ensureMarkdownCodeBlockControls,
+  getDeployProviderOption,
+  htmlPreviewSlideState,
+  htmlPreviewViewportState,
+  isValidCloudflareDomainPrefixInput,
+  manualEditFloatingPanelStyle,
+  manualEditHoverIconStyle,
+  manualEditInspectorStyleValue,
+  manualEditPersistedValueMatchesSavedSnapshot,
+  manualEditPreviewShellStyle,
+  mergeManualEditInspectorStyles,
+  normalizeCloudflareDomainPrefixInput,
+  pickLatestShareDeployment,
+  previewOverlayTransform,
+  previewScaleShellStyle,
+  previewViewportStateKey,
+  previewViewportStyle,
+  resolveChromeActionsHost,
+  resolveShareUrl,
+  setMarkdownCodeBlockCopiedState,
+  setPreviewViewportCached,
+  setSlideStateCached,
+  shareUrlForDeployment,
+  deploymentTimestamp,
+  usesStackedCommentSideDock,
+  waitForIframeLoadOrTimeout,
+} from './viewer-utils';
 
 function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
@@ -249,240 +224,38 @@ function previewViewportIcon(viewport: PreviewViewportId): string {
   return 'computer-line';
 }
 
-const EXPORT_READY_NUDGE_STORAGE_PREFIX = 'open-design:export-ready-nudge:';
-const COMMENT_SIDE_DOCK_WIDTH = 320;
-const COMMENT_SIDE_DOCK_RAIL_WIDTH = 42;
-const COMMENT_SIDE_DOCK_GAP = 12;
-const COMMENT_SIDE_DOCK_PADDING = 8;
-const COMMENT_SIDE_DOCK_NON_DESKTOP_PADDING = 24;
-const COMMENT_SIDE_DOCK_MIN_CANVAS_WIDTH = 280;
-const COMMENT_SIDE_DOCK_STACKED_PANEL_HEIGHT = 220;
-const COMMENT_SIDE_DOCK_STACKED_RAIL_HEIGHT = 48;
-const COMMENT_SIDE_DOCK_STACKED_HEIGHT_DEDUCTION =
-  (COMMENT_SIDE_DOCK_PADDING * 2) + COMMENT_SIDE_DOCK_GAP + COMMENT_SIDE_DOCK_STACKED_PANEL_HEIGHT;
-const COMMENT_SIDE_DOCK_STACKED_COLLAPSED_HEIGHT_DEDUCTION =
-  (COMMENT_SIDE_DOCK_PADDING * 2) + COMMENT_SIDE_DOCK_GAP + COMMENT_SIDE_DOCK_STACKED_RAIL_HEIGHT;
-
-// The five basic style facets the inspect panel exposes. Kept narrow on
-// purpose — open-slide's design tokens panel only edits global tokens, so
-// the per-element delta is small + obvious + cheap to read back from
-// getComputedStyle on the iframe side.
-type InspectStyleSnapshot = {
-  color?: string;
-  backgroundColor?: string;
-  fontSize?: string;
-  fontWeight?: string;
-  paddingTop?: string;
-  paddingRight?: string;
-  paddingBottom?: string;
-  paddingLeft?: string;
-  borderRadius?: string;
-  textAlign?: string;
-  fontFamily?: string;
-  lineHeight?: string;
-};
-
-type InspectClickedDescendant = {
-  label: string;
-  text: string;
-};
-
-type InspectTarget = {
-  elementId: string;
-  selector: string;
-  label: string;
-  text: string;
-  style: InspectStyleSnapshot;
-  clickedDescendant?: InspectClickedDescendant;
-};
-
-const MAX_CACHED_SLIDE_STATES = 64;
-const htmlPreviewSlideState = new Map<string, SlideState>();
-const MAX_CACHED_PREVIEW_VIEWPORTS = 128;
-// Grace window before the inspect hover card is torn down. Long enough to absorb
-// the async iframe mouseout (od:comment-leave) that fires when the pointer slides
-// onto the card or hops back onto the element under it, short enough to read as
-// an immediate dismiss when the pointer really leaves.
-const HOVER_CARD_DISMISS_DELAY_MS = 80;
-const htmlPreviewViewportState = new Map<string, PreviewViewportId>();
-const MARKDOWN_CODE_BLOCK_ATTR = 'data-markdown-code-block';
-const MARKDOWN_COPY_BLOCK_ATTR = 'data-copy-code-block';
-const MARKDOWN_COPY_BUTTON_CLASS = 'markdown-code-copy';
-const MARKDOWN_COPY_TOAST_CLASS = 'markdown-code-toast';
-
-const DEPLOY_PROVIDER_OPTIONS: DeployProviderOption[] = [
-  {
-    id: DEFAULT_DEPLOY_PROVIDER_ID,
-    labelKey: 'fileViewer.vercelProvider',
-    tokenLink: 'https://vercel.com/account/settings/tokens',
-    tokenLinkKey: 'fileViewer.vercelTokenGetLink',
-    tokenPlaceholderKey: 'fileViewer.vercelTokenPlaceholder',
-    tokenReuseHintKey: 'fileViewer.vercelTokenReuseHint',
-    tokenRequiredKey: 'fileViewer.vercelTokenRequired',
-    tokenLabelKey: 'fileViewer.vercelToken',
-  },
-  {
-    id: CLOUDFLARE_PAGES_PROVIDER_ID,
-    labelKey: 'fileViewer.cloudflarePagesProvider',
-    tokenLink: 'https://dash.cloudflare.com/profile/api-tokens',
-    tokenLinkKey: 'fileViewer.cloudflareApiTokenGetLink',
-    tokenPlaceholderKey: 'fileViewer.cloudflareApiTokenPlaceholder',
-    tokenReuseHintKey: 'fileViewer.cloudflareApiTokenReuseHint',
-    tokenRequiredKey: 'fileViewer.cloudflareApiTokenRequired',
-    tokenLabelKey: 'fileViewer.cloudflareApiToken',
-    accountIdLabelKey: 'fileViewer.cloudflareAccountId',
-    accountIdHintKey: 'fileViewer.cloudflareAccountIdHint',
-  },
-];
-
-function mergeManualEditInspectorStyles(
-  sourceStyles: ManualEditStyles,
-  previewStyles: ManualEditStyles,
-): ManualEditStyles {
-  return MANUAL_EDIT_STYLE_PROPS.reduce<ManualEditStyles>((acc, key) => {
-    const sourceValue = sourceStyles[key]?.trim();
-    const previewValue = previewStyles[key]?.trim();
-    const value = sourceValue || previewValue || '';
-    acc[key] = manualEditInspectorStyleValue(key, value);
-    return acc;
-  }, {} as ManualEditStyles);
-}
-
-function manualEditInspectorStyleValue(key: keyof ManualEditStyles, value: string): string {
-  if (!value) return '';
-  if (key === 'color' || key === 'backgroundColor' || key === 'borderColor') {
-    return normalizeManualEditInspectorColor(value);
-  }
-  return value;
-}
-
-function normalizeManualEditInspectorColor(value: string): string {
-  const trimmed = value.trim();
-  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed.toLowerCase();
-  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
-    const r = trimmed[1]!, g = trimmed[2]!, b = trimmed[3]!;
-    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
-  }
-  const rgba = trimmed.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
-  if (!rgba) return trimmed;
-  if (rgba[4] !== undefined && Number(rgba[4]) === 0) return '';
-  const toHex = (raw: string) => Math.max(0, Math.min(255, Math.round(Number(raw))))
-    .toString(16)
-    .padStart(2, '0');
-  return `#${toHex(rgba[1]!)}${toHex(rgba[2]!)}${toHex(rgba[3]!)}`;
-}
-
-function manualEditPersistedValueMatchesSavedSnapshot(
-  key: keyof ManualEditStyles,
-  persistedValue: string,
-  savedValue: string,
-): boolean {
-  return canonicalManualEditStyleValue(key, persistedValue) === canonicalManualEditStyleValue(key, savedValue);
-}
-
-function canonicalManualEditStyleValue(key: keyof ManualEditStyles, value: string): string {
-  const normalized = manualEditInspectorStyleValue(key, value).trim();
-  if (!normalized) return '';
-  return normalized.toLowerCase();
-}
-
-function getDeployProviderOption(providerId: WebDeployProviderId): DeployProviderOption {
-  return DEPLOY_PROVIDER_OPTIONS.find((option) => option.id === providerId) ?? DEPLOY_PROVIDER_OPTIONS[0]!;
-}
-
-function normalizeCloudflareDomainPrefixInput(raw: string): string {
-  return raw.trim().toLowerCase();
-}
-
-function isValidCloudflareDomainPrefixInput(raw: string): boolean {
-  const prefix = normalizeCloudflareDomainPrefixInput(raw);
-  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(prefix);
-}
-
-function deployResultState(status?: string): 'ready' | 'delayed' | 'protected' | 'failed' {
-  if (status === 'protected') return 'protected';
-  if (status === 'failed' || status === 'conflict') return 'failed';
-  if (status === 'link-delayed' || status === 'pending') return 'delayed';
-  return 'ready';
-}
-
-function publicShareUrlForDeployment(deployment?: WebDeploymentInfo | null): string {
-  if (!deployment) return '';
-  const cloudflare = deployment.cloudflarePages;
-  const customDomainUrl = cloudflare?.customDomain?.status === 'ready'
-    ? cloudflare.customDomain.url?.trim()
-    : '';
-  if (customDomainUrl) return customDomainUrl;
-  const pagesDevUrl = cloudflare?.pagesDev?.status === 'ready'
-    ? cloudflare.pagesDev.url?.trim()
-    : '';
-  if (pagesDevUrl) return pagesDevUrl;
-  return deployResultState(deployment.status) === 'ready'
-    ? deployment.url?.trim() || ''
-    : '';
-}
-
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      return document.execCommand('copy');
-    } catch {
-      return false;
-    } finally {
-      document.body.removeChild(ta);
-      if (priorFocus?.isConnected) {
-        try {
-          priorFocus.focus({ preventScroll: true });
-        } catch {
-          priorFocus.focus();
-        }
-      }
+function waitForAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => resolve());
+      return;
     }
-  }
-}
-
-function decorateMarkdownCodeBlocks(html: string): string {
-  let blockIndex = 0;
-  return html.replace(/<pre\b([^>]*)>([\s\S]*?)<\/pre>/g, (_match, attrs: string, content: string) => {
-    const blockId = String(blockIndex++);
-    return `<div class="markdown-code-block" ${MARKDOWN_CODE_BLOCK_ATTR}="${blockId}"><pre${attrs}>${content}</pre></div>`;
+    window.setTimeout(resolve, 0);
   });
 }
 
-function setMarkdownCodeBlockCopiedState(block: HTMLElement, copied: boolean, t: TranslateFn) {
-  const button = block.querySelector<HTMLButtonElement>(`.${MARKDOWN_COPY_BUTTON_CLASS}`);
-  if (!button) return;
-  const label = copied ? t('fileViewer.copied') : t('fileViewer.copy');
-  button.textContent = label;
-  button.setAttribute('aria-label', label);
-  button.title = t('fileViewer.copyTitle');
+function temporarilyExposeIframeForSnapshot(iframe: HTMLIFrameElement): () => void {
+  const previousVisibility = iframe.style.visibility;
+  const previousOpacity = iframe.style.opacity;
+  const previousPointerEvents = iframe.style.pointerEvents;
+  iframe.style.visibility = 'visible';
+  iframe.style.opacity = '0.001';
+  iframe.style.pointerEvents = 'none';
+  return () => {
+    iframe.style.visibility = previousVisibility;
+    iframe.style.opacity = previousOpacity;
+    iframe.style.pointerEvents = previousPointerEvents;
+  };
+}
 
-  const existingToast = block.querySelector(`.${MARKDOWN_COPY_TOAST_CLASS}`);
-  if (copied) {
-    if (existingToast instanceof HTMLElement) {
-      existingToast.textContent = t('fileViewer.copied');
-      return;
-    }
-    const toast = document.createElement('span');
-    toast.className = MARKDOWN_COPY_TOAST_CLASS;
-    toast.setAttribute('role', 'status');
-    toast.setAttribute('aria-live', 'polite');
-    toast.textContent = t('fileViewer.copied');
-    button.insertAdjacentElement('afterend', toast);
-    return;
+async function requestPreviewSnapshotWithRetry(iframe: HTMLIFrameElement): Promise<Awaited<ReturnType<typeof requestPreviewSnapshot>>> {
+  const timeouts = [1500, 3000, 6000];
+  for (const timeout of timeouts) {
+    const snapshot = await requestPreviewSnapshot(iframe, timeout);
+    if (snapshot) return snapshot;
+    await waitForAnimationFrame();
   }
-
-  existingToast?.remove();
+  return null;
 }
 
 function PreviewViewportControls({
@@ -573,251 +346,6 @@ function PreviewViewportControls({
   );
 }
 
-function previewViewportStyle(
-  viewport: PreviewViewportId,
-  previewScale = 1,
-  canvasSize?: PreviewCanvasSize,
-  options?: PreviewScaleOptions,
-): CSSProperties & Record<string, string | number> {
-  const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport) ?? PREVIEW_VIEWPORT_PRESETS[0]!;
-  if (!preset.width) return {};
-  const effectiveScale = effectivePreviewScale(viewport, previewScale, canvasSize, options);
-  return {
-    '--preview-viewport-width': `${preset.width}px`,
-    '--preview-viewport-height': `${preset.height}px`,
-    '--preview-scale': effectiveScale,
-    '--preview-user-scale': previewScale,
-  };
-}
-
-export function commentPreviewCanvasSize(
-  canvasSize: PreviewCanvasSize | undefined,
-  options: CommentPreviewCanvasOptions,
-): PreviewCanvasSize | undefined {
-  if (!canvasSize || !options.boardMode) return canvasSize;
-  const dockPadding = options.viewport && options.viewport !== 'desktop'
-    ? COMMENT_SIDE_DOCK_NON_DESKTOP_PADDING
-    : COMMENT_SIDE_DOCK_PADDING;
-  const sideDockWidth = options.sidePanelCollapsed ? COMMENT_SIDE_DOCK_RAIL_WIDTH : COMMENT_SIDE_DOCK_WIDTH;
-  const dockedWidth = canvasSize.width - (dockPadding * 2) - COMMENT_SIDE_DOCK_GAP - sideDockWidth;
-  if (usesStackedCommentSideDock(canvasSize, options)) {
-    const stackedHeightDeduction = options.sidePanelCollapsed
-      ? COMMENT_SIDE_DOCK_STACKED_COLLAPSED_HEIGHT_DEDUCTION
-      : COMMENT_SIDE_DOCK_STACKED_HEIGHT_DEDUCTION;
-    return {
-      width: Math.max(1, canvasSize.width - (COMMENT_SIDE_DOCK_PADDING * 2)),
-      height: Math.max(1, canvasSize.height - stackedHeightDeduction),
-    };
-  }
-  return {
-    width: Math.max(1, dockedWidth),
-    height: Math.max(1, canvasSize.height - (dockPadding * 2)),
-  };
-}
-
-function usesStackedCommentSideDock(
-  canvasSize: PreviewCanvasSize | undefined,
-  options: CommentPreviewCanvasOptions,
-) {
-  if (!canvasSize || !options.boardMode) return false;
-  const dockPadding = options.viewport && options.viewport !== 'desktop'
-    ? COMMENT_SIDE_DOCK_NON_DESKTOP_PADDING
-    : COMMENT_SIDE_DOCK_PADDING;
-  const sideDockWidth = options.sidePanelCollapsed ? COMMENT_SIDE_DOCK_RAIL_WIDTH : COMMENT_SIDE_DOCK_WIDTH;
-  const dockedWidth = canvasSize.width - (dockPadding * 2) - COMMENT_SIDE_DOCK_GAP - sideDockWidth;
-  return dockedWidth < COMMENT_SIDE_DOCK_MIN_CANVAS_WIDTH;
-}
-
-export function effectivePreviewScale(
-  viewport: PreviewViewportId,
-  previewScale: number,
-  canvasSize?: PreviewCanvasSize,
-  options?: PreviewScaleOptions,
-) {
-  if (viewport === 'desktop') return previewScale;
-  const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
-  if (!preset?.width || !preset.height || !canvasSize?.width || !canvasSize.height) return previewScale;
-  const canvasPadding = options?.canvasPadding ?? 48;
-  const availableWidth = Math.max(1, canvasSize.width - canvasPadding);
-  const availableHeight = Math.max(1, canvasSize.height - canvasPadding);
-  const fitScale = Math.min(1, availableWidth / preset.width, availableHeight / preset.height);
-  return Math.min(previewScale, fitScale);
-}
-
-type PreviewOverlayTransform = { scale: number; offsetX: number; offsetY: number };
-
-export function previewOverlayTransform(
-  viewport: PreviewViewportId,
-  previewScale: number,
-  canvasSize?: PreviewCanvasSize,
-): PreviewOverlayTransform {
-  const scale = effectivePreviewScale(viewport, previewScale, canvasSize);
-  if (viewport === 'desktop') return { scale, offsetX: 0, offsetY: 0 };
-  const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
-  const pad = 24;
-  if (!preset?.width || !preset.height) return { scale, offsetX: pad, offsetY: pad };
-  const availableWidth = Math.max(1, (canvasSize?.width ?? preset.width * scale + pad * 2) - pad * 2);
-  const scaledWidth = preset.width * scale;
-  return {
-    scale,
-    offsetX: pad + Math.max(0, (availableWidth - scaledWidth) / 2),
-    offsetY: pad,
-  };
-}
-
-function previewScaleShellStyle(
-  viewport: PreviewViewportId,
-  previewScale: number,
-): CSSProperties & Record<string, string | number> {
-  if (viewport === 'desktop') {
-    return {
-      width: `${100 / previewScale}%`,
-      height: `${100 / previewScale}%`,
-      transform: `scale(${previewScale})`,
-      transformOrigin: '0 0',
-    };
-  }
-  return {
-    width: 'var(--preview-viewport-width)',
-    height: 'var(--preview-viewport-height)',
-    transform: 'scale(var(--preview-scale, 1))',
-    transformOrigin: '0 0',
-  };
-}
-
-function manualEditPreviewShellStyle(
-  viewport: PreviewViewportId,
-  previewScale: number,
-  frozenWidth: number | null,
-): CSSProperties & Record<string, string | number> {
-  if (viewport === 'desktop' && frozenWidth) {
-    return {
-      width: `${frozenWidth / previewScale}px`,
-      height: `${100 / previewScale}%`,
-      transform: `scale(${previewScale})`,
-      transformOrigin: '0 0',
-    };
-  }
-  return previewScaleShellStyle(viewport, previewScale);
-}
-
-function deploymentTimestamp(deployment: WebDeploymentInfo): number {
-  const maybeDeployedAt = (deployment as WebDeploymentInfo & { deployedAt?: number | string }).deployedAt;
-  const candidates = [maybeDeployedAt, deployment.updatedAt, deployment.createdAt];
-  for (const candidate of candidates) {
-    if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
-    if (typeof candidate === 'string') {
-      const parsed = Date.parse(candidate);
-      if (Number.isFinite(parsed)) return parsed;
-    }
-  }
-  return 0;
-}
-
-function compareDeploymentsByNewest(a: WebDeploymentInfo, b: WebDeploymentInfo): number {
-  return deploymentTimestamp(b) - deploymentTimestamp(a);
-}
-
-function shareUrlForDeployment(deployment: WebDeploymentInfo): string {
-  const customDomain = deployment.providerId === CLOUDFLARE_PAGES_PROVIDER_ID
-    ? deployment.cloudflarePages?.customDomain
-    : undefined;
-  if (customDomain?.status === 'ready' && customDomain.url?.trim()) {
-    return customDomain.url.trim();
-  }
-  return deployment.url?.trim() || '';
-}
-
-function resolveShareUrl(rawUrl: string): string {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (typeof window === 'undefined') return trimmed;
-  return new URL(trimmed, window.location.origin).toString();
-}
-
-function pickLatestShareDeployment(
-  deploymentsByProvider: Partial<Record<WebDeployProviderId, WebDeploymentInfo>>,
-): WebDeploymentInfo | null {
-  return Object.values(deploymentsByProvider)
-    .filter((deployment): deployment is WebDeploymentInfo =>
-      Boolean(deployment && shareUrlForDeployment(deployment) && deployResultState(deployment.status) !== 'failed'))
-    .sort(compareDeploymentsByNewest)[0] ?? null;
-}
-
-function manualEditFloatingPanelStyle(
-  target: ManualEditTarget,
-  previewScale: number,
-  canvasSize: PreviewCanvasSize | undefined,
-): CSSProperties {
-  const scale = Number.isFinite(previewScale) && previewScale > 0 ? previewScale : 1;
-  const panelWidth = 320;
-  const preferredPanelHeight = 380;
-  const pad = 12;
-  const canvasWidth = canvasSize?.width ?? 1200;
-  const canvasHeight = canvasSize?.height ?? 800;
-  const panelHeight = Math.min(preferredPanelHeight, Math.max(260, canvasHeight - pad * 2));
-  const targetLeft = target.rect.x * scale;
-  const targetTop = target.rect.y * scale;
-  const targetRight = (target.rect.x + target.rect.width) * scale;
-  let left = targetRight + pad;
-  if (left + panelWidth > canvasWidth - pad) {
-    left = Math.max(pad, targetLeft - panelWidth - pad);
-  }
-  const top = Math.max(
-    pad,
-    Math.min(targetTop, Math.max(pad, canvasHeight - panelHeight - pad)),
-  );
-  // Height is left to the content (auto): a short inspector (e.g. typography
-  // only) should be a compact card, not a tall half-empty panel. The cap only
-  // engages for long inspectors, at which point the scroll body takes over.
-  return {
-    left,
-    top,
-    width: panelWidth,
-    maxHeight: panelHeight,
-  };
-}
-
-// Anchors the hover "edit params" affordance to the top-right corner of the
-// hovered element, just inside its bounds so moving the cursor from the
-// element onto the icon does not drop the hover. Uses the same iframe→canvas
-// coordinate basis as the floating inspector panel.
-function manualEditHoverIconStyle(
-  target: ManualEditTarget,
-  previewScale: number,
-  canvasSize: PreviewCanvasSize | undefined,
-): CSSProperties {
-  const scale = Number.isFinite(previewScale) && previewScale > 0 ? previewScale : 1;
-  const iconSize = 26;
-  const inset = 4;
-  const canvasWidth = canvasSize?.width ?? 1200;
-  const canvasHeight = canvasSize?.height ?? 800;
-  const targetTop = target.rect.y * scale;
-  const targetRight = (target.rect.x + target.rect.width) * scale;
-  const left = Math.max(
-    inset,
-    Math.min(targetRight - iconSize - inset, canvasWidth - iconSize - inset),
-  );
-  const top = Math.max(
-    inset,
-    Math.min(targetTop + inset, canvasHeight - iconSize - inset),
-  );
-  return { left, top, width: iconSize, height: iconSize };
-}
-
-export function cancelManualEditPendingStyleSnapshot(
-  pending: ManualEditPendingStyleSave | null,
-  id: string,
-  keys: Array<keyof ManualEditStyles>,
-): ManualEditPendingStyleSave | null {
-  if (!pending || pending.id !== id || keys.length === 0) return pending;
-  const nextStyles = { ...pending.styles };
-  for (const key of keys) delete nextStyles[key];
-  if (Object.keys(nextStyles).length === 0) return null;
-  return { ...pending, styles: nextStyles };
-}
-
 function usePreviewCanvasSize<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
   const [size, setSize] = useState<PreviewCanvasSize | undefined>(undefined);
@@ -852,90 +380,6 @@ function usePreviewCanvasSize<T extends HTMLElement>() {
   return [ref, size] as const;
 }
 
-function ensureMarkdownCodeBlockControls(root: HTMLElement, t: TranslateFn) {
-  for (const block of root.querySelectorAll<HTMLElement>(`[${MARKDOWN_CODE_BLOCK_ATTR}]`)) {
-    let button = block.querySelector<HTMLButtonElement>(`.${MARKDOWN_COPY_BUTTON_CLASS}`);
-    if (!button) {
-      button = document.createElement('button');
-      button.type = 'button';
-      button.className = MARKDOWN_COPY_BUTTON_CLASS;
-      const blockId = block.getAttribute(MARKDOWN_CODE_BLOCK_ATTR) ?? '';
-      button.setAttribute(MARKDOWN_COPY_BLOCK_ATTR, blockId);
-      block.prepend(button);
-    }
-    setMarkdownCodeBlockCopiedState(block, false, t);
-  }
-}
-
-function setSlideStateCached(key: string, state: SlideState) {
-  htmlPreviewSlideState.set(key, state);
-  if (htmlPreviewSlideState.size > MAX_CACHED_SLIDE_STATES) {
-    const oldest = htmlPreviewSlideState.keys().next().value;
-    if (oldest != null) htmlPreviewSlideState.delete(oldest);
-  }
-}
-
-function waitForIframeLoadOrTimeout(iframe: HTMLIFrameElement, timeout = 750): Promise<void> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      iframe.removeEventListener('load', finish);
-      window.clearTimeout(timer);
-      resolve();
-    };
-    const timer = window.setTimeout(finish, timeout);
-    iframe.addEventListener('load', finish, { once: true });
-  });
-}
-
-function waitForAnimationFrame(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(() => resolve());
-      return;
-    }
-    window.setTimeout(resolve, 0);
-  });
-}
-
-function temporarilyExposeIframeForSnapshot(iframe: HTMLIFrameElement): () => void {
-  const previousVisibility = iframe.style.visibility;
-  const previousOpacity = iframe.style.opacity;
-  const previousPointerEvents = iframe.style.pointerEvents;
-  iframe.style.visibility = 'visible';
-  iframe.style.opacity = '0.001';
-  iframe.style.pointerEvents = 'none';
-  return () => {
-    iframe.style.visibility = previousVisibility;
-    iframe.style.opacity = previousOpacity;
-    iframe.style.pointerEvents = previousPointerEvents;
-  };
-}
-
-async function requestPreviewSnapshotWithRetry(iframe: HTMLIFrameElement): Promise<Awaited<ReturnType<typeof requestPreviewSnapshot>>> {
-  const timeouts = [1500, 3000, 6000];
-  for (const timeout of timeouts) {
-    const snapshot = await requestPreviewSnapshot(iframe, timeout);
-    if (snapshot) return snapshot;
-    await waitForAnimationFrame();
-  }
-  return null;
-}
-
-function previewViewportStateKey(projectId: string, file: Pick<ProjectFile, 'name' | 'path'>): string {
-  return `${projectId}:${file.path || file.name}`;
-}
-
-function setPreviewViewportCached(key: string, viewport: PreviewViewportId) {
-  htmlPreviewViewportState.set(key, viewport);
-  if (htmlPreviewViewportState.size > MAX_CACHED_PREVIEW_VIEWPORTS) {
-    const oldest = htmlPreviewViewportState.keys().next().value;
-    if (oldest != null) htmlPreviewViewportState.delete(oldest);
-  }
-}
-
 interface Props {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -967,6 +411,7 @@ interface Props {
   // Bumped nonce asking a deck preview to flip to `slideIndex` (a queued chat
   // send for this file just started processing).
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
+  onEditModeChange?: (active: boolean) => void;
 }
 
 export function FileViewer({
@@ -991,6 +436,7 @@ export function FileViewer({
   shareRequest,
   downloadRequest,
   slideNavRequest,
+  onEditModeChange,
 }: Props) {
   const rendererMatch = artifactRendererRegistry.resolve({
     file,
@@ -1035,6 +481,7 @@ export function FileViewer({
         shareRequest={shareRequest}
         downloadRequest={downloadRequest}
         slideNavRequest={slideNavRequest}
+        onEditModeChange={onEditModeChange}
       />
     );
   }
@@ -1334,9 +781,20 @@ export function LiveArtifactViewer({
     window.open(liveArtifactPreviewUrl(projectId, liveArtifact.artifactId), '_blank', 'noopener,noreferrer');
   };
   useEffect(() => {
-    if (!inTabPresent) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setInTabPresent(false);
+      if (e.key === '\\' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        } else {
+          const target = previewBodyRef.current ?? iframeRef.current;
+          if (target?.requestFullscreen) {
+            target.requestFullscreen().catch(() => {});
+          }
+        }
+        return;
+      }
+      if (inTabPresent && e.key === 'Escape') setInTabPresent(false);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -4433,6 +3891,7 @@ function HtmlViewer({
   shareRequest,
   downloadRequest,
   slideNavRequest,
+  onEditModeChange,
 }: {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -4454,6 +3913,7 @@ function HtmlViewer({
   shareRequest?: { nonce: number } | null;
   downloadRequest?: { nonce: number } | null;
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
+  onEditModeChange?: (active: boolean) => void;
 }) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
@@ -4696,6 +4156,7 @@ function HtmlViewer({
   const [inspectMode, setInspectMode] = useState(false);
   const [agentToolsOpen, setAgentToolsOpen] = useState(false);
   const [drawOverlayOpen, setDrawOverlayOpen] = useState(false);
+  const MAX_MANUAL_EDIT_HISTORY = 500;
   // for hint managing hint box state
   const [openHintBox, setOpenHintBox] = useState(true);
   const [manualEditMode, setManualEditModeRaw] = useState(false);
@@ -4780,6 +4241,12 @@ function HtmlViewer({
   useEffect(() => () => {
     onCommentModeChange?.(false);
   }, [onCommentModeChange]);
+  useEffect(() => {
+    onEditModeChange?.(manualEditMode);
+  }, [manualEditMode, onEditModeChange]);
+  useEffect(() => () => {
+    onEditModeChange?.(false);
+  }, [onEditModeChange]);
   useEffect(() => {
     if (!commentPanelOpen || !commentPortalId) {
       setCommentPortalHost(null);
@@ -4878,6 +4345,7 @@ function HtmlViewer({
   const [manualEditUndone, setManualEditUndone] = useState<ManualEditHistoryEntry[]>([]);
   const [manualEditError, setManualEditError] = useState<string | null>(null);
   const [manualEditSaving, setManualEditSaving] = useState(false);
+  const [manualEditUndoLimitToast, setManualEditUndoLimitToast] = useState(false);
   const manualEditSavingRef = useRef(false);
   const manualEditPendingStyleRef = useRef<ManualEditPendingStyleSave | null>(null);
   const manualEditStyleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -5019,6 +4487,7 @@ function HtmlViewer({
   const [strokePoints, setStrokePoints] = useState<StrokePoint[]>([]);
   const previewStateKey = `${projectId}:${file.name}`;
   const previewScale = zoom / 100;
+
   const localCommentSideDockActive = commentPanelOpen && !commentPortalHost;
   const boardPreviewCanvasSize = commentPreviewCanvasSize(previewBodySize, {
     boardMode: localCommentSideDockActive,
@@ -6124,8 +5593,11 @@ function HtmlViewer({
         // card — only meaningful for full HTML documents.
         setManualEditHoverTarget(null);
         if (typeof source === 'string' && isManualEditFullHtmlDocument(source)) {
-          void clearManualEditTargetSelection();
-          setManualEditPageStylesOpen(true);
+          void (async () => {
+            await flushManualEditStyleSave();
+            await clearManualEditTargetSelection();
+            setManualEditPageStylesOpen(true);
+          })();
         }
         return;
       }
@@ -6211,6 +5683,12 @@ function HtmlViewer({
     manualEditPendingStyleRef.current = pending;
     setManualEditError(null);
     previewStyleToIframe(id, styles, version);
+    // Auto-save: debounce 300ms, then flush the pending style to disk
+    clearManualEditStyleTimer();
+    manualEditStyleTimerRef.current = setTimeout(() => {
+      manualEditStyleTimerRef.current = null;
+      flushManualEditStyleSave();
+    }, 300);
   }
 
   async function flushManualEditStyleSave(): Promise<boolean> {
@@ -6255,6 +5733,9 @@ function HtmlViewer({
     if (!ok) return false;
     setManualEditPanelPosition(null);
     setManualEditMode(false);
+    setManualEditHistory([]);
+    setManualEditUndone([]);
+    refreshSrcDocPreviewAfterManualEditExit();
     return true;
   }
 
@@ -6271,7 +5752,7 @@ function HtmlViewer({
 
   async function selectManualEditTarget(target: ManualEditTarget) {
     setManualEditPageStylesOpen(false);
-    if (manualEditPendingStyleRef.current?.id !== target.id) cancelManualEditStyleDraft();
+    if (manualEditPendingStyleRef.current?.id !== target.id) await flushManualEditStyleSave();
     const base = sourceRef.current ?? '';
     const fields = readManualEditFields(base, target.id);
     selectedManualEditTargetIdRef.current = target.id;
@@ -6361,7 +5842,10 @@ function HtmlViewer({
       if (patch.kind !== 'set-style') {
         setManualEditFrozenSource(result.source);
       }
-      setManualEditHistory((current) => [entry, ...current]);
+      setManualEditHistory((current) => {
+        const next = [entry, ...current];
+        return next.length > MAX_MANUAL_EDIT_HISTORY ? next.slice(0, MAX_MANUAL_EDIT_HISTORY) : next;
+      });
       setManualEditUndone([]);
       setManualEditDraft((current) => ({ ...current, fullSource: result.source }));
       if (patch.kind === 'set-text') {
@@ -6473,6 +5957,37 @@ function HtmlViewer({
       setManualEditSaving(false);
     }
   }
+
+  // Keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z = redo
+  useEffect(() => {
+    if (!manualEditMode) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        if (manualEditHistory.length > 0 && !manualEditSavingRef.current) {
+          void undoManualEdit();
+        } else if (manualEditHistory.length === 0) {
+          setManualEditUndoLimitToast(true);
+        }
+      }
+      if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+        e.preventDefault();
+        if (manualEditUndone.length > 0 && !manualEditSavingRef.current) {
+          void redoManualEdit();
+        }
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    // Also listen on the iframe window so Ctrl+Z works when the preview has focus
+    const iframeWin = iframeRef.current?.contentWindow;
+    iframeWin?.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      iframeWin?.removeEventListener('keydown', onKeyDown);
+    };
+  }, [manualEditMode, manualEditHistory, manualEditUndone]);
 
   // Inspect-mode picker: same `od:comment-target` payload, different sink.
   // The bridge tags the message with a computed-style snapshot so the panel
@@ -6731,7 +6246,20 @@ function HtmlViewer({
       }
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setInTabPresent(false);
+      // Cmd+\ (macOS) / Ctrl+\ (Windows/Linux) toggles in-tab presentation
+      if (e.key === '\\' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        } else {
+          const el = previewBodyRef.current;
+          if (el && typeof el.requestFullscreen === 'function') {
+            el.requestFullscreen().catch(() => {});
+          }
+        }
+        return;
+      }
+      if (inTabPresent && e.key === 'Escape') setInTabPresent(false);
     };
     updateChromeHeight();
     document.addEventListener('keydown', onKey);
@@ -7297,6 +6825,19 @@ function HtmlViewer({
     closeArtifactToolMenus();
     void exitManualEditModeAfterFlush();
   }
+
+  // Cmd+\ (macOS) / Ctrl+\ (Windows/Linux) toggles the properties panel
+  useEffect(() => {
+    if (mode !== 'preview') return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === '\\' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        activateManualEditTool();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [mode, manualEditMode]);
 
   function queueCurrentDraft() {
     const note = commentDraft.trim();
@@ -8038,12 +7579,13 @@ function HtmlViewer({
   ].filter(Boolean).join(' ');
   // Edit mode opens clean: the inspector only appears once the user pins an
   // element (click its hover affordance / a container) or opens page styles by
-  // clicking the empty canvas. No more full-height panel popping on toggle.
+  // clicking the empty canvas. In docked mode the panel is always visible when
+  // edit mode is on (shows an empty-state hint when nothing is selected).
   const manualEditPageCardActive =
     manualEditMode && !selectedManualEditTarget && manualEditPageStylesOpen;
   const manualEditPanelActive =
     manualEditMode && (!!selectedManualEditTarget || manualEditPageCardActive);
-  const manualEditPanel = manualEditPanelActive ? (
+  const manualEditPanel = manualEditMode ? (
     <ManualEditPanel
       targets={manualEditTargets}
       selectedTarget={selectedManualEditTarget}
@@ -8067,7 +7609,10 @@ function HtmlViewer({
       }}
       onError={setManualEditError}
       onClearSelection={() => {
-        void clearManualEditTargetSelection();
+        void (async () => {
+          await flushManualEditStyleSave();
+          await clearManualEditTargetSelection();
+        })();
       }}
       onExit={() => {
         void dismissManualEditPanel();
@@ -8084,18 +7629,9 @@ function HtmlViewer({
       onRedo={() => {
         void redoManualEdit();
       }}
-      floatingClassName={manualEditPageCardActive ? 'manual-edit-page-card' : undefined}
-      floatingStyle={selectedManualEditTarget
-        ? {
-            ...manualEditFloatingPanelStyle(
-              selectedManualEditTarget,
-              overlayPreviewScale,
-              previewBodySize,
-            ),
-            ...(manualEditPanelPosition ?? {}),
-          }
-        : { top: 12, right: 12, width: 320 }}
-      onFloatingPositionChange={selectedManualEditTarget ? setManualEditPanelPosition : undefined}
+      floatingClassName={undefined}
+      floatingStyle={undefined}
+      onFloatingPositionChange={undefined}
       onPickImage={async (pickedFile) => {
         const result = await uploadProjectFiles(projectId, [pickedFile]);
         const uploaded = result.uploaded[0];
@@ -8108,30 +7644,14 @@ function HtmlViewer({
       }}
     />
   ) : null;
-  const manualEditHoverAffordance =
-    manualEditMode &&
-    manualEditHoverTarget &&
-    manualEditHoverTarget.id !== selectedManualEditTarget?.id ? (
-      <button
-        type="button"
-        className="manual-edit-hover-action"
-        data-testid="manual-edit-hover-open"
-        aria-label={t('manualEdit.editParams')}
-        title={t('manualEdit.editParams')}
-        style={manualEditHoverIconStyle(
-          manualEditHoverTarget,
-          overlayPreviewScale,
-          previewBodySize,
-        )}
-        onClick={() => {
-          const target = manualEditHoverTarget;
-          setManualEditHoverTarget(null);
-          void selectManualEditTarget(target);
-        }}
-      >
-        <Icon name="sliders" size={15} />
-      </button>
-    ) : null;
+  const manualEditUndoLimitNotification = manualEditUndoLimitToast ? (
+    <Toast
+      message={t('manualEdit.undoLimitReached')}
+      ttlMs={4000}
+      onDismiss={() => setManualEditUndoLimitToast(false)}
+    />
+  ) : null;
+  const manualEditHoverAffordance = null;
   const activeComposerComment = activePreviewCommentId
     ? visibleSideComments.find((comment) => comment.id === activePreviewCommentId) ?? null
     : null;
@@ -8851,12 +8371,13 @@ function HtmlViewer({
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         ) : mode === 'preview' ? (
           <div
-            className={`${manualEditMode ? 'manual-edit-workspace' : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
+            className={`${manualEditMode ? 'manual-edit-workspace pp-dock-active' : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
             data-testid={manualEditMode ? undefined : 'comment-preview-layout'}
             style={previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions)}
             onMouseLeave={manualEditMode ? clearManualEditHover : undefined}
           >
             {manualEditPanel}
+            {manualEditUndoLimitNotification}
             {manualEditHoverAffordance}
             <div
               className={manualEditMode ? 'manual-edit-canvas' : 'comment-preview-canvas'}

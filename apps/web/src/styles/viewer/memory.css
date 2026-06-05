@@ -646,7 +646,43 @@
   min-height: 0;
   background: var(--bg);
 }
+
+/* Grid dock layout: when pp-dock-active is set, switch from block to a
+   two-column grid so the properties panel docks on the right.  This rule
+   must live here (not only in properties-panel.css) because memory.css is
+   already part of the build; the separate panel file is a new untracked
+   addition that the dev server may not have discovered yet. */
+.manual-edit-workspace.pp-dock-active {
+  --pp-width: 280px;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) var(--pp-width);
+  gap: 0;
+  justify-content: stretch;
+  align-items: stretch;
+  padding: 0 !important;
+  background: var(--bg-subtle);
+}
+.manual-edit-workspace.pp-dock-active .manual-edit-canvas {
+  order: -1;
+  min-width: 0;
+  position: relative !important;
+  inset: auto !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none;
+  max-height: none;
+  flex: 1 1 auto;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+  overflow: hidden;
+}
+
 .manual-edit-workspace > .manual-edit-right {
+  /* Docked panel: layout controlled by pp-dock-active grid on the workspace.
+     When not in dock mode, fall back to the legacy absolute positioning. */
+}
+.manual-edit-workspace:not(.pp-dock-active) > .manual-edit-right {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -790,7 +826,7 @@
 }
 .cc-color > input { text-align: right; }
 .cc-color-popover {
-  position: absolute; top: calc(100% + 6px); left: 0; z-index: 100;
+  position: fixed; z-index: 9999;
   background: var(--bg-panel); border: 1px solid var(--manual-edit-field-border);
   border-radius: var(--radius-sm); padding: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.12);
   display: flex; flex-direction: column; gap: 8px;
@@ -798,8 +834,7 @@
   max-width: calc(100vw - 32px);
 }
 .cc-color-compact .cc-color-popover {
-  left: auto;
-  right: 0;
+  /* positioning is now handled inline via style prop */
 }
 .cc-color-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
 .cc-color-tile {
@@ -847,12 +882,14 @@
 }
 
 .manual-edit-canvas {
-  position: absolute;
-  inset: 0;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--bg-panel);
+}
+.manual-edit-workspace:not(.pp-dock-active) .manual-edit-canvas {
+  position: absolute;
+  inset: 0;
 }
 
 .manual-edit-canvas iframe {

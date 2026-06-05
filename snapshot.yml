@@ -1,0 +1,30 @@
+- generic [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e7] [cursor=pointer]:
+    - img [ref=e8]
+  - generic:
+    - generic:
+      - region "Notifications (F8)"
+  - alert [ref=e11]
+  - generic [ref=e12]:
+    - banner "Workspace tabs" [ref=e13]:
+      - tablist "Open workspaces" [ref=e14]
+      - generic [ref=e35]
+    - generic [ref=e1229]:
+      - generic [ref=e1231]
+      - separator "调整聊天面板大小" [ref=e1306]
+      - generic [ref=e1307]
+  - region "帮助我们改进 Open Design":
+    - generic:
+      - generic: 隐私
+      - heading "帮助我们改进 Open Design" [level=3]
+    - paragraph: "Open Design 可以将使用数据共享给我们的团队以协助改进。包括:"
+    - generic:
+      - generic
+      - generic
+    - paragraph: 默认开启数据分享。你可以随时在 设置 → 隐私 中关闭。我们绝不上传你生成的产物文件内容。
+    - link "阅读隐私政策" [ref=e1220] [cursor=pointer]:
+      - /url: https://github.com/nexu-io/open-design/blob/main/PRIVACY.md
+      - img [ref=e1221]
+      - generic [ref=e1225]: 阅读隐私政策
+    - group "帮助我们改进 Open Design" [ref=e1226]:
+      - button "我知道了" [ref=e1227] [cursor=pointer]

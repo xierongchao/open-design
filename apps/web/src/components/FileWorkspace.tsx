@@ -184,6 +184,7 @@ interface Props {
   activeConversationChat?: ActiveConversationChatState;
   onActiveContextChange?: (context: WorkspaceContextItem | null) => void;
   onWorkspaceContextsChange?: (contexts: WorkspaceContextItem[]) => void;
+  onEditModeChange?: (active: boolean) => void;
   messages?: ChatMessage[];
   artifactHtml?: string | null;
   conversationError?: string | null;
@@ -423,6 +424,7 @@ export function FileWorkspace({
   activeConversationChat,
   onActiveContextChange,
   onWorkspaceContextsChange,
+  onEditModeChange,
   messages = [],
   conversationId,
   headerActions,
@@ -442,6 +444,11 @@ export function FileWorkspace({
   // answered preview.
   const showQuestionsTab = Boolean(questionForm || questionFormPreview || questionsGenerating);
   const analytics = useAnalytics();
+  const [editModeActive, setEditModeActive] = useState(false);
+  const handleEditModeChange = useCallback((active: boolean) => {
+    setEditModeActive(active);
+    onEditModeChange?.(active);
+  }, [onEditModeChange]);
   // P1 page_view page_name=file_manager — once per project the user lands
   // inside the workspace. Re-fire when the projectId changes so a
   // project-switch session shows up as a fresh view rather than reusing
@@ -1784,6 +1791,7 @@ export function FileWorkspace({
       className={[
         'workspace',
         designSystemProject ? 'has-design-system-tab' : '',
+        editModeActive ? 'workspace-edit-active' : '',
       ].filter(Boolean).join(' ')}
       data-testid="file-workspace"
     >
@@ -2270,6 +2278,7 @@ export function FileWorkspace({
               activeFile.name,
               slideNavDeliverableNonce,
             )}
+            onEditModeChange={handleEditModeChange}
           />
         ) : (
           <div className="viewer-empty">

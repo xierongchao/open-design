@@ -30,13 +30,15 @@ import {
   SvgViewer,
   appendSavedPreviewCommentOrder,
   applyInspectOverridesToSource,
-  commentPreviewCanvasSize,
-  effectivePreviewScale,
   parseInspectOverridesFromSource,
-  previewOverlayTransform,
   serializeInspectOverrides,
   updateInspectOverride,
 } from '../../src/components/FileViewer';
+import {
+  commentPreviewCanvasSize,
+  effectivePreviewScale,
+  previewOverlayTransform,
+} from '../../src/components/viewer-utils';
 import {
   IframeKeepAliveProvider,
   PooledIframe,

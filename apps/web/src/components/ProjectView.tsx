@@ -988,6 +988,9 @@ export function ProjectView({
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
   const [workspaceFocused, setWorkspaceFocused] = useState(false);
+  const handleEditModeChange = useCallback((active: boolean) => {
+    setWorkspaceFocused(active);
+  }, []);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
   const commentInspectorPortalId = useId();
   const leftInspectorActive = commentInspectorActive;
@@ -6373,6 +6376,7 @@ export function ProjectView({
           activeConversationChat={activeConversationChatState}
           onActiveContextChange={handleActiveWorkspaceContextChange}
           onWorkspaceContextsChange={handleWorkspaceContextsChange}
+          onEditModeChange={handleEditModeChange}
           messages={messages}
           artifactHtml={artifact?.html}
           conversationError={error}

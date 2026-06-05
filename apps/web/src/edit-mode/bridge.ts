@@ -169,7 +169,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   var discoverySelector = ${JSON.stringify(MANUAL_EDIT_DISCOVERY_SELECTOR)};
   var hostNodeSelector = ${JSON.stringify(MANUAL_EDIT_HOST_NODE_SELECTOR)};
   var sourcePathAttr = ${JSON.stringify(MANUAL_EDIT_SOURCE_PATH_ATTR)};
-  var styleProps = ['fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','gap','flexDirection','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius'];
+  var styleProps = ['fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','gap','columnGap','rowGap','flexDirection','flexWrap','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius','transform','overflow','boxShadow'];
   function isHostNode(el){
     return !!(el && el.matches && el.matches(hostNodeSelector));
   }
@@ -305,11 +305,18 @@ export function buildManualEditBridge(enabled: boolean): string {
     window.parent.postMessage({ type: 'od-edit-targets', targets: allTargets() }, '*');
   }
   var lastHoverId = null;
+  var lastHoverEl = null;
+  function clearHoverOutline() {
+    if (lastHoverEl) { lastHoverEl.removeAttribute('data-od-edit-hover'); lastHoverEl = null; }
+  }
   function postHoverTarget(el){
     if (!enabled || !el) return;
     var id = stableId(el);
     if (id === lastHoverId) return;
     lastHoverId = id;
+    clearHoverOutline();
+    el.setAttribute('data-od-edit-hover', 'true');
+    lastHoverEl = el;
     window.parent.postMessage({ type: 'od-edit-hover', target: targetFrom(el, true) }, '*');
   }
   function clearSelectedTarget(){
@@ -453,7 +460,7 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (ev.data.type === 'od-edit-mode') {
       enabled = !!ev.data.enabled;
       document.documentElement.toggleAttribute('data-od-edit-mode', enabled);
-      if (!enabled) clearSelectedTarget();
+      if (!enabled) { clearSelectedTarget(); clearHoverOutline(); }
       if (enabled) setTimeout(postTargets, 0);
       return;
     }
@@ -465,6 +472,7 @@ export function buildManualEditBridge(enabled: boolean): string {
       // Host signals the cursor truly left the canvas, so the next pointerover
       // re-announces the hovered element (defeats the per-element dedupe).
       lastHoverId = null;
+      clearHoverOutline();
       return;
     }
     if (ev.data.type === 'od-edit-preview-style') {
@@ -496,7 +504,20 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
     var el = closestTarget(ev);
     if (!el) return;
+    // Only show hover on the deepest (event target) element, not parent containers.
+    // If the actual event target is inside the matched element but is itself a valid target,
+    // skip this hover — the deeper element's own pointerover will handle it.
+    var target = ev.target;
+    if (target && target !== el && target.closest && isSourceMappable(target) && isDiscoveryTarget(target)) return;
     postHoverTarget(el);
+  }, true);
+  document.addEventListener('pointerout', function(ev){
+    if (!enabled) return;
+    if (!lastHoverEl) return;
+    if (ev.target === lastHoverEl || (ev.target && ev.target.contains && ev.target.contains(lastHoverEl))) {
+      clearHoverOutline();
+      lastHoverId = null;
+    }
   }, true);
   window.addEventListener('resize', postTargets);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', postTargets);
@@ -508,20 +529,18 @@ export function buildManualEditBridge(enabled: boolean): string {
 export function buildManualEditBridgeStyle(): string {
   return `<style data-od-edit-bridge-style>
 html[data-od-edit-mode] body * { cursor: pointer !important; }
-html[data-od-edit-mode] [data-od-id],
-html[data-od-edit-mode] [data-od-runtime-id],
-html[data-od-edit-mode] [data-od-source-path] { outline: 1px dashed rgba(37, 99, 235, 0.35); outline-offset: 3px; }
-html[data-od-edit-mode] [data-od-id]:hover,
-html[data-od-edit-mode] [data-od-runtime-id]:hover,
-html[data-od-edit-mode] [data-od-source-path]:hover { outline: 2px solid #2563eb; }
+html[data-od-edit-mode] [data-od-edit-hover] {
+  outline: 2px solid rgba(37, 99, 235, 0.5);
+  outline-offset: 2px;
+}
 html[data-od-edit-mode] [data-od-edit-selected] {
   outline: 2px solid #2563eb !important;
-  outline-offset: 4px;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
 }
 html[data-od-edit-mode] [data-od-editing="true"] {
   outline: 2px solid #2563eb !important;
-  outline-offset: 4px;
+  outline-offset: 2px;
   background: rgba(37, 99, 235, 0.06);
   cursor: text !important;
 }

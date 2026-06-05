@@ -26,7 +26,10 @@ export interface ManualEditStyles {
   height: string;
   minHeight: string;
   gap: string;
+  columnGap: string;
+  rowGap: string;
   flexDirection: string;
+  flexWrap: string;
   justifyContent: string;
   alignItems: string;
   backgroundColor: string;
@@ -49,6 +52,9 @@ export interface ManualEditStyles {
   borderStyle: string;
   borderColor: string;
   borderRadius: string;
+  transform: string;
+  overflow: string;
+  boxShadow: string;
 }
 
 export interface ManualEditTarget {
@@ -131,12 +137,13 @@ export type ManualEditBridgeMessage =
 export const MANUAL_EDIT_STYLE_PROPS: readonly (keyof ManualEditStyles)[] = [
   'fontFamily', 'fontSize', 'fontWeight', 'color', 'textAlign', 'lineHeight', 'letterSpacing',
   'width', 'height', 'minHeight',
-  'gap', 'flexDirection', 'justifyContent', 'alignItems',
+  'gap', 'columnGap', 'rowGap', 'flexDirection', 'flexWrap', 'justifyContent', 'alignItems',
   'backgroundColor', 'opacity',
   'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
   'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
   'border', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
   'borderStyle', 'borderColor', 'borderRadius',
+  'transform', 'overflow', 'boxShadow',
 ];
 
 export function emptyManualEditStyles(): ManualEditStyles {
