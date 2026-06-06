@@ -41,8 +41,17 @@ export type ManualEditPendingStyleSave = {
   label: string;
   version: number;
 };
+export type ManualEditViewportTransform = {
+  x: number;
+  y: number;
+};
 export type PreviewViewportId = 'desktop' | 'tablet' | 'mobile';
-export type PreviewCanvasSize = { width: number; height: number };
+export type PreviewCanvasSize = {
+  width: number;
+  height: number;
+  scrollLeft?: number;
+  scrollTop?: number;
+};
 export type CommentPreviewCanvasOptions = {
   boardMode: boolean;
   sidePanelCollapsed: boolean;
@@ -289,6 +298,22 @@ export function deployResultState(status?: string): 'ready' | 'delayed' | 'prote
   return 'ready';
 }
 
+export function publicShareUrlForDeployment(deployment?: WebDeploymentInfo | null): string {
+  if (!deployment) return '';
+  const cloudflare = deployment.cloudflarePages;
+  const customDomainUrl = cloudflare?.customDomain?.status === 'ready'
+    ? cloudflare.customDomain.url?.trim()
+    : '';
+  if (customDomainUrl) return customDomainUrl;
+  const pagesDevUrl = cloudflare?.pagesDev?.status === 'ready'
+    ? cloudflare.pagesDev.url?.trim()
+    : '';
+  if (pagesDevUrl) return pagesDevUrl;
+  return deployResultState(deployment.status) === 'ready'
+    ? deployment.url?.trim() || ''
+    : '';
+}
+
 export async function copyTextToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
@@ -489,16 +514,28 @@ export function manualEditPreviewShellStyle(
   viewport: PreviewViewportId,
   previewScale: number,
   frozenWidth: number | null,
+  viewportTransform: ManualEditViewportTransform = { x: 0, y: 0 },
 ): CSSProperties & Record<string, string | number> {
-  if (viewport === 'desktop' && frozenWidth) {
+  const transform = `translate(${viewportTransform.x}px, ${viewportTransform.y}px) scale(${previewScale})`;
+  if (viewport === 'desktop') {
+    const width = frozenWidth && frozenWidth > 0 ? `${frozenWidth}px` : '100%';
     return {
-      width: `${frozenWidth / previewScale}px`,
-      height: `${100 / previewScale}%`,
-      transform: `scale(${previewScale})`,
+      width,
+      minWidth: width,
+      height: '100%',
+      minHeight: '100%',
+      transform,
       transformOrigin: '0 0',
+      willChange: 'transform',
     };
   }
-  return previewScaleShellStyle(viewport, previewScale);
+  return {
+    width: 'var(--preview-viewport-width)',
+    height: 'var(--preview-viewport-height)',
+    transform,
+    transformOrigin: '0 0',
+    willChange: 'transform',
+  };
 }
 
 export function manualEditFloatingPanelStyle(

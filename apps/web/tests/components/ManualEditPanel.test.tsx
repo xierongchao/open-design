@@ -439,6 +439,67 @@ describe('ManualEditPanel', () => {
     );
   });
 
+  it('treats computed no-op stroke and shadow values as absent effects', () => {
+    renderPanel({
+      selectedTarget: { ...target, kind: 'container', isLayoutContainer: true },
+      styles: {
+        ...emptyManualEditStyles(),
+        border: '0px none rgb(0, 0, 0)',
+        borderTopWidth: '0px',
+        borderRightWidth: '0px',
+        borderBottomWidth: '0px',
+        borderLeftWidth: '0px',
+        borderStyle: 'none',
+        boxShadow: 'none',
+      },
+    });
+
+    expect(sectionByTitle('Stroke').querySelector('input')).toBeNull();
+    expect(sectionByTitle('Effect').textContent).not.toContain('Drop shadow');
+  });
+
+  it('removes fill, stroke, and shadow as whole effects from the section action', () => {
+    const onStyleChange = vi.fn();
+    renderPanel({
+      onStyleChange,
+      selectedTarget: { ...target, kind: 'container', isLayoutContainer: true },
+      styles: {
+        ...emptyManualEditStyles(),
+        backgroundColor: '#ffffff',
+        border: '1px solid #111111',
+        borderTopWidth: '1px',
+        borderRightWidth: '1px',
+        borderBottomWidth: '1px',
+        borderLeftWidth: '1px',
+        borderColor: '#111111',
+        borderStyle: 'solid',
+        boxShadow: '0px 4px 12px 0px rgba(0,0,0,0.2)',
+      },
+    });
+
+    const fillAction = sectionActionButton('Fill');
+    const strokeAction = sectionActionButton('Stroke');
+    const effectAction = sectionActionButton('Effect');
+
+    act(() => {
+      fillAction.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      strokeAction.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      effectAction.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { backgroundColor: '' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', {
+      border: '',
+      borderTopWidth: '0px',
+      borderRightWidth: '0px',
+      borderBottomWidth: '0px',
+      borderLeftWidth: '0px',
+      borderColor: '',
+      borderStyle: 'none',
+    }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { boxShadow: '' }, 'Style: Hero Title');
+  });
+
   it('hides layout controls for non-layout single targets', () => {
     const onStyleChange = vi.fn();
     renderPanel({
@@ -450,8 +511,8 @@ describe('ManualEditPanel', () => {
       },
     });
 
-    const layoutSection = Array.from(host.querySelectorAll('.cc-section')).find((section) => (
-      section.textContent?.includes('LAYOUT')
+    const layoutSection = Array.from(host.querySelectorAll('.cc-section, .pp-section')).find((section) => (
+      section.textContent?.includes('Auto Layout')
     ));
     expect(layoutSection).toBeUndefined();
     expect(normalizeManualEditStyles({ gap: '12', flexDirection: 'column' }, { layoutEnabled: false })).toEqual({
@@ -472,25 +533,21 @@ describe('ManualEditPanel', () => {
       },
     });
 
-    const layoutSection = sectionByTitle('LAYOUT');
-    expect(layoutSection.classList.contains('cc-section-inactive')).toBe(false);
-    expect(layoutSection.textContent).not.toContain('Select a container or group to edit layout.');
-    const gapInput = layoutSection.querySelector('input') as HTMLInputElement | null;
-    const directionSelect = layoutSection.querySelector('select') as HTMLSelectElement | null;
-    const gapIncrease = layoutSection.querySelector('button[aria-label="Gap increase"]') as HTMLButtonElement | null;
-    if (!gapInput || !directionSelect) throw new Error('Layout controls not found');
+    const layoutSection = sectionByTitle('Auto Layout');
+    const gapInput = layoutSection.querySelector('.pp-gap-field input') as HTMLInputElement | null;
+    const verticalButton = layoutSection.querySelector('button[data-tooltip="Vertical"]') as HTMLButtonElement | null;
+    if (!gapInput || !verticalButton) throw new Error('Layout controls not found');
     expect(gapInput.disabled).toBe(false);
-    expect(directionSelect.disabled).toBe(false);
-    if (!gapIncrease) throw new Error('Gap increase control not found');
+    expect(verticalButton.disabled).toBe(false);
 
     act(() => {
-      gapIncrease.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-      directionSelect.value = 'column';
-      directionSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+      gapInput.value = '9';
+      Simulate.change(gapInput);
+      verticalButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     });
 
-    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { gap: '9px' }, 'Style: Hero Title');
-    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { flexDirection: 'column' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { columnGap: '9px' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { display: 'flex', flexDirection: 'column' }, 'Style: Hero Title');
   });
 
   it('summarizes full-source history entries without rendering the full file', () => {
@@ -503,10 +560,19 @@ describe('ManualEditPanel', () => {
   });
 
   function sectionByTitle(title: string): HTMLElement {
-    const section = Array.from(host.querySelectorAll('.cc-section'))
-      .find((candidate) => candidate.querySelector('.cc-section-head')?.textContent === title) as HTMLElement | undefined;
+    const section = Array.from(host.querySelectorAll('.cc-section, .pp-section'))
+      .find((candidate) => {
+        const heading = candidate.querySelector('.cc-section-head, .pp-section-head');
+        return heading?.textContent?.replace('▾', '').trim() === title;
+      }) as HTMLElement | undefined;
     if (!section) throw new Error(`${title} section not found`);
     return section;
+  }
+
+  function sectionActionButton(title: string): HTMLButtonElement {
+    const button = sectionByTitle(title).querySelector('.pp-section-actions button') as HTMLButtonElement | null;
+    if (!button) throw new Error(`${title} action not found`);
+    return button;
   }
 
   function renderPanel({

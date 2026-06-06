@@ -118,6 +118,12 @@ function srcDocActivationMessages(calls: readonly (readonly unknown[])[]) {
     });
 }
 
+function cssDeclarationBlocks(css: string, selector: string): string[] {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return Array.from(css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, 'g')))
+    .map((match) => match[1] ?? '');
+}
+
 function testRect(left: number, top: number, width: number, height: number): DOMRect {
   return {
     x: left,
@@ -231,6 +237,17 @@ describe('FileViewer preview scale', () => {
     expect(css).toMatch(
       /\.preview-viewport:not\(\.preview-viewport-desktop\) \.preview-frame-clip,\s*\n\.preview-viewport:not\(\.preview-viewport-desktop\)\.manual-edit-workspace \.manual-edit-canvas \{\s*\n\s*position: relative;/,
     );
+  });
+
+  it('keeps the manual edit canvas panzoom surface scrollbar-free', () => {
+    const css = readExpandedIndexCss();
+    const canvasBlocks = cssDeclarationBlocks(css, '.manual-edit-canvas');
+    const dockedCanvasBlocks = cssDeclarationBlocks(css, '.manual-edit-workspace.pp-dock-active .manual-edit-canvas');
+
+    expect(canvasBlocks.some((block) => block.includes('overflow: hidden;'))).toBe(true);
+    expect(canvasBlocks.every((block) => !block.includes('overflow: auto;'))).toBe(true);
+    expect(dockedCanvasBlocks.some((block) => block.includes('overflow: hidden;'))).toBe(true);
+    expect(dockedCanvasBlocks.every((block) => !block.includes('overflow: auto;'))).toBe(true);
   });
 
   it('keeps the manual edit titlebar from overlapping the close button', () => {

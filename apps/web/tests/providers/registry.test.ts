@@ -151,6 +151,21 @@ describe('writeProjectTextFileDetailed', () => {
       message: 'new artifact is smaller than the prior version',
     });
   });
+
+  it('surfaces legacy flat-string daemon save errors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({
+        error: 'Cross-origin requests are not allowed',
+      }), { status: 403, headers: { 'Content-Type': 'application/json' } })),
+    );
+
+    await expect(writeProjectTextFileDetailed('project-1', 'preview.html', '<html></html>')).resolves.toEqual({
+      ok: false,
+      status: 403,
+      message: 'Cross-origin requests are not allowed',
+    });
+  });
 });
 
 describe('fetchSkillExample', () => {

@@ -169,7 +169,8 @@ export function buildManualEditBridge(enabled: boolean): string {
   var discoverySelector = ${JSON.stringify(MANUAL_EDIT_DISCOVERY_SELECTOR)};
   var hostNodeSelector = ${JSON.stringify(MANUAL_EDIT_HOST_NODE_SELECTOR)};
   var sourcePathAttr = ${JSON.stringify(MANUAL_EDIT_SOURCE_PATH_ATTR)};
-  var styleProps = ['fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','gap','columnGap','rowGap','flexDirection','flexWrap','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius','transform','overflow','boxShadow'];
+  var styleProps = ['fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','display','gap','columnGap','rowGap','flexDirection','flexWrap','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius','transform','overflow','boxShadow'];
+  var viewportPanActive = false;
   function isHostNode(el){
     return !!(el && el.matches && el.matches(hostNodeSelector));
   }
@@ -239,7 +240,12 @@ export function buildManualEditBridge(enabled: boolean): string {
   function isLayoutContainer(el){
     var display = window.getComputedStyle(el).display || '';
     if (display.indexOf('flex') >= 0 || display.indexOf('grid') >= 0) return true;
-    return hasOwnDisplayHiddenState(el) && inferKind(el) === 'container';
+    if (inferKind(el) !== 'container') return false;
+    if (hasOwnDisplayHiddenState(el)) return true;
+    if (hasHiddenAncestorDisplayState(el)) return false;
+    var visibility = window.getComputedStyle(el).visibility;
+    if (visibility === 'hidden' || visibility === 'collapse') return false;
+    return true;
   }
   function hasOwnDisplayHiddenState(el){
     var computed = window.getComputedStyle(el);
@@ -304,10 +310,31 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (!enabled) return;
     window.parent.postMessage({ type: 'od-edit-targets', targets: allTargets() }, '*');
   }
+  function isMiddleButtonPan(ev){
+    return Number(ev.button) === 1 || ((Number(ev.buttons) || 0) & 4) === 4;
+  }
+  function postViewportPan(phase, ev){
+    window.parent.postMessage({
+      type: 'od-edit-viewport-pan',
+      phase: phase,
+      clientX: Number(ev.clientX) || 0,
+      clientY: Number(ev.clientY) || 0,
+      screenX: Number(ev.screenX) || 0,
+      screenY: Number(ev.screenY) || 0
+    }, '*');
+  }
   var lastHoverId = null;
   var lastHoverEl = null;
   function clearHoverOutline() {
     if (lastHoverEl) { lastHoverEl.removeAttribute('data-od-edit-hover'); lastHoverEl = null; }
+  }
+  function setViewportPanActive(active) {
+    viewportPanActive = !!active;
+    document.documentElement.toggleAttribute('data-od-edit-panning', viewportPanActive);
+    if (viewportPanActive) {
+      lastHoverId = null;
+      clearHoverOutline();
+    }
   }
   function postHoverTarget(el){
     if (!enabled || !el) return;
@@ -460,7 +487,7 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (ev.data.type === 'od-edit-mode') {
       enabled = !!ev.data.enabled;
       document.documentElement.toggleAttribute('data-od-edit-mode', enabled);
-      if (!enabled) { clearSelectedTarget(); clearHoverOutline(); }
+      if (!enabled) { setViewportPanActive(false); clearSelectedTarget(); clearHoverOutline(); }
       if (enabled) setTimeout(postTargets, 0);
       return;
     }
@@ -499,8 +526,40 @@ export function buildManualEditBridge(enabled: boolean): string {
       return;
     }
   }, true);
+  document.addEventListener('pointerdown', function(ev){
+    if (!enabled) return;
+    if (!isMiddleButtonPan(ev)) return;
+    setViewportPanActive(true);
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+      var captureTarget = ev.target && ev.target.setPointerCapture ? ev.target : document.documentElement;
+      if (captureTarget && captureTarget.setPointerCapture && ev.pointerId !== undefined) captureTarget.setPointerCapture(ev.pointerId);
+    } catch (e) {}
+    postViewportPan('start', ev);
+  }, true);
+  document.addEventListener('pointermove', function(ev){
+    if (!enabled || !viewportPanActive) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    postViewportPan('move', ev);
+  }, true);
+  function finishViewportPan(ev){
+    if (!viewportPanActive) return;
+    setViewportPanActive(false);
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+      var releaseTarget = ev.target && ev.target.releasePointerCapture ? ev.target : document.documentElement;
+      if (releaseTarget && releaseTarget.releasePointerCapture && ev.pointerId !== undefined) releaseTarget.releasePointerCapture(ev.pointerId);
+    } catch (e) {}
+    postViewportPan('end', ev);
+  }
+  document.addEventListener('pointerup', finishViewportPan, true);
+  document.addEventListener('pointercancel', finishViewportPan, true);
   document.addEventListener('pointerover', function(ev){
     if (!enabled) return;
+    if (viewportPanActive) return;
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
     var el = closestTarget(ev);
     if (!el) return;
@@ -513,12 +572,25 @@ export function buildManualEditBridge(enabled: boolean): string {
   }, true);
   document.addEventListener('pointerout', function(ev){
     if (!enabled) return;
+    if (viewportPanActive) return;
     if (!lastHoverEl) return;
     if (ev.target === lastHoverEl || (ev.target && ev.target.contains && ev.target.contains(lastHoverEl))) {
       clearHoverOutline();
       lastHoverId = null;
     }
   }, true);
+  document.addEventListener('wheel', function(ev){
+    if (!enabled) return;
+    if (!ev.metaKey && !ev.ctrlKey) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    window.parent.postMessage({
+      type: 'od-edit-viewport-wheel',
+      clientX: Number(ev.clientX) || 0,
+      clientY: Number(ev.clientY) || 0,
+      deltaY: Number(ev.deltaY) || 0
+    }, '*');
+  }, { capture: true, passive: false });
   window.addEventListener('resize', postTargets);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', postTargets);
   else setTimeout(postTargets, 0);
@@ -529,6 +601,7 @@ export function buildManualEditBridge(enabled: boolean): string {
 export function buildManualEditBridgeStyle(): string {
   return `<style data-od-edit-bridge-style>
 html[data-od-edit-mode] body * { cursor: pointer !important; }
+html[data-od-edit-mode][data-od-edit-panning] body * { cursor: grabbing !important; }
 html[data-od-edit-mode] [data-od-edit-hover] {
   outline: 2px solid rgba(37, 99, 235, 0.5);
   outline-offset: 2px;

@@ -273,6 +273,258 @@ describe('FileViewer manual edit history regressions', () => {
     });
   });
 
+  it('zooms the manual edit canvas from cursor wheel messages sent by the iframe', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const frame = await waitFor(() => {
+      const node = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(node.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      if (!node.contentWindow) throw new Error('Preview frame not ready');
+      return node;
+    });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: {
+          type: 'od-edit-viewport-wheel',
+          clientX: 120,
+          clientY: 80,
+          deltaY: -80,
+        },
+        source: frame.contentWindow,
+      }));
+    });
+
+    await waitFor(() => expect(screen.getByText('110%')).toBeTruthy());
+  });
+
+  it('zooms the manual edit canvas from cursor wheel input on the canvas surface', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+
+    fireEvent.wheel(canvas, {
+      clientX: 48,
+      clientY: 64,
+      deltaY: -80,
+      metaKey: true,
+    });
+
+    await waitFor(() => expect(screen.getByText('110%')).toBeTruthy());
+  });
+
+  it('uses fine-grained manual edit zoom for small wheel deltas', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+    const shell = canvas.querySelector(':scope > div > div') as HTMLElement | null;
+    if (!shell) throw new Error('manual edit preview shell not found');
+
+    fireEvent.wheel(canvas, {
+      clientX: 48,
+      clientY: 64,
+      deltaY: -4,
+      metaKey: true,
+    });
+
+    await waitFor(() => {
+      const scale = Number(shell.style.transform.match(/scale\(([^)]+)\)/)?.[1]);
+      expect(scale).toBeGreaterThan(1);
+      expect(scale).toBeLessThan(1.02);
+    });
+  });
+
+  it('zooms the manual edit canvas with transform math instead of scrollbars', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+    const scrollTo = vi.fn();
+    Object.defineProperty(canvas, 'scrollTo', { configurable: true, value: scrollTo });
+
+    fireEvent.wheel(canvas, {
+      clientX: 48,
+      clientY: 64,
+      deltaY: -80,
+      metaKey: true,
+    });
+
+    await waitFor(() => expect(screen.getByText('110%')).toBeTruthy());
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it('pans the manual edit canvas with the middle mouse button', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+    const shell = canvas.querySelector(':scope > div > div') as HTMLElement | null;
+    if (!shell) throw new Error('manual edit preview shell not found');
+
+    fireEvent.pointerDown(canvas, {
+      button: 1,
+      buttons: 4,
+      clientX: 100,
+      clientY: 120,
+      pointerId: 1,
+    });
+    fireEvent.pointerMove(canvas, {
+      buttons: 4,
+      clientX: 132,
+      clientY: 150,
+      pointerId: 1,
+    });
+    fireEvent.pointerUp(canvas, {
+      button: 1,
+      buttons: 0,
+      clientX: 132,
+      clientY: 150,
+      pointerId: 1,
+    });
+
+    expect(shell.style.transform).toContain('translate(32px, 30px)');
+  });
+
+  it('pans iframe-originated middle-button drags with stable screen coordinates', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const frame = await waitFor(() => {
+      const node = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      if (!node.contentWindow) throw new Error('Preview frame not ready');
+      return node;
+    });
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+    const shell = canvas.querySelector(':scope > div > div') as HTMLElement | null;
+    if (!shell) throw new Error('manual edit preview shell not found');
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: {
+          type: 'od-edit-viewport-pan',
+          phase: 'start',
+          clientX: 100,
+          clientY: 120,
+          screenX: 500,
+          screenY: 620,
+        },
+        source: frame.contentWindow,
+      }));
+      window.dispatchEvent(new MessageEvent('message', {
+        data: {
+          type: 'od-edit-viewport-pan',
+          phase: 'move',
+          clientX: 100,
+          clientY: 120,
+          screenX: 526,
+          screenY: 644,
+        },
+        source: frame.contentWindow,
+      }));
+    });
+
+    expect(shell.style.transform).toContain('translate(26px, 24px)');
+  });
+
+  it('flushes a follow-up manual style edit queued while a prior save is in flight', async () => {
+    const initialSource = '<!doctype html><html><body><h1 data-od-id="hero" style="color: #111111">Hero</h1></body></html>';
+    let persistedSource = initialSource;
+    let firstSaveResolve!: (value: Response) => void;
+    const firstSave = new Promise<Response>((resolve) => {
+      firstSaveResolve = resolve;
+    });
+    const savedSources: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const payload = JSON.parse(String(init.body)) as { content: string };
+        persistedSource = payload.content;
+        savedSources.push(payload.content);
+        if (savedSources.length === 1) return firstSave;
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/raw/preview.html')) {
+        return new Response(persistedSource, { status: 200 });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={initialSource}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await selectManualEditTarget();
+
+    act(() => {
+      panelState.props?.onStyleChange?.('hero', { color: '#ef4444' }, 'Style: Hero');
+      panelState.props?.onSaveDraft();
+    });
+    await waitFor(() => expect(savedSources).toHaveLength(1));
+
+    act(() => {
+      panelState.props?.onStyleChange?.('hero', { backgroundColor: '#f97316' }, 'Style: Hero');
+      panelState.props?.onSaveDraft();
+    });
+
+    await act(async () => {
+      firstSaveResolve(new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      await firstSave;
+    });
+
+    await waitFor(() => expect(savedSources).toHaveLength(2));
+    expect(savedSources[1]).toContain('color: rgb(239, 68, 68)');
+    expect(savedSources[1]).toContain('background-color: rgb(249, 115, 22)');
+  });
+
   it('clears the selected target after deleting an element', async () => {
     const initialSource = '<!doctype html><html><body><h1 data-od-id="hero">Hero</h1><p data-od-id="body">Body</p></body></html>';
     let persistedSource = initialSource;

@@ -21,6 +21,7 @@
 .manual-edit-workspace.pp-dock-active .manual-edit-canvas {
   order: -1;
   min-width: 0;
+  min-height: 0;
   position: relative !important;
   inset: auto !important;
   /* Reset the fixed size from preview-viewport so canvas fills grid cell */
@@ -33,6 +34,15 @@
   box-shadow: none !important;
   border: none !important;
   overflow: hidden;
+  overscroll-behavior: contain;
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--border) 24%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--border) 24%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--border) 24%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--border) 24%, transparent) 75%),
+    var(--bg-subtle);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
 }
 
 /* ── Dock column (the grid child) ────────────────────────────────────────── */

@@ -358,11 +358,167 @@ describe('manual edit bridge target normalization', () => {
     expect(bridge).toContain('[data-od-edit-selected]');
   });
 
-  it('marks flex/grid targets as layout containers', () => {
-    const bridge = buildManualEditBridge(true);
+  it('marks source-mapped DOM containers as layout editable even before flex is enabled', async () => {
+    const posts: Array<{ type?: string; targets?: Array<{ id: string; isLayoutContainer?: boolean }> }> = [];
+    const dom = new JSDOM(
+      `<main>
+        <section data-od-source-path="path-0-0">
+          <p data-od-source-path="path-0-0-0">First card</p>
+          <p data-od-source-path="path-0-0-1">Second card</p>
+        </section>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    for (const el of dom.window.document.querySelectorAll('section, p')) {
+      el.getBoundingClientRect = () => ({
+        x: 0, y: 0, width: 160, height: 32,
+        top: 0, right: 160, bottom: 32, left: 0,
+        toJSON: () => ({}),
+      } as DOMRect);
+    }
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as { type?: string; targets?: Array<{ id: string; isLayoutContainer?: boolean }> });
+    }) as typeof dom.window.parent.postMessage;
 
-    expect(bridge).toContain('isLayoutContainer: isLayoutContainer(el)');
-    expect(bridge).toContain("display.indexOf('flex') >= 0 || display.indexOf('grid') >= 0");
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-mode', enabled: true },
+    }));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    const targetsMessage = posts.find((message) => message.type === 'od-edit-targets');
+    expect(targetsMessage?.targets?.find((target) => target.id === 'path-0-0')?.isLayoutContainer).toBe(true);
+    expect(targetsMessage?.targets?.find((target) => target.id === 'path-0-0-0')?.isLayoutContainer).toBe(false);
+
+    dom.window.close();
+  });
+
+  it('posts cursor-anchored manual edit zoom wheel events from inside the iframe', () => {
+    const dom = new JSDOM(
+      `<main><section data-od-id="hero">Hero</section></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+    const wheel = new dom.window.WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 120,
+      clientY: 80,
+      deltaY: -90,
+      metaKey: true,
+    });
+
+    dom.window.document.querySelector('section')?.dispatchEvent(wheel);
+
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-viewport-wheel',
+      clientX: 120,
+      clientY: 80,
+      deltaY: -90,
+    }, '*');
+
+    dom.window.close();
+  });
+
+  it('posts middle-button pan events from inside the iframe', () => {
+    const dom = new JSDOM(
+      `<main><section data-od-id="hero">Hero</section></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+    const section = dom.window.document.querySelector('section') as HTMLElement;
+    const pointerDown = new dom.window.MouseEvent('pointerdown', {
+      bubbles: true,
+      button: 1,
+      buttons: 4,
+      cancelable: true,
+      clientX: 100,
+      clientY: 120,
+      screenX: 500,
+      screenY: 620,
+    });
+
+    section.dispatchEvent(pointerDown);
+    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointermove', {
+      bubbles: true,
+      buttons: 4,
+      clientX: 126,
+      clientY: 144,
+      screenX: 526,
+      screenY: 644,
+    }));
+    dom.window.document.dispatchEvent(new dom.window.MouseEvent('pointerup', {
+      bubbles: true,
+      button: 1,
+      buttons: 0,
+      clientX: 126,
+      clientY: 144,
+      screenX: 526,
+      screenY: 644,
+    }));
+
+    expect(pointerDown.defaultPrevented).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-viewport-pan',
+      phase: 'start',
+      clientX: 100,
+      clientY: 120,
+      screenX: 500,
+      screenY: 620,
+    }, '*');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-viewport-pan',
+      phase: 'move',
+      clientX: 126,
+      clientY: 144,
+      screenX: 526,
+      screenY: 644,
+    }, '*');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-viewport-pan',
+      phase: 'end',
+      clientX: 126,
+      clientY: 144,
+      screenX: 526,
+      screenY: 644,
+    }, '*');
+
+    dom.window.close();
+  });
+
+  it('suppresses hover outlines and hover posts while middle-button panning', () => {
+    const posts: Array<{ type?: string; target?: { id: string } }> = [];
+    const dom = new JSDOM(
+      `<main>
+        <section data-od-id="hero">Hero</section>
+        <aside data-od-id="details">Details</aside>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as { type?: string; target?: { id: string } });
+    }) as typeof dom.window.parent.postMessage;
+    const section = dom.window.document.querySelector('section') as HTMLElement;
+    const aside = dom.window.document.querySelector('aside') as HTMLElement;
+
+    section.dispatchEvent(new dom.window.Event('pointerover', { bubbles: true }));
+    expect(section.getAttribute('data-od-edit-hover')).toBe('true');
+
+    section.dispatchEvent(new dom.window.MouseEvent('pointerdown', {
+      bubbles: true,
+      button: 1,
+      buttons: 4,
+      cancelable: true,
+      clientX: 100,
+      clientY: 120,
+    }));
+    aside.dispatchEvent(new dom.window.Event('pointerover', { bubbles: true }));
+
+    expect(section.hasAttribute('data-od-edit-hover')).toBe(false);
+    expect(aside.hasAttribute('data-od-edit-hover')).toBe(false);
+    expect(posts.filter((message) => message.type === 'od-edit-hover')).toHaveLength(1);
+
+    dom.window.close();
   });
 
   it('turns text targets into inline editors and commits changed text', () => {

@@ -78,22 +78,25 @@ export function ManualEditPanel(props: SharedPanelProps & {
     selectedTargetRef.current = selectedTarget;
   }, [selectedTarget]);
 
-  const changeTargetStyle = (key: keyof ManualEditStyles, value: string) => {
+  const changeTargetStyles = (styles: Partial<ManualEditStyles>) => {
     const baseStyles = latestStylesRef.current;
-    const nextStyles = { ...baseStyles, [key]: value };
+    const nextStyles = { ...baseStyles, ...styles };
     latestStylesRef.current = nextStyles;
     onDraftChange({ ...draft, styles: nextStyles });
     if (!targetForInspector) return;
-    const normalized = normalizeManualEditStyles({ [key]: value }, {
+    const normalized = normalizeManualEditStyles(styles, {
       layoutEnabled: targetForInspector.isLayoutContainer,
     });
     if (!normalized.ok) {
       onError('error' in normalized ? normalized.error : 'Invalid style value.');
-      onInvalidStyle?.(targetForInspector.id, [key]);
+      onInvalidStyle?.(targetForInspector.id, Object.keys(styles) as Array<keyof ManualEditStyles>);
       return;
     }
     onError('');
     onStyleChange?.(targetForInspector.id, normalized.styles, `Style: ${targetForInspector.label}`);
+  };
+  const changeTargetStyle = (key: keyof ManualEditStyles, value: string) => {
+    changeTargetStyles({ [key]: value });
   };
 
   // Legacy floating drag (only used when floatingStyle is provided)
@@ -189,6 +192,7 @@ export function ManualEditPanel(props: SharedPanelProps & {
             target={targetForInspector}
             styles={draft.styles}
             onChange={changeTargetStyle}
+            onChangeStyles={changeTargetStyles}
             collapsedSections={collapsedSections}
             onToggleSection={toggleSection}
             documentColors={documentColors}
@@ -330,11 +334,12 @@ export function ManualEditPanel(props: SharedPanelProps & {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 function PropertiesInspector({
-  target, styles, onChange, collapsedSections, onToggleSection, documentColors,
+  target, styles, onChange, onChangeStyles, collapsedSections, onToggleSection, documentColors,
 }: {
   target: ManualEditTarget;
   styles: ManualEditStyles;
   onChange: (key: keyof ManualEditStyles, value: string) => void;
+  onChangeStyles: (styles: Partial<ManualEditStyles>) => void;
   collapsedSections: Set<string>;
   onToggleSection: (id: string) => void;
   documentColors: string[];
@@ -352,9 +357,14 @@ function PropertiesInspector({
     else u('opacity', v);
   };
 
-  const hasFill = !!styles.backgroundColor?.trim();
-  const hasStroke = !!(stripBorderWidth(styles.border)?.trim() || stripBorderWidth(styles.borderTopWidth)?.trim() || styles.borderStyle?.trim());
-  const hasEffect = !!styles.boxShadow?.trim();
+  const hasFill = hasVisibleFill(styles.backgroundColor);
+  const hasStroke = hasVisibleStroke(styles);
+  const hasEffect = hasVisibleShadow(styles.boxShadow);
+  const displayMode = styles.display.trim();
+  const layoutModeActive = displayMode === 'flex'
+    || displayMode === 'inline-flex'
+    || displayMode === 'grid'
+    || !!styles.flexDirection.trim();
 
   return (
     <>
@@ -386,16 +396,30 @@ function PropertiesInspector({
       {layoutEnabled ? (
         <Section title={t('manualEdit.section.autoLayout')} id="autolayout" collapsed={collapsedSections} onToggle={onToggleSection}>
           <div className="pp-flow-row">
-            <button type="button" className={`pp-icon-btn${!styles.flexDirection ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.none')} onClick={() => u('flexDirection', '')}>
+            <button
+              type="button"
+              className={`pp-icon-btn${!layoutModeActive ? ' pp-icon-btn-active' : ''}`}
+              data-tooltip={t('manualEdit.autoLayout.none')}
+              onClick={() => onChangeStyles({
+                display: '',
+                flexDirection: '',
+                flexWrap: '',
+                justifyContent: '',
+                alignItems: '',
+                gap: '',
+                columnGap: '',
+                rowGap: '',
+              })}
+            >
               <SvgLayoutNone />
             </button>
-            <button type="button" className={`pp-icon-btn${styles.flexDirection === 'column' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.vertical')} onClick={() => u('flexDirection', 'column')}>
+            <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && styles.flexDirection === 'column' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.vertical')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'column' })}>
               <SvgLayoutVertical />
             </button>
-            <button type="button" className={`pp-icon-btn${styles.flexDirection === 'row' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.horizontal')} onClick={() => u('flexDirection', 'row')}>
+            <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && (styles.flexDirection === 'row' || !styles.flexDirection.trim()) ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.horizontal')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'row' })}>
               <SvgLayoutHorizontal />
             </button>
-            <button type="button" className="pp-icon-btn" data-tooltip={t('manualEdit.autoLayout.grid')} onClick={() => {/* TODO grid */}}>
+            <button type="button" className={`pp-icon-btn${displayMode === 'grid' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.grid')} onClick={() => onChangeStyles({ display: 'grid', flexDirection: '' })}>
               <SvgLayoutGrid />
             </button>
           </div>
@@ -444,7 +468,7 @@ function PropertiesInspector({
       <Section title={t('manualEdit.section.fill')} id="fill" collapsed={collapsedSections} onToggle={onToggleSection}
         actions={
           <button type="button" className="pp-section-add" data-tooltip={t('manualEdit.section.fill')}
-            onClick={() => { if (hasFill) { u('backgroundColor', ''); } else { u('backgroundColor', '#000000'); } }}>
+            onClick={() => onChangeStyles({ backgroundColor: hasFill ? '' : '#000000' })}>
             <Icon name={hasFill ? 'minus' : 'plus'} size={12} />
           </button>
         }
@@ -457,8 +481,26 @@ function PropertiesInspector({
         actions={
           <button type="button" className="pp-section-add" data-tooltip={t('manualEdit.section.stroke')}
             onClick={() => {
-              if (hasStroke) { u('border', ''); u('borderTopWidth', ''); u('borderRightWidth', ''); u('borderBottomWidth', ''); u('borderLeftWidth', ''); u('borderColor', ''); u('borderStyle', ''); }
-              else { u('borderTopWidth', '1px'); u('borderRightWidth', '1px'); u('borderBottomWidth', '1px'); u('borderLeftWidth', '1px'); u('borderColor', '#000000'); u('borderStyle', 'solid'); }
+              if (hasStroke) {
+                onChangeStyles({
+                  border: '',
+                  borderTopWidth: '0px',
+                  borderRightWidth: '0px',
+                  borderBottomWidth: '0px',
+                  borderLeftWidth: '0px',
+                  borderColor: '',
+                  borderStyle: 'none',
+                });
+              } else {
+                onChangeStyles({
+                  borderTopWidth: '1px',
+                  borderRightWidth: '1px',
+                  borderBottomWidth: '1px',
+                  borderLeftWidth: '1px',
+                  borderColor: '#000000',
+                  borderStyle: 'solid',
+                });
+              }
             }}>
             <Icon name={hasStroke ? 'minus' : 'plus'} size={12} />
           </button>
@@ -482,7 +524,7 @@ function PropertiesInspector({
       <Section title={t('manualEdit.section.effect')} id="effect" collapsed={collapsedSections} onToggle={onToggleSection}
         actions={
           <button type="button" className="pp-section-add" data-tooltip={t('manualEdit.section.effect')}
-            onClick={() => { if (hasEffect) { u('boxShadow', ''); } else { u('boxShadow', '0px 4px 12px 0px rgba(0,0,0,0.2)'); } }}>
+            onClick={() => onChangeStyles({ boxShadow: hasEffect ? '' : '0px 4px 12px 0px rgba(0,0,0,0.2)' })}>
             <Icon name={hasEffect ? 'minus' : 'plus'} size={12} />
           </button>
         }
@@ -541,6 +583,7 @@ interface ShadowParts {
 
 function parseBoxShadow(value: string): ShadowParts | null {
   if (!value?.trim()) return null;
+  if (!hasVisibleShadow(value)) return null;
   const parts: ShadowParts = { x: '0px', y: '4px', blur: '12px', spread: '0px', color: '#000000', inset: false };
   const insetMatch = value.match(/\binset\b/i);
   if (insetMatch) parts.inset = true;
@@ -1340,12 +1383,13 @@ const SELECT_STYLE_OPTIONS: Partial<Record<keyof ManualEditStyles, ReadonlyArray
   fontFamily: FONT_OPTS.map((option) => option.value),
   fontWeight: WEIGHT_OPTS,
   textAlign: ALIGN_OPTS,
+  display: ['', 'block', 'flex', 'inline-flex', 'grid'],
   flexDirection: DIRECTION_OPTS,
   justifyContent: JUSTIFY_OPTS,
   alignItems: ITEMS_OPTS,
   borderStyle: BORDER_STYLE_OPTS,
 };
-const LAYOUT_STYLE_PROPS = new Set<keyof ManualEditStyles>(['gap', 'columnGap', 'rowGap', 'flexDirection', 'flexWrap', 'justifyContent', 'alignItems']);
+const LAYOUT_STYLE_PROPS = new Set<keyof ManualEditStyles>(['display', 'gap', 'columnGap', 'rowGap', 'flexDirection', 'flexWrap', 'justifyContent', 'alignItems']);
 
 export function normalizeManualEditStyles(
   styles: Partial<ManualEditStyles>,
@@ -1690,6 +1734,47 @@ function stripBorderWidth(value: string): string {
   return match?.[1] ?? '';
 }
 
+function borderWidthNumber(value: string): number {
+  if (!value?.trim()) return 0;
+  const match = value.match(/(?:^|\s)(\d+(?:\.\d+)?)px\b/i);
+  if (!match) return 0;
+  const width = Number(match[1]);
+  return Number.isFinite(width) ? width : 0;
+}
+
+function hasVisibleFill(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || trimmed === 'transparent') return false;
+  if (/^rgba?\(/i.test(trimmed) && normalizeManualEditInspectorTransparent(value)) return false;
+  return true;
+}
+
+function normalizeManualEditInspectorTransparent(value: string): boolean {
+  const match = value.trim().match(/^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*([\d.]+))?\s*\)$/i);
+  return !!match && match[1] !== undefined && Number(match[1]) === 0;
+}
+
+function hasVisibleStroke(styles: ManualEditStyles): boolean {
+  const widths = [
+    styles.border,
+    styles.borderTopWidth,
+    styles.borderRightWidth,
+    styles.borderBottomWidth,
+    styles.borderLeftWidth,
+  ];
+  const hasWidth = widths.some((value) => borderWidthNumber(value) > 0);
+  const style = styles.borderStyle.trim().toLowerCase();
+  const borderShorthand = styles.border.trim().toLowerCase();
+  const explicitStyle = style || (/\bnone\b/.test(borderShorthand) ? 'none' : borderShorthand ? 'solid' : '');
+  if (explicitStyle === 'none') return false;
+  return hasWidth;
+}
+
+function hasVisibleShadow(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  return !!trimmed && trimmed !== 'none';
+}
+
 function isNumericInput(value: string): boolean {
   return /^-?\d+(\.\d+)?$/.test(value.trim());
 }
@@ -1735,4 +1820,3 @@ export function manualEditPatchSummary(patch: ManualEditPatch): string {
   if (patch.kind === 'set-outer-html') return JSON.stringify({ id: patch.id, kind: patch.kind, bytes: patch.html.length });
   return JSON.stringify(patch);
 }
-

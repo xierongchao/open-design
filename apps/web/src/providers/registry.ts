@@ -1592,11 +1592,14 @@ export async function deleteLiveArtifact(projectId: string, artifactId: string):
 
 async function readApiErrorBody(resp: Response): Promise<{ message: string; code?: string }> {
   try {
-    const json = (await resp.json()) as { error?: { code?: string; message?: string }; message?: string };
-    const message = json.error?.message ?? json.message;
+    const json = (await resp.json()) as { error?: { code?: string; message?: string } | string; message?: string };
+    const error = json.error;
+    const message = typeof error === 'string'
+      ? error
+      : error?.message ?? json.message;
     return {
       message: typeof message === 'string' && message.length > 0 ? message : `Request failed (${resp.status}).`,
-      ...(typeof json.error?.code === 'string' ? { code: json.error.code } : {}),
+      ...(typeof error === 'object' && typeof error?.code === 'string' ? { code: error.code } : {}),
     };
   } catch {
     return { message: `Request failed (${resp.status}).` };

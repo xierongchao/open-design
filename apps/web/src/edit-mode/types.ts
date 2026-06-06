@@ -25,6 +25,7 @@ export interface ManualEditStyles {
   width: string;
   height: string;
   minHeight: string;
+  display: string;
   gap: string;
   columnGap: string;
   rowGap: string;
@@ -126,18 +127,36 @@ export interface ManualEditTextCommitMessage {
   value: string;
 }
 
+export interface ManualEditViewportWheelMessage {
+  type: 'od-edit-viewport-wheel';
+  clientX: number;
+  clientY: number;
+  deltaY: number;
+}
+
+export interface ManualEditViewportPanMessage {
+  type: 'od-edit-viewport-pan';
+  phase: 'start' | 'move' | 'end';
+  clientX: number;
+  clientY: number;
+  screenX?: number;
+  screenY?: number;
+}
+
 export type ManualEditBridgeMessage =
   | ManualEditTargetMessage
   | ManualEditSelectMessage
   | ManualEditHoverMessage
   | ManualEditBackgroundMessage
   | ManualEditPreviewAppliedMessage
-  | ManualEditTextCommitMessage;
+  | ManualEditTextCommitMessage
+  | ManualEditViewportWheelMessage
+  | ManualEditViewportPanMessage;
 
 export const MANUAL_EDIT_STYLE_PROPS: readonly (keyof ManualEditStyles)[] = [
   'fontFamily', 'fontSize', 'fontWeight', 'color', 'textAlign', 'lineHeight', 'letterSpacing',
   'width', 'height', 'minHeight',
-  'gap', 'columnGap', 'rowGap', 'flexDirection', 'flexWrap', 'justifyContent', 'alignItems',
+  'display', 'gap', 'columnGap', 'rowGap', 'flexDirection', 'flexWrap', 'justifyContent', 'alignItems',
   'backgroundColor', 'opacity',
   'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
   'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
