@@ -1795,7 +1795,7 @@ export const zhCN: Dict = {
   'manualEdit.section.colors': '颜色',
   'manualEdit.section.pageStyles': '页面样式',
   'manualEdit.label.gap': '间距',
-  'manualEdit.label.padding': '内边距',
+  'manualEdit.label.padding': '内间距',
   'manualEdit.autoLayout.none': '无布局',
   'manualEdit.autoLayout.vertical': '垂直',
   'manualEdit.autoLayout.horizontal': '水平',

@@ -589,7 +589,168 @@ describe('FileViewer manual edit history regressions', () => {
         .not.toContain('data-od-id="hero"');
     });
   });
+
+  it('persists iframe drag reorders as DOM tree moves instead of margin edits', async () => {
+    const initialSource = '<!doctype html><html><body><h1 data-od-id="hero">Hero</h1><p data-od-id="body">Body</p></body></html>';
+    let persistedSource = initialSource;
+    const savedSources: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const payload = JSON.parse(String(init.body)) as { content: string };
+        persistedSource = payload.content;
+        savedSources.push(payload.content);
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/raw/preview.html')) {
+        return new Response(persistedSource, { status: 200 });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={initialSource}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const frame = await waitFor(() => {
+      const node = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      if (!node.contentWindow) throw new Error('Preview frame not ready');
+      return node;
+    });
+    await selectManualEditTarget();
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: {
+          type: 'od-edit-move-end',
+          id: 'hero',
+          targetId: 'body',
+          position: 'after',
+        },
+        source: frame.contentWindow,
+      }));
+    });
+
+    await waitFor(() => expect(savedSources).toHaveLength(1));
+    const savedSource = savedSources[0];
+    if (!savedSource) throw new Error('Expected reordered source to be saved');
+    expect(savedSource.indexOf('data-od-id="body"')).toBeLessThan(savedSource.indexOf('data-od-id="hero"'));
+    expect(savedSource).not.toContain('margin-top');
+    expect(savedSource).not.toContain('margin-left');
+  });
+
+  it('keeps shift-selected targets and persists batch style changes for all selected elements', async () => {
+    const initialSource = '<!doctype html><html><body><h1 data-od-id="hero">Hero</h1><p data-od-id="body">Body</p></body></html>';
+    let persistedSource = initialSource;
+    const savedSources: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const payload = JSON.parse(String(init.body)) as { content: string };
+        persistedSource = payload.content;
+        savedSources.push(payload.content);
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/raw/preview.html')) {
+        return new Response(persistedSource, { status: 200 });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={initialSource}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const frame = await waitFor(() => {
+      const node = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      if (!node.contentWindow) throw new Error('Preview frame not ready');
+      return node;
+    });
+    const frameWindow = frame.contentWindow;
+    if (!frameWindow) throw new Error('Preview frame not ready');
+    const postedToFrame: unknown[] = [];
+    const originalPostMessage = frameWindow.postMessage.bind(frameWindow);
+    Object.defineProperty(frameWindow, 'postMessage', {
+      configurable: true,
+      value: (message: unknown) => {
+      postedToFrame.push(message);
+      },
+    });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-select', target: heroTarget() },
+        source: frame.contentWindow,
+      }));
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-select', target: bodyTarget(), append: true },
+        source: frame.contentWindow,
+      }));
+    });
+
+    await waitFor(() => {
+      expect(panelState.props?.selectedTargets?.map((target) => target.id)).toEqual(['hero', 'body']);
+    });
+    await waitFor(() => {
+      expect(postedToFrame).toContainEqual({ type: 'od-edit-selected-targets', ids: ['hero', 'body'] });
+    });
+    const multiSyncIndex = postedToFrame.findIndex((message) => (
+      isPlainMessage(message)
+      && message.type === 'od-edit-selected-targets'
+      && Array.isArray(message.ids)
+      && message.ids.join(',') === 'hero,body'
+    ));
+    expect(multiSyncIndex).toBeGreaterThanOrEqual(0);
+    expect(postedToFrame.slice(multiSyncIndex + 1)).not.toContainEqual({
+      type: 'od-edit-selected-target',
+      id: 'hero',
+    });
+
+    act(() => {
+      panelState.props?.onStyleChange?.('__selection__', { opacity: '0.5' }, 'Style: 2 elements');
+    });
+
+    await waitFor(() => expect(savedSources).toHaveLength(1));
+    const savedSource = savedSources[0];
+    if (!savedSource) throw new Error('Expected batch style source to be saved');
+    expect(savedSource).toContain('data-od-id="hero" style="opacity: 0.5;"');
+    expect(savedSource).toContain('data-od-id="body" style="opacity: 0.5;"');
+    Object.defineProperty(frameWindow, 'postMessage', {
+      configurable: true,
+      value: originalPostMessage,
+    });
+  });
 });
+
+function isPlainMessage(value: unknown): value is { type?: string; ids?: unknown } {
+  return typeof value === 'object' && value !== null;
+}
 
 function htmlPreviewFile(): ProjectFile {
   return {
@@ -625,5 +786,22 @@ function heroTarget(): ManualEditTarget {
     styles: emptyManualEditStyles(),
     isLayoutContainer: false,
     outerHtml: '<h1 data-od-id="hero">Hero</h1>',
+  };
+}
+
+function bodyTarget(): ManualEditTarget {
+  return {
+    id: 'body',
+    kind: 'text',
+    label: 'Body',
+    tagName: 'p',
+    className: '',
+    text: 'Body',
+    rect: { x: 0, y: 50, width: 160, height: 30 },
+    fields: { text: 'Body' },
+    attributes: { 'data-od-id': 'body' },
+    styles: emptyManualEditStyles(),
+    isLayoutContainer: false,
+    outerHtml: '<p data-od-id="body">Body</p>',
   };
 }

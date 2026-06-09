@@ -1,4 +1,4 @@
-import { emptyManualEditStyles, MANUAL_EDIT_STYLE_PROPS, type ManualEditFields, type ManualEditPatch, type ManualEditStyles } from './types';
+import { emptyManualEditStyles, MANUAL_EDIT_STYLE_PROPS, type ManualEditFields, type ManualEditPatch, type ManualEditRect, type ManualEditStyles } from './types';
 
 export interface ManualEditPatchResult {
   ok: boolean;
@@ -17,6 +17,22 @@ export function applyManualEditPatch(source: string, patch: ManualEditPatch): Ma
     return changed
       ? { ok: true, source: serializeSource(doc, source) }
       : { ok: false, source, error: `Token not found: ${patch.token}` };
+  }
+
+  if (patch.kind === 'set-style-batch') {
+    for (const item of patch.items) {
+      const target = findEditableElement(doc, item.id);
+      if (!target) return { ok: false, source, error: `Target not found: ${item.id}` };
+      setInlineStyles(target as HTMLElement, item.styles);
+    }
+    return { ok: true, source: serializeSource(doc, source) };
+  }
+
+  if (patch.kind === 'align-elements') {
+    const aligned = alignEditableElements(doc, patch);
+    return aligned.ok
+      ? { ok: true, source: serializeSource(doc, source) }
+      : { ok: false, source, error: aligned.error };
   }
 
   const el = findEditableElement(doc, patch.id);
@@ -53,6 +69,9 @@ export function applyManualEditPatch(source: string, patch: ManualEditPatch): Ma
         error: 'error' in replaced ? replaced.error : 'Could not replace element HTML.',
       };
     }
+  } else if (patch.kind === 'move-element') {
+    const moved = moveEditableElement(doc, el, patch.targetId, patch.position);
+    if (!moved.ok) return { ok: false, source, error: moved.error };
   } else if (patch.kind === 'remove-element') {
     if (!el.parentElement) {
       return { ok: false, source, error: 'Cannot remove the root element.' };
@@ -217,6 +236,116 @@ function replaceOuterHtml(doc: Document, el: Element, html: string): { ok: true 
   }
   el.replaceWith(next);
   return { ok: true };
+}
+
+function moveEditableElement(
+  doc: Document,
+  el: Element,
+  targetId: string,
+  position: Extract<ManualEditPatch, { kind: 'move-element' }>['position'],
+): { ok: true } | { ok: false; error: string } {
+  if (!el.parentElement) return { ok: false, error: 'Cannot move the root element.' };
+  const target = findEditableElement(doc, targetId);
+  if (!target) return { ok: false, error: `Target not found: ${targetId}` };
+  if (target === el) return { ok: false, error: 'Cannot move an element onto itself.' };
+  if (el.contains(target)) return { ok: false, error: 'Cannot move an element into its own descendant.' };
+
+  if (position === 'inside-start') {
+    target.insertBefore(el, target.firstChild);
+    return { ok: true };
+  }
+  if (position === 'inside-end') {
+    target.appendChild(el);
+    return { ok: true };
+  }
+
+  const targetParent = target.parentElement;
+  if (!targetParent) return { ok: false, error: 'Cannot move relative to the root element.' };
+  if (position === 'before') {
+    targetParent.insertBefore(el, target);
+    return { ok: true };
+  }
+  targetParent.insertBefore(el, target.nextSibling);
+  return { ok: true };
+}
+
+function alignEditableElements(
+  doc: Document,
+  patch: Extract<ManualEditPatch, { kind: 'align-elements' }>,
+): { ok: true } | { ok: false; error: string } {
+  const items = patch.ids.map((id) => ({
+    id,
+    el: findEditableElement(doc, id) as HTMLElement | null,
+    rect: patch.rects[id],
+  }));
+  const missingElement = items.find((item) => !item.el);
+  if (missingElement) return { ok: false, error: `Target not found: ${missingElement.id}` };
+  const missingRect = items.find((item) => !item.rect);
+  if (missingRect) return { ok: false, error: `Target rect not found: ${missingRect.id}` };
+  if (items.length < 2) return { ok: true };
+
+  const rects = items.map((item) => item.rect as ManualEditRect);
+  const bounds = selectionBounds(rects);
+
+  if (patch.mode === 'distribute-x') {
+    distributeAlongAxis(items as Array<{ id: string; el: HTMLElement; rect: ManualEditRect }>, 'x', bounds);
+    return { ok: true };
+  }
+  if (patch.mode === 'distribute-y') {
+    distributeAlongAxis(items as Array<{ id: string; el: HTMLElement; rect: ManualEditRect }>, 'y', bounds);
+    return { ok: true };
+  }
+
+  for (const item of items) {
+    const el = item.el as HTMLElement;
+    const rect = item.rect as ManualEditRect;
+    if (patch.mode === 'left') setAbsolutePosition(el, 'left', bounds.left);
+    else if (patch.mode === 'center-x') setAbsolutePosition(el, 'left', bounds.centerX - rect.width / 2);
+    else if (patch.mode === 'right') setAbsolutePosition(el, 'left', bounds.right - rect.width);
+    else if (patch.mode === 'top') setAbsolutePosition(el, 'top', bounds.top);
+    else if (patch.mode === 'center-y') setAbsolutePosition(el, 'top', bounds.centerY - rect.height / 2);
+    else if (patch.mode === 'bottom') setAbsolutePosition(el, 'top', bounds.bottom - rect.height);
+  }
+  return { ok: true };
+}
+
+function selectionBounds(rects: ManualEditRect[]) {
+  const left = Math.min(...rects.map((rect) => rect.x));
+  const top = Math.min(...rects.map((rect) => rect.y));
+  const right = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    centerX: left + (right - left) / 2,
+    centerY: top + (bottom - top) / 2,
+  };
+}
+
+function distributeAlongAxis(
+  items: Array<{ el: HTMLElement; rect: ManualEditRect }>,
+  axis: 'x' | 'y',
+  bounds: ReturnType<typeof selectionBounds>,
+): void {
+  if (items.length < 3) return;
+  const sorted = [...items].sort((a, b) => (
+    axis === 'x' ? a.rect.x - b.rect.x : a.rect.y - b.rect.y
+  ));
+  const totalSize = sorted.reduce((sum, item) => sum + (axis === 'x' ? item.rect.width : item.rect.height), 0);
+  const span = axis === 'x' ? bounds.right - bounds.left : bounds.bottom - bounds.top;
+  const gap = (span - totalSize) / (sorted.length - 1);
+  let cursor = axis === 'x' ? bounds.left : bounds.top;
+  for (const item of sorted) {
+    setAbsolutePosition(item.el, axis === 'x' ? 'left' : 'top', cursor);
+    cursor += (axis === 'x' ? item.rect.width : item.rect.height) + gap;
+  }
+}
+
+function setAbsolutePosition(el: HTMLElement, prop: 'left' | 'top', value: number): void {
+  if (!el.style.position || el.style.position === 'static') el.style.position = 'absolute';
+  el.style.setProperty(prop, `${Math.round(value)}px`);
 }
 
 function setCssToken(doc: Document, token: string, value: string): boolean {

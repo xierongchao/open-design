@@ -4316,6 +4316,7 @@ function HtmlViewer({
   }, []);
   const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([]);
   const [selectedManualEditTarget, setSelectedManualEditTarget] = useState<ManualEditTarget | null>(null);
+  const [selectedManualEditTargets, setSelectedManualEditTargets] = useState<ManualEditTarget[]>([]);
   const [manualEditHoverTarget, setManualEditHoverTarget] = useState<ManualEditTarget | null>(null);
   const [manualEditPageStylesOpen, setManualEditPageStylesOpen] = useState(false);
   const [manualEditPanelPosition, setManualEditPanelPosition] = useState<{ left: number; top: number } | null>(null);
@@ -4326,6 +4327,7 @@ function HtmlViewer({
   const [manualEditError, setManualEditError] = useState<string | null>(null);
   const [manualEditSaving, setManualEditSaving] = useState(false);
   const [manualEditUndoLimitToast, setManualEditUndoLimitToast] = useState(false);
+  const selectedManualEditTargetsRef = useRef<ManualEditTarget[]>([]);
   const manualEditSavingRef = useRef(false);
   const manualEditFlushAfterSaveRef = useRef(false);
   const manualEditPendingStyleRef = useRef<ManualEditPendingStyleSave | null>(null);
@@ -5026,8 +5028,10 @@ function HtmlViewer({
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage({ type: 'od-edit-mode', enabled: manualEditMode }, '*');
-    postSelectedManualEditTargetToIframe(manualEditMode ? selectedManualEditTarget?.id ?? null : null);
-  }, [manualEditMode, selectedManualEditTarget?.id, srcDoc, useUrlLoadPreview]);
+    postSelectedManualEditTargetsToIframe(
+      manualEditMode ? selectedManualEditTargets.map((target) => target.id) : [],
+    );
+  }, [manualEditMode, selectedManualEditTargets, srcDoc, useUrlLoadPreview]);
 
   const previewStyleToIframe = useCallback((id: string, styles: Partial<ManualEditStyles>, version: number) => {
     const win = iframeRef.current?.contentWindow;
@@ -5042,6 +5046,13 @@ function HtmlViewer({
     win.postMessage({ type: 'od-edit-selected-target', id }, '*');
   }
 
+  function postSelectedManualEditTargetsToIframe(ids: string[], target: HTMLIFrameElement | null = iframeRef.current) {
+    const win = target?.contentWindow;
+    if (!win) return;
+    win.postMessage({ type: 'od-edit-selected-targets', ids }, '*');
+    if (ids.length <= 1) win.postMessage({ type: 'od-edit-selected-target', id: ids[0] ?? null }, '*');
+  }
+
   function syncBridgeModes(target: HTMLIFrameElement | null = iframeRef.current) {
     const win = target?.contentWindow;
     if (!win) return;
@@ -5051,7 +5062,10 @@ function HtmlViewer({
       mode: boardTool,
     }, '*');
     win.postMessage({ type: 'od-edit-mode', enabled: manualEditMode }, '*');
-    postSelectedManualEditTargetToIframe(manualEditMode ? selectedManualEditTarget?.id ?? null : null, target);
+    postSelectedManualEditTargetsToIframe(
+      manualEditMode ? selectedManualEditTargetsRef.current.map((item) => item.id) : [],
+      target,
+    );
     win.postMessage({ type: 'od:inspect-mode', enabled: inspectMode }, '*');
   }
 
@@ -5187,6 +5201,10 @@ function HtmlViewer({
   useEffect(() => {
     selectedManualEditTargetIdRef.current = selectedManualEditTarget?.id ?? null;
   }, [selectedManualEditTarget?.id]);
+
+  useEffect(() => {
+    selectedManualEditTargetsRef.current = selectedManualEditTargets;
+  }, [selectedManualEditTargets]);
 
   useEffect(() => {
     if (!boardMode) {
@@ -5386,6 +5404,8 @@ function HtmlViewer({
     if (!manualEditMode) {
       setManualEditTargets([]);
       setSelectedManualEditTarget(null);
+      setSelectedManualEditTargets([]);
+      selectedManualEditTargetsRef.current = [];
       setManualEditHoverTarget(null);
       setManualEditPageStylesOpen(false);
       setManualEditPanelPosition(null);
@@ -5411,13 +5431,53 @@ function HtmlViewer({
         setSelectedManualEditTarget((current) =>
           current ? data.targets.find((target) => target.id === current.id) ?? current : current,
         );
-        const selectedId = selectedManualEditTargetIdRef.current;
-        if (selectedId) setTimeout(() => postSelectedManualEditTargetToIframe(selectedId), 0);
+        setSelectedManualEditTargets((current) => {
+          if (current.length === 0) return current;
+          const next = current.map((selected) => data.targets.find((target) => target.id === selected.id) ?? selected);
+          selectedManualEditTargetsRef.current = next;
+          return next;
+        });
+        const selectedIds = selectedManualEditTargetsRef.current.map((target) => target.id);
+        if (selectedIds.length > 0) setTimeout(() => postSelectedManualEditTargetsToIframe(selectedIds), 0);
         return;
       }
       if (data.type === 'od-edit-select') {
         setManualEditHoverTarget(null);
-        void selectManualEditTarget(data.target);
+        void selectManualEditTarget(data.target, Boolean(data.append));
+        return;
+      }
+      if (data.type === 'od-edit-deselect') {
+        setManualEditHoverTarget(null);
+        void (async () => {
+          await flushManualEditStyleSave();
+          await clearManualEditTargetSelection();
+        })();
+        return;
+      }
+      if (data.type === 'od-edit-resize-end') {
+        if (data.id && data.styles) {
+          const label = `Resize: ${selectedManualEditTargetIdRef.current ?? data.id}`;
+          void handleManualEditStyleChange(data.id, data.styles, label);
+        }
+        return;
+      }
+      if (data.type === 'od-edit-drag-end') {
+        if (data.id && data.styles) {
+          const label = `Move: ${selectedManualEditTargetIdRef.current ?? data.id}`;
+          void handleManualEditStyleChange(data.id, data.styles, label);
+        }
+        return;
+      }
+      if (data.type === 'od-edit-move-end') {
+        if (data.id && data.targetId && data.position) {
+          const label = `Move: ${selectedManualEditTargetIdRef.current ?? data.id}`;
+          void applyManualEdit({
+            id: data.id,
+            kind: 'move-element',
+            targetId: data.targetId,
+            position: data.position,
+          }, label);
+        }
         return;
       }
       if (data.type === 'od-edit-hover') {
@@ -5524,6 +5584,20 @@ function HtmlViewer({
   }
 
   async function handleManualEditStyleChange(id: string, styles: Partial<ManualEditStyles>, label: string) {
+    if (id === '__selection__') {
+      const targets = selectedManualEditTargetsRef.current;
+      if (targets.length === 0) return;
+      const version = nextManualEditPreviewVersion();
+      for (const target of targets) {
+        previewStyleToIframe(target.id, styles, version);
+      }
+      setManualEditError(null);
+      await applyManualEdit({
+        kind: 'set-style-batch',
+        items: targets.map((target) => ({ id: target.id, styles })),
+      }, label);
+      return;
+    }
     const version = nextManualEditPreviewVersion();
     const currentPending = manualEditPendingStyleRef.current;
     const pendingStyles = currentPending?.id === id
@@ -5852,13 +5926,37 @@ function HtmlViewer({
     finishManualEditViewportPan();
   }
 
-  async function selectManualEditTarget(target: ManualEditTarget) {
+  async function selectManualEditTarget(target: ManualEditTarget, append = false) {
     setManualEditPageStylesOpen(false);
     if (manualEditPendingStyleRef.current?.id !== target.id) await flushManualEditStyleSave();
+    const currentTargets = selectedManualEditTargetsRef.current;
+    let nextTargets: ManualEditTarget[];
+    if (append) {
+      const existing = currentTargets.find((item) => item.id === target.id);
+      if (existing) {
+        nextTargets = currentTargets.filter((item) => item.id !== target.id);
+      } else {
+        nextTargets = [...currentTargets, target];
+      }
+      if (nextTargets.length === 0) {
+        await clearManualEditTargetSelection();
+        return;
+      }
+    } else {
+      nextTargets = [target];
+    }
+    selectedManualEditTargetsRef.current = nextTargets;
+    setSelectedManualEditTargets(nextTargets);
+    const primary = nextTargets[0] ?? null;
+    selectedManualEditTargetIdRef.current = primary?.id ?? null;
+    setSelectedManualEditTarget(primary);
+    if (primary) setDraftForManualEditTarget(primary);
+    setManualEditError(null);
+  }
+
+  function setDraftForManualEditTarget(target: ManualEditTarget) {
     const base = sourceRef.current ?? '';
     const fields = readManualEditFields(base, target.id);
-    selectedManualEditTargetIdRef.current = target.id;
-    setSelectedManualEditTarget(target);
     setManualEditDraft({
       text: fields.text ?? target.fields.text ?? target.text,
       href: fields.href ?? target.fields.href ?? '',
@@ -5869,16 +5967,18 @@ function HtmlViewer({
       outerHtml: readManualEditOuterHtml(base, target.id) || target.outerHtml,
       fullSource: base,
     });
-    setManualEditError(null);
   }
 
   async function clearManualEditTargetSelection() {
     cancelManualEditStyleDraft();
     selectedManualEditTargetIdRef.current = null;
+    selectedManualEditTargetsRef.current = [];
     setSelectedManualEditTarget(null);
+    setSelectedManualEditTargets([]);
     setManualEditPanelPosition(null);
     setManualEditDraft(emptyManualEditDraft(sourceRef.current ?? ''));
     setManualEditError(null);
+    postSelectedManualEditTargetsToIframe([]);
   }
 
   // The inspector is scoped to one element (or the page). Closing it should
@@ -5927,6 +6027,8 @@ function HtmlViewer({
         const message = 'message' in saved ? saved.message : 'Unknown save error';
         if (patch.kind === 'set-style') {
           revertManualEditStylePreview(patch.id, patch.styles, baseSource);
+        } else if (patch.kind === 'set-style-batch') {
+          for (const item of patch.items) revertManualEditStylePreview(item.id, item.styles, baseSource);
         }
         setManualEditError(
           `Could not save the edited file${status ? ` (${status}${code ? ` ${code}` : ''})` : ''}: ${message}`,
@@ -5957,16 +6059,27 @@ function HtmlViewer({
         setSelectedManualEditTarget((current) => current?.id === patch.id
           ? { ...current, text: patch.value, fields: { ...current.fields, text: patch.value } }
           : current);
+        setSelectedManualEditTargets((current) => {
+          const next = current.map((target) => target.id === patch.id
+            ? { ...target, text: patch.value, fields: { ...target.fields, text: patch.value } }
+            : target);
+          selectedManualEditTargetsRef.current = next;
+          return next;
+        });
       } else if (patch.kind === 'remove-element') {
         if (manualEditPendingStyleRef.current?.id === patch.id) {
           manualEditPendingStyleRef.current = null;
           clearManualEditStyleTimer();
         }
-        selectedManualEditTargetIdRef.current = null;
-        setSelectedManualEditTarget(null);
+        const nextSelectedTargets = selectedManualEditTargetsRef.current.filter((target) => target.id !== patch.id);
+        selectedManualEditTargetsRef.current = nextSelectedTargets;
+        selectedManualEditTargetIdRef.current = nextSelectedTargets[0]?.id ?? null;
+        setSelectedManualEditTarget(nextSelectedTargets[0] ?? null);
+        setSelectedManualEditTargets(nextSelectedTargets);
         setManualEditTargets((current) => current.filter((target) => target.id !== patch.id));
-        setManualEditDraft(emptyManualEditDraft(result.source));
-        postSelectedManualEditTargetToIframe(null);
+        if (nextSelectedTargets[0]) setDraftForManualEditTarget(nextSelectedTargets[0]);
+        else setManualEditDraft(emptyManualEditDraft(result.source));
+        postSelectedManualEditTargetsToIframe(nextSelectedTargets.map((target) => target.id));
       } else {
         setManualEditDraft((current) => ({ ...current, fullSource: result.source }));
       }
@@ -7508,6 +7621,7 @@ function HtmlViewer({
     <ManualEditPanel
       targets={manualEditTargets}
       selectedTarget={selectedManualEditTarget}
+      selectedTargets={selectedManualEditTargets}
       draft={manualEditDraft}
       history={manualEditHistory}
       error={manualEditError}

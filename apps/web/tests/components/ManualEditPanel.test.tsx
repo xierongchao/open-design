@@ -22,6 +22,22 @@ const target: ManualEditTarget = {
   outerHtml: '<h1 data-od-id="hero-title">Original</h1>',
 };
 
+const siblingTarget: ManualEditTarget = {
+  ...target,
+  id: 'hero-body',
+  kind: 'container',
+  label: 'Hero Body',
+  tagName: 'div',
+  className: 'hero-body',
+  text: 'Body',
+  rect: { x: 180, y: 20, width: 90, height: 50 },
+  fields: { text: 'Body' },
+  attributes: { 'data-od-id': 'hero-body' },
+  isLayoutContainer: false,
+  outerHtml: '<div data-od-id="hero-body">Body</div>',
+  parentId: 'hero-parent',
+};
+
 type OnDraftChange = (draft: ManualEditDraft) => void;
 type OnStyleChange = (id: string, styles: Partial<ManualEditStyles>, label: string) => void;
 type OnInvalidStyle = (id: string, keys: Array<keyof ManualEditStyles>) => void;
@@ -534,7 +550,7 @@ describe('ManualEditPanel', () => {
     });
 
     const layoutSection = sectionByTitle('Auto Layout');
-    const gapInput = layoutSection.querySelector('.pp-gap-field input') as HTMLInputElement | null;
+    const gapInput = layoutSection.querySelector('.pp-main-axis-gap input') as HTMLInputElement | null;
     const verticalButton = layoutSection.querySelector('button[data-tooltip="Vertical"]') as HTMLButtonElement | null;
     if (!gapInput || !verticalButton) throw new Error('Layout controls not found');
     expect(gapInput.disabled).toBe(false);
@@ -548,6 +564,269 @@ describe('ManualEditPanel', () => {
 
     expect(onStyleChange).toHaveBeenCalledWith('hero-title', { columnGap: '9px' }, 'Style: Hero Title');
     expect(onStyleChange).toHaveBeenCalledWith('hero-title', { display: 'flex', flexDirection: 'column' }, 'Style: Hero Title');
+  });
+
+  it('shows content, fixed, and fill sizing modes for elements inside auto layout parents', () => {
+    const onStyleChange = vi.fn();
+    renderPanel({
+      onStyleChange,
+      selectedTarget: {
+        ...target,
+        parentLayout: { display: 'flex', flexDirection: 'row' },
+      },
+      styles: {
+        ...emptyManualEditStyles(),
+        width: '120px',
+        height: '40px',
+      },
+    });
+
+    const widthMode = host.querySelector('select[data-testid="manual-edit-width-mode"]') as HTMLSelectElement | null;
+    const heightMode = host.querySelector('select[data-testid="manual-edit-height-mode"]') as HTMLSelectElement | null;
+    if (!widthMode || !heightMode) throw new Error('Sizing mode selects not found');
+
+    expect(Array.from(widthMode.options).map((option) => option.textContent)).toEqual([
+      '适应内容',
+      '固定宽度',
+      '撑满容器',
+    ]);
+    expect(Array.from(heightMode.options).map((option) => option.textContent)).toEqual([
+      '适应内容',
+      '固定高度',
+      '撑满容器',
+    ]);
+    expect(host.querySelector('[data-size-axis="width"] [data-size-icon="width"]')).not.toBeNull();
+    expect(host.querySelector('[data-size-axis="height"] [data-size-icon="height"]')).not.toBeNull();
+
+    act(() => {
+      widthMode.value = 'content';
+      Simulate.change(widthMode);
+      heightMode.value = 'content';
+      Simulate.change(heightMode);
+      widthMode.value = 'fill';
+      Simulate.change(widthMode);
+      heightMode.value = 'fill';
+      Simulate.change(heightMode);
+    });
+
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { width: 'auto' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { height: 'auto' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { width: '100%' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { height: '100%' }, 'Style: Hero Title');
+  });
+
+  it('uses one main-axis gap control and removes grid from auto layout direction controls', () => {
+    const onStyleChange = vi.fn();
+    renderPanel({
+      onStyleChange,
+      selectedTarget: { ...target, isLayoutContainer: true },
+      styles: {
+        ...emptyManualEditStyles(),
+        display: 'flex',
+        flexDirection: 'column',
+        rowGap: '8px',
+        columnGap: '12px',
+      },
+    });
+
+    const layoutSection = sectionByTitle('Auto Layout');
+    expect(layoutSection.querySelector('button[data-tooltip="Grid"]')).toBeNull();
+    expect(layoutSection.querySelector('img[src$="/manual-edit-icons/vertical.svg"]')).not.toBeNull();
+    expect(layoutSection.querySelector('img[src$="/manual-edit-icons/horizontal.svg"]')).not.toBeNull();
+    expect(layoutSection.querySelector('img[src$="/manual-edit-icons/wrap.svg"]')).not.toBeNull();
+    const mainGapInputs = layoutSection.querySelectorAll('.pp-main-axis-gap input');
+    expect(mainGapInputs).toHaveLength(1);
+    const flowRow = layoutSection.querySelector('.pp-flow-row');
+    expect(flowRow?.querySelector('button[data-tooltip="Wrap"]')).not.toBeNull();
+
+    const mainGap = mainGapInputs[0] as HTMLInputElement;
+    act(() => {
+      mainGap.value = '10';
+      Simulate.change(mainGap);
+    });
+
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { rowGap: '10px' }, 'Style: Hero Title');
+    expect(onStyleChange).not.toHaveBeenCalledWith('hero-title', { columnGap: '10px' }, 'Style: Hero Title');
+  });
+
+  it('marks outer margin controls by physical side for directional spacing icons', () => {
+    renderPanel();
+
+    const marginSection = sectionByTitle('Position');
+    expect(marginSection.querySelector('[data-spacing-side="top"]')).not.toBeNull();
+    expect(marginSection.querySelector('[data-spacing-side="right"]')).not.toBeNull();
+    expect(marginSection.querySelector('[data-spacing-side="bottom"]')).not.toBeNull();
+    expect(marginSection.querySelector('[data-spacing-side="left"]')).not.toBeNull();
+    expect(marginSection.querySelector('[data-spacing-side="top"] [data-spacing-icon="spacing-top"]')).not.toBeNull();
+    expect(marginSection.querySelector('[data-spacing-side="right"] [data-spacing-icon="spacing-right"]')).not.toBeNull();
+    expect(marginSection.querySelector('[data-spacing-side="bottom"] [data-spacing-icon="spacing-bottom"]')).not.toBeNull();
+    expect(marginSection.querySelector('[data-spacing-side="left"] [data-spacing-icon="spacing-left"]')).not.toBeNull();
+    expect(marginSection.querySelector('img[src$="/manual-edit-icons/spacing-top.svg"]')).not.toBeNull();
+    expect(marginSection.querySelector('img[src$="/manual-edit-icons/spacing-right.svg"]')).not.toBeNull();
+    expect(marginSection.querySelector('img[src$="/manual-edit-icons/spacing-bottom.svg"]')).not.toBeNull();
+    expect(marginSection.querySelector('img[src$="/manual-edit-icons/spacing-left.svg"]')).not.toBeNull();
+    expect(marginSection.querySelector('.pp-margin-axis-icons')).toBeNull();
+  });
+
+  it('places padding expand and arrangement controls in the inner spacing header', () => {
+    const onStyleChange = vi.fn();
+    renderPanel({
+      onStyleChange,
+      selectedTarget: { ...target, isLayoutContainer: true },
+      styles: {
+        ...emptyManualEditStyles(),
+        display: 'flex',
+        flexDirection: 'column',
+      },
+    });
+
+    const layoutSection = sectionByTitle('Auto Layout');
+    expect(layoutSection.querySelector('.pp-auto-layout-body')).not.toBeNull();
+    expect(layoutSection.querySelector('.pp-auto-layout-left')).not.toBeNull();
+    expect(layoutSection.querySelector('.pp-auto-layout-right')).not.toBeNull();
+    const paddingHeader = layoutSection.querySelector('.pp-gap-header');
+    expect(paddingHeader?.querySelector('img[src$="/manual-edit-icons/expanded-margin.svg"]')).not.toBeNull();
+    expect(paddingHeader?.querySelector('button[data-padding-arrangement="vertical"] img[src$="/manual-edit-icons/vertical-margin.svg"]')).not.toBeNull();
+    expect(paddingHeader?.querySelector('button[data-padding-arrangement="horizontal"] img[src$="/manual-edit-icons/horizontal-margin.svg"]')).not.toBeNull();
+
+    const expand = paddingHeader?.querySelector<HTMLButtonElement>('button.pp-gap-toggle');
+    if (!expand) throw new Error('Padding expand button not found');
+    expect(expand.className).not.toContain('pp-gap-toggle-active');
+
+    act(() => {
+      expand.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    const activeExpand = sectionByTitle('Auto Layout').querySelector<HTMLButtonElement>('button.pp-gap-toggle');
+    expect(activeExpand?.className).toContain('pp-gap-toggle-active');
+
+    act(() => {
+      layoutSection.querySelector<HTMLButtonElement>('button[data-padding-arrangement="vertical"]')?.dispatchEvent(
+        new dom.window.MouseEvent('click', { bubbles: true }),
+      );
+      layoutSection.querySelector<HTMLButtonElement>('button[data-padding-arrangement="horizontal"]')?.dispatchEvent(
+        new dom.window.MouseEvent('click', { bubbles: true }),
+      );
+    });
+
+    expect(onStyleChange).toHaveBeenCalledWith(
+      'hero-title',
+      { display: 'flex', flexDirection: 'column', justifyContent: 'space-between' },
+      'Style: Hero Title',
+    );
+    expect(onStyleChange).toHaveBeenCalledWith(
+      'hero-title',
+      { display: 'flex', flexDirection: 'row', justifyContent: 'space-between' },
+      'Style: Hero Title',
+    );
+  });
+
+  it('maps horizontal auto-layout alignment dots to justify columns and align rows', () => {
+    const onStyleChange = vi.fn();
+    renderPanel({
+      onStyleChange,
+      selectedTarget: { ...target, isLayoutContainer: true },
+      styles: {
+        ...emptyManualEditStyles(),
+        display: 'flex',
+        flexDirection: 'row',
+      },
+    });
+
+    const layoutSection = sectionByTitle('Auto Layout');
+    const middleLeft = layoutSection.querySelector<HTMLButtonElement>(
+      '.pp-align-grid-box button[data-align-row="1"][data-align-col="0"]',
+    );
+    if (!middleLeft) throw new Error('Middle-left alignment control not found');
+    expect(middleLeft.getAttribute('data-tooltip-placement')).toBe('left');
+
+    act(() => {
+      middleLeft.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onStyleChange).toHaveBeenCalledWith(
+      'hero-title',
+      { justifyContent: 'flex-start' },
+      'Style: Hero Title',
+    );
+    expect(onStyleChange).toHaveBeenCalledWith(
+      'hero-title',
+      { alignItems: 'center' },
+      'Style: Hero Title',
+    );
+  });
+
+  it('batch applies style changes when multiple targets are selected', () => {
+    const onStyleChange = vi.fn();
+    renderPanel({
+      onStyleChange,
+      selectedTargets: [{ ...target, parentId: 'hero-parent' }, siblingTarget],
+    });
+
+    const opacityInput = Array.from(host.querySelectorAll('.pp-section input'))
+      .find((input) => input.closest('.pp-section')?.textContent?.includes('Opacity')) as HTMLInputElement | undefined;
+    if (!opacityInput) throw new Error('Opacity input not found');
+
+    act(() => {
+      opacityInput.value = '65';
+      Simulate.change(opacityInput);
+    });
+
+    expect(onStyleChange).toHaveBeenCalledWith('__selection__', { opacity: '0.65' }, 'Style: 2 elements');
+  });
+
+  it('shows same-parent alignment controls for non-auto-layout multi selections', () => {
+    const onApplyPatch = vi.fn();
+    renderPanel({
+      onApplyPatch,
+      selectedTargets: [{ ...target, parentId: 'hero-parent' }, siblingTarget],
+    });
+
+    const toolbar = host.querySelector('.pp-alignment-toolbar');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.querySelector('button[data-align-action="left"]')).not.toBeNull();
+    expect(toolbar?.querySelector('img[src$="/manual-edit-icons/distribute-horizontal.svg"]')).not.toBeNull();
+    expect(toolbar?.querySelector('img[src$="/manual-edit-icons/distribute-vertical.svg"]')).not.toBeNull();
+
+    act(() => {
+      toolbar?.querySelector<HTMLButtonElement>('button[data-align-action="left"]')?.dispatchEvent(
+        new dom.window.MouseEvent('click', { bubbles: true }),
+      );
+    });
+
+    expect(onApplyPatch).toHaveBeenCalledWith(
+      {
+        kind: 'align-elements',
+        ids: ['hero-title', 'hero-body'],
+        mode: 'left',
+        rects: {
+          'hero-title': target.rect,
+          'hero-body': siblingTarget.rect,
+        },
+      },
+      'Align left',
+    );
+  });
+
+  it('shows a text textarea for single selected text elements', () => {
+    const onDraftChange = vi.fn();
+    const onApplyPatch = vi.fn();
+    renderPanel({ onDraftChange, onApplyPatch });
+
+    const textarea = host.querySelector('textarea[data-testid="manual-edit-textarea"]') as HTMLTextAreaElement | null;
+    if (!textarea) throw new Error('Text textarea not found');
+
+    act(() => {
+      textarea.value = 'Rewritten headline';
+      Simulate.change(textarea);
+      Simulate.blur(textarea);
+    });
+
+    expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ text: 'Rewritten headline' }));
+    expect(onApplyPatch).toHaveBeenCalledWith(
+      { id: 'hero-title', kind: 'set-text', value: 'Rewritten headline' },
+      'Edit text',
+    );
   });
 
   it('summarizes full-source history entries without rendering the full file', () => {
@@ -590,6 +869,7 @@ describe('ManualEditPanel', () => {
     pageStylesEnabled = true,
     floatingStyle,
     onFloatingPositionChange,
+    selectedTargets,
   }: {
     onDraftChange?: OnDraftChange;
     onApplyPatch?: OnApplyPatch;
@@ -605,6 +885,7 @@ describe('ManualEditPanel', () => {
     pageStylesEnabled?: boolean;
     floatingStyle?: CSSProperties;
     onFloatingPositionChange?: (position: { left: number; top: number }) => void;
+    selectedTargets?: ManualEditTarget[];
   } = {}) {
     const draft = {
       ...emptyManualEditDraft('<html></html>'),
@@ -618,6 +899,7 @@ describe('ManualEditPanel', () => {
         <ManualEditPanel
           targets={[target]}
           selectedTarget={selectedTarget}
+          selectedTargets={selectedTargets}
           draft={draft}
           history={[]}
           error={null}

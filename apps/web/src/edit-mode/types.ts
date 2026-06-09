@@ -15,6 +15,8 @@ export interface ManualEditFields {
 }
 
 export interface ManualEditStyles {
+  left: string;
+  top: string;
   fontFamily: string;
   fontSize: string;
   fontWeight: string;
@@ -70,17 +72,36 @@ export interface ManualEditTarget {
   attributes: Record<string, string>;
   styles: ManualEditStyles;
   isLayoutContainer: boolean;
+  parentId?: string;
+  parentLayout?: {
+    display: string;
+    flexDirection: string;
+  };
   isHidden?: boolean;
   outerHtml: string;
 }
+
+export type ManualEditMovePosition = 'before' | 'after' | 'inside-start' | 'inside-end';
+export type ManualEditAlignMode =
+  | 'left'
+  | 'center-x'
+  | 'right'
+  | 'top'
+  | 'center-y'
+  | 'bottom'
+  | 'distribute-x'
+  | 'distribute-y';
 
 export type ManualEditPatch =
   | { id: string; kind: 'set-text'; value: string }
   | { id: string; kind: 'set-link'; text: string; href: string }
   | { id: string; kind: 'set-image'; src: string; alt: string }
+  | { id: string; kind: 'move-element'; targetId: string; position: ManualEditMovePosition }
   | { id: string; kind: 'remove-element' }
   | { kind: 'set-token'; token: string; value: string }
   | { id: string; kind: 'set-style'; styles: Partial<ManualEditStyles> }
+  | { kind: 'set-style-batch'; items: Array<{ id: string; styles: Partial<ManualEditStyles> }> }
+  | { kind: 'align-elements'; ids: string[]; mode: ManualEditAlignMode; rects: Record<string, ManualEditRect> }
   | { id: string; kind: 'set-attributes'; attributes: Record<string, string> }
   | { id: string; kind: 'set-outer-html'; html: string }
   | { kind: 'set-full-source'; source: string };
@@ -102,6 +123,7 @@ export interface ManualEditTargetMessage {
 export interface ManualEditSelectMessage {
   type: 'od-edit-select';
   target: ManualEditTarget;
+  append?: boolean;
 }
 
 export interface ManualEditHoverMessage {
@@ -111,6 +133,29 @@ export interface ManualEditHoverMessage {
 
 export interface ManualEditBackgroundMessage {
   type: 'od-edit-background';
+}
+
+export interface ManualEditDeselectMessage {
+  type: 'od-edit-deselect';
+}
+
+export interface ManualEditResizeEndMessage {
+  type: 'od-edit-resize-end';
+  id: string;
+  styles: Partial<Pick<ManualEditStyles, 'width' | 'height'>>;
+}
+
+export interface ManualEditDragEndMessage {
+  type: 'od-edit-drag-end';
+  id: string;
+  styles: Partial<Pick<ManualEditStyles, 'marginTop' | 'marginLeft'>>;
+}
+
+export interface ManualEditMoveEndMessage {
+  type: 'od-edit-move-end';
+  id: string;
+  targetId: string;
+  position: ManualEditMovePosition;
 }
 
 export interface ManualEditPreviewAppliedMessage {
@@ -148,12 +193,17 @@ export type ManualEditBridgeMessage =
   | ManualEditSelectMessage
   | ManualEditHoverMessage
   | ManualEditBackgroundMessage
+  | ManualEditDeselectMessage
+  | ManualEditResizeEndMessage
+  | ManualEditDragEndMessage
+  | ManualEditMoveEndMessage
   | ManualEditPreviewAppliedMessage
   | ManualEditTextCommitMessage
   | ManualEditViewportWheelMessage
   | ManualEditViewportPanMessage;
 
 export const MANUAL_EDIT_STYLE_PROPS: readonly (keyof ManualEditStyles)[] = [
+  'left', 'top',
   'fontFamily', 'fontSize', 'fontWeight', 'color', 'textAlign', 'lineHeight', 'letterSpacing',
   'width', 'height', 'minHeight',
   'display', 'gap', 'columnGap', 'rowGap', 'flexDirection', 'flexWrap', 'justifyContent', 'alignItems',

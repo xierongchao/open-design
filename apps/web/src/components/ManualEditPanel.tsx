@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useT } from '../i18n';
-import { emptyManualEditStyles, type ManualEditHistoryEntry, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../edit-mode/types';
+import { emptyManualEditStyles, type ManualEditAlignMode, type ManualEditHistoryEntry, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../edit-mode/types';
 import { Icon } from './Icon';
 
 export interface ManualEditDraft {
@@ -26,6 +26,7 @@ export function emptyManualEditDraft(source = ''): ManualEditDraft {
 type SharedPanelProps = {
   targets: ManualEditTarget[];
   selectedTarget: ManualEditTarget | null;
+  selectedTargets?: ManualEditTarget[];
   draft: ManualEditDraft;
   history: ManualEditHistoryEntry[];
   error: string | null;
@@ -55,7 +56,7 @@ export function ManualEditPanel(props: SharedPanelProps & {
   onFloatingPositionChange?: (position: { left: number; top: number }) => void;
 }) {
   const {
-    selectedTarget, draft, error, canUndo, busy,
+    selectedTarget, selectedTargets, draft, error, canUndo, busy,
     onDraftChange, onStyleChange, onInvalidStyle, onError,
     onCancelDraft, onSaveDraft, onExit, onApplyPatch, onPickImage,
     pageStylesEnabled = true,
@@ -66,17 +67,27 @@ export function ManualEditPanel(props: SharedPanelProps & {
   const t = useT();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const selectedTargetRef = useRef<ManualEditTarget | null>(selectedTarget);
+  const effectiveSelectedTargets = selectedTargets?.length
+    ? selectedTargets
+    : selectedTarget
+      ? [selectedTarget]
+      : [];
+  const targetForInspector = effectiveSelectedTargets[0] ?? null;
+  const selectionCount = effectiveSelectedTargets.length;
+  const selectedTargetRef = useRef<ManualEditTarget | null>(targetForInspector);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Track latest styles via ref so synchronous calls (e.g. collapsed margin setting both l+r)
   // accumulate correctly instead of overwriting each other with a stale draft.
   const latestStylesRef = useRef<ManualEditStyles>(draft.styles);
   latestStylesRef.current = draft.styles;
-  const targetForInspector = selectedTarget;
-  const panelTitle = targetForInspector ? readableManualEditTargetName(targetForInspector) : t('manualEdit.fallbackTitle');
+  const panelTitle = selectionCount > 1
+    ? `${selectionCount} elements`
+    : targetForInspector
+      ? readableManualEditTargetName(targetForInspector)
+      : t('manualEdit.fallbackTitle');
   useEffect(() => {
-    selectedTargetRef.current = selectedTarget;
-  }, [selectedTarget]);
+    selectedTargetRef.current = targetForInspector;
+  }, [targetForInspector]);
 
   const changeTargetStyles = (styles: Partial<ManualEditStyles>) => {
     const baseStyles = latestStylesRef.current;
@@ -89,11 +100,15 @@ export function ManualEditPanel(props: SharedPanelProps & {
     });
     if (!normalized.ok) {
       onError('error' in normalized ? normalized.error : 'Invalid style value.');
-      onInvalidStyle?.(targetForInspector.id, Object.keys(styles) as Array<keyof ManualEditStyles>);
+      onInvalidStyle?.(selectionCount > 1 ? '__selection__' : targetForInspector.id, Object.keys(styles) as Array<keyof ManualEditStyles>);
       return;
     }
     onError('');
-    onStyleChange?.(targetForInspector.id, normalized.styles, `Style: ${targetForInspector.label}`);
+    onStyleChange?.(
+      selectionCount > 1 ? '__selection__' : targetForInspector.id,
+      normalized.styles,
+      selectionCount > 1 ? `Style: ${selectionCount} elements` : `Style: ${targetForInspector.label}`,
+    );
   };
   const changeTargetStyle = (key: keyof ManualEditStyles, value: string) => {
     changeTargetStyles({ [key]: value });
@@ -190,9 +205,13 @@ export function ManualEditPanel(props: SharedPanelProps & {
         {targetForInspector ? (
           <PropertiesInspector
             target={targetForInspector}
+            selectedTargets={effectiveSelectedTargets}
+            draft={draft}
             styles={draft.styles}
             onChange={changeTargetStyle}
             onChangeStyles={changeTargetStyles}
+            onDraftChange={onDraftChange}
+            onApplyPatch={onApplyPatch}
             collapsedSections={collapsedSections}
             onToggleSection={toggleSection}
             documentColors={documentColors}
@@ -334,12 +353,17 @@ export function ManualEditPanel(props: SharedPanelProps & {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 function PropertiesInspector({
-  target, styles, onChange, onChangeStyles, collapsedSections, onToggleSection, documentColors,
+  target, selectedTargets, draft, styles, onChange, onChangeStyles, onDraftChange, onApplyPatch,
+  collapsedSections, onToggleSection, documentColors,
 }: {
   target: ManualEditTarget;
+  selectedTargets: ManualEditTarget[];
+  draft: ManualEditDraft;
   styles: ManualEditStyles;
   onChange: (key: keyof ManualEditStyles, value: string) => void;
   onChangeStyles: (styles: Partial<ManualEditStyles>) => void;
+  onDraftChange: (draft: ManualEditDraft) => void;
+  onApplyPatch: (patch: ManualEditPatch, label: string) => void;
   collapsedSections: Set<string>;
   onToggleSection: (id: string) => void;
   documentColors: string[];
@@ -363,11 +387,23 @@ function PropertiesInspector({
   const displayMode = styles.display.trim();
   const layoutModeActive = displayMode === 'flex'
     || displayMode === 'inline-flex'
-    || displayMode === 'grid'
     || !!styles.flexDirection.trim();
+  const hasAutoLayoutParent = Boolean(target.parentLayout?.display?.includes('flex') || target.parentLayout?.display?.includes('grid'));
+  const mainAxisGapProp: keyof ManualEditStyles = styles.flexDirection.startsWith('column') ? 'rowGap' : 'columnGap';
+  const mainAxisGap = mainAxisGapProp === 'rowGap' ? styles.rowGap : styles.columnGap;
+  const mainAxisGapLabel = mainAxisGapProp === 'rowGap' ? '↕' : '↔';
+  const singleTextTarget = selectedTargets.length === 1 && isText ? target : null;
+  const showAlignmentToolbar = canAlignSelectedTargets(selectedTargets);
 
   return (
     <>
+      {showAlignmentToolbar ? (
+        <AlignmentToolbar
+          targets={selectedTargets}
+          onApplyPatch={onApplyPatch}
+        />
+      ) : null}
+
       {/* ── 1. Frame info ── */}
       <Section title={t('manualEdit.section.frame')} id="frame" collapsed={collapsedSections} onToggle={onToggleSection}>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', gap: 6 }}>
@@ -377,12 +413,51 @@ function PropertiesInspector({
         </div>
       </Section>
 
+      {singleTextTarget ? (
+        <Section title="Text" id="text" collapsed={collapsedSections} onToggle={onToggleSection}>
+          <textarea
+            key={singleTextTarget.id}
+            className="pp-textarea"
+            data-testid="manual-edit-textarea"
+            defaultValue={draft.text || singleTextTarget.fields.text || singleTextTarget.text}
+            onChange={(event) => {
+              onDraftChange({ ...draft, text: event.currentTarget.value });
+            }}
+            onBlur={(event) => {
+              const value = event.currentTarget.value;
+              if (value === (singleTextTarget.fields.text ?? singleTextTarget.text)) return;
+              onApplyPatch({ id: singleTextTarget.id, kind: 'set-text', value }, 'Edit text');
+            }}
+          />
+        </Section>
+      ) : null}
+
       {/* ── 2. Position ── */}
       <Section title={t('manualEdit.section.position')} id="position" collapsed={collapsedSections} onToggle={onToggleSection}>
         <div className="pp-field-pair">
           <UnitRow label="X" value={String(Math.round(target.rect.x))} onChange={(v) => u('width', v)} unit="" />
           <UnitRow label="Y" value={String(Math.round(target.rect.y))} onChange={(v) => u('height', v)} unit="" />
         </div>
+        <div className="pp-field-pair">
+          <UnitRow label="W" value={styles.width} onChange={(v) => u('width', v)} unit="px" autoUnit />
+          <UnitRow label="H" value={styles.height} onChange={(v) => u('height', v)} unit="px" autoUnit />
+        </div>
+        {hasAutoLayoutParent ? (
+          <div className="pp-size-mode-row" aria-label="Sizing mode">
+            <SizingModeSelect
+              testId="manual-edit-width-mode"
+              axis="width"
+              value={sizeModeFor(styles.width)}
+              onChange={(mode) => u('width', sizeValueForMode(mode, Math.round(target.rect.width)))}
+            />
+            <SizingModeSelect
+              testId="manual-edit-height-mode"
+              axis="height"
+              value={sizeModeFor(styles.height)}
+              onChange={(mode) => u('height', sizeValueForMode(mode, Math.round(target.rect.height)))}
+            />
+          </div>
+        ) : null}
         <MarginPanel
           marginTop={styles.marginTop}
           marginRight={styles.marginRight}
@@ -395,61 +470,63 @@ function PropertiesInspector({
       {/* ── 3. Auto Layout ── */}
       {layoutEnabled ? (
         <Section title={t('manualEdit.section.autoLayout')} id="autolayout" collapsed={collapsedSections} onToggle={onToggleSection}>
-          <div className="pp-flow-row">
-            <button
-              type="button"
-              className={`pp-icon-btn${!layoutModeActive ? ' pp-icon-btn-active' : ''}`}
-              data-tooltip={t('manualEdit.autoLayout.none')}
-              onClick={() => onChangeStyles({
-                display: '',
-                flexDirection: '',
-                flexWrap: '',
-                justifyContent: '',
-                alignItems: '',
-                gap: '',
-                columnGap: '',
-                rowGap: '',
-              })}
-            >
-              <SvgLayoutNone />
-            </button>
-            <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && styles.flexDirection === 'column' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.vertical')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'column' })}>
-              <SvgLayoutVertical />
-            </button>
-            <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && (styles.flexDirection === 'row' || !styles.flexDirection.trim()) ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.horizontal')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'row' })}>
-              <SvgLayoutHorizontal />
-            </button>
-            <button type="button" className={`pp-icon-btn${displayMode === 'grid' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.grid')} onClick={() => onChangeStyles({ display: 'grid', flexDirection: '' })}>
-              <SvgLayoutGrid />
-            </button>
-          </div>
-          {!!styles.flexDirection && (
-            <button type="button" className={`pp-icon-btn${styles.flexWrap === 'wrap' ? ' pp-icon-btn-active' : ''}`} data-tooltip={styles.flexWrap === 'wrap' ? t('manualEdit.label.flexNoWrap') : t('manualEdit.label.flexWrap')} onClick={() => u('flexWrap', styles.flexWrap === 'wrap' ? '' : 'wrap')}>
-              <SvgFlexWrap active={styles.flexWrap === 'wrap'} />
-            </button>
-          )}
-          <div className="pp-field-pair">
-            <UnitRow label="W" value={styles.width} onChange={(v) => u('width', v)} unit="px" autoUnit />
-            <UnitRow label="H" value={styles.height} onChange={(v) => u('height', v)} unit="px" autoUnit />
-          </div>
-          <div className="pp-align-gap-row">
-            <AlignGrid
-              justifyValue={styles.justifyContent}
-              alignValue={styles.alignItems}
-              onJustifyChange={(v) => u('justifyContent', v)}
-              onAlignChange={(v) => u('alignItems', v)}
-            />
-            <GapPanel
-              columnGap={styles.columnGap}
-              rowGap={styles.rowGap}
-              onColumnGapChange={(v) => u('columnGap', v)}
-              onRowGapChange={(v) => u('rowGap', v)}
-              paddingTop={styles.paddingTop}
-              paddingRight={styles.paddingRight}
-              paddingBottom={styles.paddingBottom}
-              paddingLeft={styles.paddingLeft}
-              onPaddingChange={(side, value) => u(sideToProp('padding', side), value)}
-            />
+          <div className="pp-auto-layout-body">
+            <div className="pp-auto-layout-left">
+              <div className="pp-flow-row">
+                <button
+                  type="button"
+                  className={`pp-icon-btn${!layoutModeActive ? ' pp-icon-btn-active' : ''}`}
+                  data-tooltip={t('manualEdit.autoLayout.none')}
+                  onClick={() => onChangeStyles({
+                    display: '',
+                    flexDirection: '',
+                    flexWrap: '',
+                    justifyContent: '',
+                    alignItems: '',
+                    gap: '',
+                    columnGap: '',
+                    rowGap: '',
+                  })}
+                >
+                  <SvgLayoutNone />
+                </button>
+                <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && styles.flexDirection === 'column' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.vertical')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'column' })}>
+                  <ManualEditIcon name="vertical" />
+                </button>
+                <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && (styles.flexDirection === 'row' || !styles.flexDirection.trim()) ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.horizontal')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'row' })}>
+                  <ManualEditIcon name="horizontal" />
+                </button>
+                {!!styles.flexDirection && (
+                  <button type="button" className={`pp-icon-btn${styles.flexWrap === 'wrap' ? ' pp-icon-btn-active' : ''}`} data-tooltip={styles.flexWrap === 'wrap' ? t('manualEdit.label.flexNoWrap') : t('manualEdit.label.flexWrap')} onClick={() => u('flexWrap', styles.flexWrap === 'wrap' ? '' : 'wrap')}>
+                    <ManualEditIcon name="wrap" />
+                  </button>
+                )}
+              </div>
+              <GapPanel
+                mainAxisGap={mainAxisGap}
+                mainAxisGapLabel={mainAxisGapLabel}
+                onMainAxisGapChange={(v) => u(mainAxisGapProp, v)}
+                paddingTop={styles.paddingTop}
+                paddingRight={styles.paddingRight}
+                paddingBottom={styles.paddingBottom}
+                paddingLeft={styles.paddingLeft}
+                onPaddingChange={(side, value) => u(sideToProp('padding', side), value)}
+                onArrangementChange={(axis) => onChangeStyles({
+                  display: 'flex',
+                  flexDirection: axis === 'vertical' ? 'column' : 'row',
+                  justifyContent: 'space-between',
+                })}
+              />
+            </div>
+            <div className="pp-auto-layout-right">
+              <AlignGrid
+                flexDirection={styles.flexDirection || 'row'}
+                justifyValue={styles.justifyContent}
+                alignValue={styles.alignItems}
+                onJustifyChange={(v) => u('justifyContent', v)}
+                onAlignChange={(v) => u('alignItems', v)}
+              />
+            </div>
           </div>
           <div className="pp-toggle-row">
             <input type="checkbox" id="pp-clip" checked={styles.overflow === 'hidden'} onChange={(e) => u('overflow', e.currentTarget.checked ? 'hidden' : '')} />
@@ -701,6 +778,134 @@ function Section({ title, id, children, collapsed, onToggle, actions }: {
   );
 }
 
+function canAlignSelectedTargets(targets: ManualEditTarget[]): boolean {
+  if (targets.length < 2) return false;
+  const parentId = targets[0]?.parentId;
+  if (!parentId) return false;
+  return targets.every((target) => (
+    target.parentId === parentId && !isAutoLayoutDisplay(target.parentLayout?.display ?? '')
+  ));
+}
+
+function isAutoLayoutDisplay(display: string): boolean {
+  return display.includes('flex') || display.includes('grid');
+}
+
+function AlignmentToolbar({
+  targets,
+  onApplyPatch,
+}: {
+  targets: ManualEditTarget[];
+  onApplyPatch: (patch: ManualEditPatch, label: string) => void;
+}) {
+  const rects = targets.reduce<Record<string, ManualEditTarget['rect']>>((acc, target) => {
+    acc[target.id] = target.rect;
+    return acc;
+  }, {});
+  const apply = (mode: ManualEditAlignMode, label: string) => {
+    onApplyPatch({
+      kind: 'align-elements',
+      ids: targets.map((target) => target.id),
+      mode,
+      rects,
+    }, label);
+  };
+  const buttons: Array<{
+    mode: ManualEditAlignMode;
+    label: string;
+    icon: ManualEditIconName;
+  }> = [
+    { mode: 'left', label: 'Align left', icon: 'align-left' },
+    { mode: 'center-x', label: 'Align horizontal center', icon: 'align-center-x' },
+    { mode: 'right', label: 'Align right', icon: 'align-right' },
+    { mode: 'top', label: 'Align top', icon: 'align-top' },
+    { mode: 'center-y', label: 'Align vertical center', icon: 'align-center-y' },
+    { mode: 'bottom', label: 'Align bottom', icon: 'align-bottom' },
+    { mode: 'distribute-x', label: 'Distribute horizontally', icon: 'distribute-horizontal' },
+    { mode: 'distribute-y', label: 'Distribute vertically', icon: 'distribute-vertical' },
+  ];
+  return (
+    <div className="pp-alignment-toolbar" aria-label="Alignment">
+      {buttons.map((button) => (
+        <button
+          key={button.mode}
+          type="button"
+          className="pp-icon-btn"
+          data-align-action={button.mode}
+          data-tooltip={button.label}
+          onClick={() => apply(button.mode, button.label)}
+        >
+          <ManualEditIcon name={button.icon} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+type ManualEditIconName =
+  | 'vertical'
+  | 'horizontal'
+  | 'wrap'
+  | 'vertical-gap'
+  | 'horizontal-gap'
+  | 'vertical-margin'
+  | 'horizontal-margin'
+  | 'expanded-margin'
+  | 'distribute-vertical'
+  | 'distribute-horizontal'
+  | 'align-left'
+  | 'align-center-x'
+  | 'align-right'
+  | 'align-top'
+  | 'align-center-y'
+  | 'align-bottom';
+
+function ManualEditIcon({ name }: { name: ManualEditIconName }) {
+  if (isAlignIconName(name)) return <InlineAlignIcon name={name} />;
+  return (
+    <img
+      src={`/manual-edit-icons/${name}.svg`}
+      alt=""
+      aria-hidden="true"
+      className="pp-asset-icon"
+    />
+  );
+}
+
+function isAlignIconName(name: ManualEditIconName): name is Extract<ManualEditIconName, `align-${string}`> {
+  return name === 'align-left'
+    || name === 'align-center-x'
+    || name === 'align-right'
+    || name === 'align-top'
+    || name === 'align-center-y'
+    || name === 'align-bottom';
+}
+
+function InlineAlignIcon({ name }: { name: Extract<ManualEditIconName, `align-${string}`> }) {
+  const guide = name === 'align-left' || name === 'align-center-x' || name === 'align-right'
+    ? 'vertical'
+    : 'horizontal';
+  const lineX = name === 'align-left' ? 4 : name === 'align-right' ? 12 : 8;
+  const lineY = name === 'align-top' ? 4 : name === 'align-bottom' ? 12 : 8;
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      {guide === 'vertical' ? (
+        <>
+          <path d={`M${lineX} 2.5v11`} stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          <rect x={name === 'align-right' ? 5 : name === 'align-center-x' ? 5 : 4} y="4" width="7" height="3" rx="0.8" fill="currentColor" opacity="0.35" />
+          <rect x={name === 'align-right' ? 7 : name === 'align-center-x' ? 4 : 4} y="9" width="5" height="3" rx="0.8" fill="currentColor" opacity="0.55" />
+        </>
+      ) : (
+        <>
+          <path d={`M2.5 ${lineY}h11`} stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          <rect x="4" y={name === 'align-bottom' ? 5 : name === 'align-center-y' ? 5 : 4} width="3" height="7" rx="0.8" fill="currentColor" opacity="0.35" />
+          <rect x="9" y={name === 'align-bottom' ? 7 : name === 'align-center-y' ? 4 : 4} width="3" height="5" rx="0.8" fill="currentColor" opacity="0.55" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    SVG layout direction icons
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -781,26 +986,28 @@ function SvgAlignDot({ row, col }: { row: number; col: number }) {
   );
 }
 
-function AlignGrid({ justifyValue, alignValue, onJustifyChange, onAlignChange }: {
+function AlignGrid({ flexDirection, justifyValue, alignValue, onJustifyChange, onAlignChange }: {
+  flexDirection: string;
   justifyValue: string;
   alignValue: string;
   onJustifyChange: (v: string) => void;
   onAlignChange: (v: string) => void;
 }) {
-  // Map 9-grid positions to justify/align combinations
-  // Row maps to justify: 0=flex-start, 1=center, 2=flex-end
-  // Col maps to align: 0=flex-start, 1=center, 2=flex-end
-  const cells: Array<{ row: number; col: number; justify: string; align: string }> = [
-    { row: 0, col: 0, justify: 'flex-start', align: 'flex-start' },
-    { row: 0, col: 1, justify: 'flex-start', align: 'center' },
-    { row: 0, col: 2, justify: 'flex-start', align: 'flex-end' },
-    { row: 1, col: 0, justify: 'center', align: 'flex-start' },
-    { row: 1, col: 1, justify: 'center', align: 'center' },
-    { row: 1, col: 2, justify: 'center', align: 'flex-end' },
-    { row: 2, col: 0, justify: 'flex-end', align: 'flex-start' },
-    { row: 2, col: 1, justify: 'flex-end', align: 'center' },
-    { row: 2, col: 2, justify: 'flex-end', align: 'flex-end' },
-  ];
+  const positions = ['flex-start', 'center', 'flex-end'] as const;
+  const isColumn = flexDirection.startsWith('column');
+  const cells: Array<{ row: number; col: number; justify: string; align: string }> = [];
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      const rowPosition = positions[row] ?? 'center';
+      const colPosition = positions[col] ?? 'center';
+      cells.push({
+        row,
+        col,
+        justify: isColumn ? rowPosition : colPosition,
+        align: isColumn ? colPosition : rowPosition,
+      });
+    }
+  }
 
   // Determine active cell based on current justify + align values
   const activeCell = cells.find(
@@ -828,6 +1035,9 @@ function AlignGrid({ justifyValue, alignValue, onJustifyChange, onAlignChange }:
               type="button"
               className={`pp-align-dot${isActive ? ' pp-align-dot-active' : ''}`}
               data-tooltip={cell ? `${cell.justify} / ${cell.align}` : ''}
+              data-tooltip-placement="left"
+              data-align-row={r}
+              data-align-col={c}
               onClick={() => {
                 if (cell) {
                   onJustifyChange(cell.justify);
@@ -845,7 +1055,7 @@ function AlignGrid({ justifyValue, alignValue, onJustifyChange, onAlignChange }:
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SVG edge icons for gap expand/collapse toggle
+   SVG edge icon for stroke-side expansion
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /** Collapsed: 2 edges (top & bottom) */
@@ -854,19 +1064,6 @@ function SvgTwoEdges() {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
       <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.2" />
       <line x1="4" y1="5" x2="10" y2="5" stroke="currentColor" strokeWidth="1.2" />
-    </svg>
-  );
-}
-
-/** Expanded: 4 edges (all sides) */
-function SvgFourEdges() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.2" />
-      <line x1="4" y1="4" x2="10" y2="4" stroke="currentColor" strokeWidth="1" />
-      <line x1="4" y1="10" x2="10" y2="10" stroke="currentColor" strokeWidth="1" />
-      <line x1="4" y1="4" x2="4" y2="10" stroke="currentColor" strokeWidth="1" />
-      <line x1="10" y1="4" x2="10" y2="10" stroke="currentColor" strokeWidth="1" />
     </svg>
   );
 }
@@ -1035,14 +1232,67 @@ function SvgStrokeDashed() {
   );
 }
 
+type SizingMode = 'content' | 'fixed' | 'fill';
+
+function SizingModeSelect({ axis, value, testId, onChange }: {
+  axis: 'width' | 'height';
+  value: SizingMode;
+  testId: string;
+  onChange: (value: SizingMode) => void;
+}) {
+  return (
+    <label className="pp-size-mode-field" data-size-axis={axis}>
+      <span className="pp-size-mode-icon" aria-hidden="true">
+        <SvgSizeAxis axis={axis} />
+      </span>
+      <select
+        data-testid={testId}
+        className="pp-size-mode-select"
+        value={value}
+        aria-label={axis === 'width' ? 'Width sizing mode' : 'Height sizing mode'}
+        onChange={(event) => {
+          const next = event.currentTarget.value;
+          onChange(next === 'fill' || next === 'content' ? next : 'fixed');
+        }}
+      >
+        <option value="content">适应内容</option>
+        <option value="fixed">{axis === 'width' ? '固定宽度' : '固定高度'}</option>
+        <option value="fill">撑满容器</option>
+      </select>
+    </label>
+  );
+}
+
+function SvgSizeAxis({ axis }: { axis: 'width' | 'height' }) {
+  if (axis === 'width') {
+    return (
+      <svg data-size-icon="width" width="15" height="15" viewBox="0 0 15 15" fill="none">
+        <rect x="2.5" y="4.5" width="10" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M4.5 7.5h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        <path d="M5.8 6.2 4.5 7.5l1.3 1.3M9.2 6.2l1.3 1.3-1.3 1.3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg data-size-icon="height" width="15" height="15" viewBox="0 0 15 15" fill="none">
+      <rect x="4.5" y="2.5" width="6" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M7.5 4.5v6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M6.2 5.8 7.5 4.5l1.3 1.3M6.2 9.2l1.3 1.3 1.3-1.3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    ScrubInput — shared mini drag-to-scrub input for gap/margin fields
    Extracted as a top-level component so React does NOT unmount/remount
    on every parent render (which would reset the input and break dragging).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-function ScrubInput({ value, onChange, placeholder }: {
-  value: string; onChange: (v: string) => void; placeholder?: string;
+function ScrubInput({ value, onChange, placeholder, spacingSide }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  spacingSide?: 'top' | 'right' | 'bottom' | 'left' | 'horizontal' | 'vertical' | 'main';
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const display = stripPxUnit(value);
@@ -1076,11 +1326,13 @@ function ScrubInput({ value, onChange, placeholder }: {
   }, [numeric, display]);
 
   return (
-    <div className="pp-gap-field">
+    <div className="pp-gap-field" data-spacing-side={spacingSide}>
       <span
         className={`pp-gap-field-label${numeric ? ' pp-gap-drag' : ''}`}
         onPointerDown={onDown}
-      >{placeholder}</span>
+      >
+        <SpacingIcon side={spacingSide} fallback={placeholder} />
+      </span>
       <input
         ref={inputRef}
         value={display}
@@ -1095,60 +1347,139 @@ function ScrubInput({ value, onChange, placeholder }: {
   );
 }
 
+function SpacingIcon({ side, fallback }: {
+  side?: 'top' | 'right' | 'bottom' | 'left' | 'horizontal' | 'vertical' | 'main';
+  fallback?: string;
+}) {
+  if (!side) return <>{fallback}</>;
+  const iconName = side === 'main' ? 'spacing-gap' : `spacing-${side}`;
+  if (side === 'horizontal' || side === 'vertical' || side === 'main') {
+    const asset = side === 'horizontal'
+      ? 'horizontal-margin'
+      : side === 'vertical'
+        ? 'vertical-margin'
+        : 'horizontal-gap';
+    return (
+      <img
+        src={`/manual-edit-icons/${asset}.svg`}
+        alt=""
+        aria-hidden="true"
+        className="pp-asset-icon"
+        data-spacing-icon={iconName}
+      />
+    );
+  }
+  const sideAsset = {
+    top: 'spacing-top',
+    right: 'spacing-right',
+    bottom: 'spacing-bottom',
+    left: 'spacing-left',
+  }[side];
+  return (
+    <img
+      src={`/manual-edit-icons/${sideAsset}.svg`}
+      alt=""
+      aria-hidden="true"
+      className="pp-asset-icon"
+      data-spacing-icon={iconName}
+    />
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
-   Gap panel (expandable row/column gap + padding controls)
+   Gap panel (padding controls + main-axis gap control)
+   Collapsed: padding left+right / top+bottom pairs
+   Expanded: 4 individual padding directions
+   Gap writes only the current flex main-axis gap
    ═══════════════════════════════════════════════════════════════════════════ */
 
-function GapPanel({ columnGap, rowGap, onColumnGapChange, onRowGapChange, paddingTop, paddingRight, paddingBottom, paddingLeft, onPaddingChange }: {
-  columnGap: string;
-  rowGap: string;
-  onColumnGapChange: (v: string) => void;
-  onRowGapChange: (v: string) => void;
+function GapPanel({
+  mainAxisGap,
+  mainAxisGapLabel,
+  onMainAxisGapChange,
+  paddingTop,
+  paddingRight,
+  paddingBottom,
+  paddingLeft,
+  onPaddingChange,
+  onArrangementChange,
+}: {
+  mainAxisGap: string;
+  mainAxisGapLabel: string;
+  onMainAxisGapChange: (v: string) => void;
   paddingTop: string;
   paddingRight: string;
   paddingBottom: string;
   paddingLeft: string;
   onPaddingChange: (side: 't' | 'r' | 'b' | 'l', value: string) => void;
+  onArrangementChange: (axis: 'vertical' | 'horizontal') => void;
 }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
 
+  // Collapsed mode shows combined padding pairs
+  const paddingH = paddingLeft || paddingRight || '0px';
+  const paddingV = paddingTop || paddingBottom || '0px';
+
   return (
     <div className="pp-gap-panel">
       <div className="pp-gap-header">
-        <span className="cc-label cc-label-scrub">{t('manualEdit.label.gap')}</span>
-        <button
-          type="button"
-          className={`pp-gap-toggle${expanded ? ' pp-gap-toggle-active' : ''}`}
-          onClick={() => setExpanded((v) => !v)}
-          data-tooltip={expanded ? t('manualEdit.label.collapseSpacing') : t('manualEdit.label.expandSpacing')}
-        >
-          {expanded ? <SvgFourEdges /> : <SvgTwoEdges />}
-        </button>
+        <span className="cc-label cc-label-scrub">{t('manualEdit.label.padding')}</span>
+        <span className="pp-spacing-header-actions" aria-hidden="false">
+          <button
+            type="button"
+            className={`pp-gap-toggle${expanded ? ' pp-gap-toggle-active' : ''}`}
+            onClick={() => setExpanded((v) => !v)}
+            data-tooltip={expanded ? t('manualEdit.label.collapseSpacing') : t('manualEdit.label.expandSpacing')}
+          >
+            <ManualEditIcon name="expanded-margin" />
+          </button>
+          <button
+            type="button"
+            className="pp-gap-toggle"
+            data-padding-arrangement="vertical"
+            data-tooltip="Vertical space between"
+            onClick={() => onArrangementChange('vertical')}
+          >
+            <ManualEditIcon name="vertical-margin" />
+          </button>
+          <button
+            type="button"
+            className="pp-gap-toggle"
+            data-padding-arrangement="horizontal"
+            data-tooltip="Horizontal space between"
+            onClick={() => onArrangementChange('horizontal')}
+          >
+            <ManualEditIcon name="horizontal-margin" />
+          </button>
+        </span>
       </div>
       {expanded ? (
         <div className="pp-gap-fields">
           <div className="pp-gap-row">
-            <ScrubInput placeholder="↑" value={paddingTop} onChange={(v) => onPaddingChange('t', v)} />
-            <ScrubInput placeholder="↓" value={paddingBottom} onChange={(v) => onPaddingChange('b', v)} />
+            <ScrubInput placeholder="↑" spacingSide="top" value={paddingTop} onChange={(v) => onPaddingChange('t', v)} />
+            <ScrubInput placeholder="↓" spacingSide="bottom" value={paddingBottom} onChange={(v) => onPaddingChange('b', v)} />
           </div>
           <div className="pp-gap-row">
-            <ScrubInput placeholder="←" value={paddingLeft} onChange={(v) => onPaddingChange('l', v)} />
-            <ScrubInput placeholder="→" value={paddingRight} onChange={(v) => onPaddingChange('r', v)} />
+            <ScrubInput placeholder="←" spacingSide="left" value={paddingLeft} onChange={(v) => onPaddingChange('l', v)} />
+            <ScrubInput placeholder="→" spacingSide="right" value={paddingRight} onChange={(v) => onPaddingChange('r', v)} />
           </div>
         </div>
       ) : (
         <div className="pp-gap-fields">
-          <ScrubInput placeholder="↔" value={columnGap} onChange={onColumnGapChange} />
-          <ScrubInput placeholder="↕" value={rowGap} onChange={onRowGapChange} />
+          <ScrubInput placeholder="↔" spacingSide="horizontal" value={paddingH} onChange={(v) => { onPaddingChange('l', v); onPaddingChange('r', v); }} />
+          <ScrubInput placeholder="↕" spacingSide="vertical" value={paddingV} onChange={(v) => { onPaddingChange('t', v); onPaddingChange('b', v); }} />
         </div>
       )}
+      <div className="pp-gap-fields pp-main-axis-gap" style={{ marginTop: 2 }}>
+        <ScrubInput placeholder={mainAxisGapLabel} spacingSide="main" value={mainAxisGap} onChange={onMainAxisGapChange} />
+      </div>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Margin panel (expandable 4-direction, same pattern as gap)
+   Margin panel (always show 4 individual direction values)
    ═══════════════════════════════════════════════════════════════════════════ */
 
 function MarginPanel({ marginTop, marginRight, marginBottom, marginLeft, onChange }: {
@@ -1159,42 +1490,22 @@ function MarginPanel({ marginTop, marginRight, marginBottom, marginLeft, onChang
   onChange: (side: 't' | 'r' | 'b' | 'l', value: string) => void;
 }) {
   const t = useT();
-  const [expanded, setExpanded] = useState(false);
-
-  // Compute horizontal/vertical margin values from individual sides
-  const marginH = marginLeft || marginRight || '0px';
-  const marginV = marginTop || marginBottom || '0px';
 
   return (
     <div className="pp-gap-panel">
       <div className="pp-gap-header">
         <span className="cc-label">{t('manualEdit.label.outerMargin')}</span>
-        <button
-          type="button"
-          className={`pp-gap-toggle${expanded ? ' pp-gap-toggle-active' : ''}`}
-          onClick={() => setExpanded((v) => !v)}
-          data-tooltip={expanded ? t('manualEdit.label.collapseSpacing') : t('manualEdit.label.expandSpacing')}
-        >
-          {expanded ? <SvgFourEdges /> : <SvgTwoEdges />}
-        </button>
       </div>
-      {expanded ? (
-        <div className="pp-gap-fields">
-          <div className="pp-gap-row">
-            <ScrubInput placeholder="↑" value={marginTop} onChange={(v) => onChange('t', v)} />
-            <ScrubInput placeholder="↓" value={marginBottom} onChange={(v) => onChange('b', v)} />
-          </div>
-          <div className="pp-gap-row">
-            <ScrubInput placeholder="←" value={marginLeft} onChange={(v) => onChange('l', v)} />
-            <ScrubInput placeholder="→" value={marginRight} onChange={(v) => onChange('r', v)} />
-          </div>
+      <div className="pp-gap-fields">
+        <div className="pp-gap-row">
+          <ScrubInput placeholder="↑" spacingSide="top" value={marginTop} onChange={(v) => onChange('t', v)} />
+          <ScrubInput placeholder="↓" spacingSide="bottom" value={marginBottom} onChange={(v) => onChange('b', v)} />
         </div>
-      ) : (
-        <div className="pp-gap-fields">
-          <ScrubInput placeholder="↔" value={marginH} onChange={(v) => { onChange('l', v); onChange('r', v); }} />
-          <ScrubInput placeholder="↕" value={marginV} onChange={(v) => { onChange('t', v); onChange('b', v); }} />
+        <div className="pp-gap-row">
+          <ScrubInput placeholder="←" spacingSide="left" value={marginLeft} onChange={(v) => onChange('l', v)} />
+          <ScrubInput placeholder="→" spacingSide="right" value={marginRight} onChange={(v) => onChange('r', v)} />
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1242,6 +1553,19 @@ function readableManualEditTargetName(target: ManualEditTarget): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function sizeModeFor(value: string): SizingMode {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '100%') return 'fill';
+  if (!normalized || normalized === 'auto' || normalized === 'fit-content' || normalized === 'max-content') return 'content';
+  return 'fixed';
+}
+
+function sizeValueForMode(mode: SizingMode, measuredPx: number): string {
+  if (mode === 'content') return 'auto';
+  if (mode === 'fill') return '100%';
+  return `${Math.max(0, measuredPx)}px`;
 }
 
 function firstReadableText(...values: Array<string | undefined>): string {
@@ -1403,6 +1727,12 @@ export function normalizeManualEditStyles(
       normalized[rawKey] = '';
       continue;
     }
+    if (rawKey === 'width' || rawKey === 'height') {
+      const size = normalizeSizeValue(value);
+      if (!size) return { ok: false, error: `${styleLabel(rawKey)} must be a number, px, or percent value.` };
+      normalized[rawKey] = size;
+      continue;
+    }
     if (PX_STYLE_PROPS.has(rawKey)) {
       const px = normalizePxValue(value);
       if (!px) return { ok: false, error: `${styleLabel(rawKey)} must be a number or px value.` };
@@ -1441,6 +1771,14 @@ export function normalizeManualEditStyles(
 function normalizePxValue(value: string): string | null {
   if (/^-?\d+(\.\d+)?$/.test(value)) return `${value}px`;
   if (/^-?\d+(\.\d+)?px$/i.test(value)) return value.toLowerCase();
+  return null;
+}
+
+function normalizeSizeValue(value: string): string | null {
+  const px = normalizePxValue(value);
+  if (px) return px;
+  if (/^\d+(\.\d+)?%$/.test(value)) return value;
+  if (value.toLowerCase() === 'auto') return 'auto';
   return null;
 }
 

@@ -122,6 +122,51 @@ describe('manual edit source patches', () => {
     expect(styles.opacity).toBe('0.5');
   });
 
+  it('moves an element before or after another editable element', () => {
+    const result = applyManualEditPatch(baseSource, {
+      kind: 'move-element',
+      id: 'card',
+      targetId: 'cta',
+      position: 'before',
+    });
+
+    expect(result.ok).toBe(true);
+    const mainHtml = readManualEditOuterHtml(result.source, 'path-0');
+    expect(mainHtml.indexOf('data-od-id="card"')).toBeLessThan(mainHtml.indexOf('data-od-id="cta"'));
+    expect(mainHtml).toContain('data-keep="yes"');
+  });
+
+  it('applies one style change to multiple selected elements', () => {
+    const result = applyManualEditPatch(baseSource, {
+      kind: 'set-style-batch',
+      items: [
+        { id: 'card', styles: { opacity: '0.5' } },
+        { id: 'cta', styles: { opacity: '0.5' } },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(readManualEditStyles(result.source, 'card').opacity).toBe('0.5');
+    expect(readManualEditStyles(result.source, 'cta').opacity).toBe('0.5');
+  });
+
+  it('aligns absolutely positioned sibling elements to the same left edge', () => {
+    const source = '<main data-od-id="parent"><div data-od-id="a" style="position:absolute;left:20px;top:10px;width:40px;height:20px"></div><div data-od-id="b" style="position:absolute;left:80px;top:30px;width:40px;height:20px"></div></main>';
+    const result = applyManualEditPatch(source, {
+      kind: 'align-elements',
+      ids: ['a', 'b'],
+      mode: 'left',
+      rects: {
+        a: { x: 20, y: 10, width: 40, height: 20 },
+        b: { x: 80, y: 30, width: 40, height: 20 },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(readManualEditStyles(result.source, 'a').left).toBe('20px');
+    expect(readManualEditStyles(result.source, 'b').left).toBe('20px');
+  });
+
   it('applies attributes additively and preserves class/style unless explicitly updated', () => {
     const result = applyManualEditPatch(baseSource, {
       kind: 'set-attributes',

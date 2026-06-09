@@ -169,8 +169,15 @@ export function buildManualEditBridge(enabled: boolean): string {
   var discoverySelector = ${JSON.stringify(MANUAL_EDIT_DISCOVERY_SELECTOR)};
   var hostNodeSelector = ${JSON.stringify(MANUAL_EDIT_HOST_NODE_SELECTOR)};
   var sourcePathAttr = ${JSON.stringify(MANUAL_EDIT_SOURCE_PATH_ATTR)};
-  var styleProps = ['fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','display','gap','columnGap','rowGap','flexDirection','flexWrap','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius','transform','overflow','boxShadow'];
+  var styleProps = ['left','top','fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','display','gap','columnGap','rowGap','flexDirection','flexWrap','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius','transform','overflow','boxShadow'];
   var viewportPanActive = false;
+  var resizeHandles = [];
+  var resizeState = null;
+  var resizeSnapThreshold = 4;
+  var dragState = null;
+  var snapOverlay = null;
+  var dragThreshold = 3;
+  var snapThreshold = 4;
   function isHostNode(el){
     return !!(el && el.matches && el.matches(hostNodeSelector));
   }
@@ -247,6 +254,14 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (visibility === 'hidden' || visibility === 'collapse') return false;
     return true;
   }
+  function parentLayoutFor(el){
+    var parent = el && el.parentElement;
+    if (!parent) return null;
+    var computed = window.getComputedStyle(parent);
+    var display = computed.display || '';
+    if (display.indexOf('flex') < 0 && display.indexOf('grid') < 0) return null;
+    return { display: display, flexDirection: computed.flexDirection || '' };
+  }
   function hasOwnDisplayHiddenState(el){
     var computed = window.getComputedStyle(el);
     return computed.display === 'none' || el.hasAttribute('hidden');
@@ -279,7 +294,7 @@ export function buildManualEditBridge(enabled: boolean): string {
     } else {
       fields.text = (el.textContent || '').trim();
     }
-    return {
+    var target = {
       id: id,
       kind: kind,
       label: labelFor(el, id, kind),
@@ -291,9 +306,13 @@ export function buildManualEditBridge(enabled: boolean): string {
       attributes: attrsFor(el),
       styles: stylesFor(el),
       isLayoutContainer: isLayoutContainer(el),
+      parentId: el.parentElement ? (el.parentElement === document.body ? '__body__' : stableId(el.parentElement)) : '',
       isHidden: hidden,
       outerHtml: includeOuterHtml ? (el.outerHTML || '').replace(/\\sdata-od-runtime-id="[^"]*"/g, '').replace(/\\sdata-od-source-path="[^"]*"/g, '').replace(/\\sdata-od-edit-selected="[^"]*"/g, '') : ''
     };
+    var parentLayout = parentLayoutFor(el);
+    if (parentLayout) target.parentLayout = parentLayout;
+    return target;
   }
   function allTargets(){
     var nodes = document.body ? document.body.querySelectorAll(discoverySelector) : [];
@@ -349,12 +368,131 @@ export function buildManualEditBridge(enabled: boolean): string {
   function clearSelectedTarget(){
     var selected = document.querySelectorAll('[data-od-edit-selected]');
     for (var i = 0; i < selected.length; i++) selected[i].removeAttribute('data-od-edit-selected');
+    removeResizeHandles();
+  }
+  function setSelectedTargets(ids){
+    clearSelectedTarget();
+    if (!ids || !ids.length) return;
+    var first = null;
+    for (var i = 0; i < ids.length; i++) {
+      var el = findById(ids[i]);
+      if (!el) continue;
+      if (!first) first = el;
+      el.setAttribute('data-od-edit-selected', 'true');
+    }
+    if (first && ids.length === 1) createResizeHandles(first);
   }
   function setSelectedTarget(id){
-    clearSelectedTarget();
-    if (!id) return;
-    var el = findById(id);
-    if (el) el.setAttribute('data-od-edit-selected', 'true');
+    setSelectedTargets(id ? [id] : []);
+  }
+  function removeResizeHandles(){
+    for (var i = 0; i < resizeHandles.length; i++) {
+      var h = resizeHandles[i];
+      if (h.parentNode) h.parentNode.removeChild(h);
+    }
+    resizeHandles = [];
+  }
+  function createResizeHandles(el){
+    removeResizeHandles();
+    var rect = el.getBoundingClientRect();
+    var edges = ['top','right','bottom','left'];
+    var size = 8;
+    var half = size / 2;
+    for (var i = 0; i < edges.length; i++) {
+      var edge = edges[i];
+      var handle = document.createElement('div');
+      handle.setAttribute('data-od-resize-handle', edge);
+      handle.style.position = 'fixed';
+      handle.style.width = size + 'px';
+      handle.style.height = size + 'px';
+      handle.style.background = 'white';
+      handle.style.border = '1.5px solid #2563eb';
+      handle.style.borderRadius = '1px';
+      handle.style.zIndex = '100000';
+      handle.style.boxSizing = 'border-box';
+      if (edge === 'top' || edge === 'bottom') handle.style.cursor = 'ns-resize';
+      else handle.style.cursor = 'ew-resize';
+      positionResizeHandle(handle, edge, rect);
+      document.body.appendChild(handle);
+      resizeHandles.push(handle);
+      (function(h, e) {
+        h.addEventListener('pointerdown', function(ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          var startRect = el.getBoundingClientRect();
+          var startX = ev.clientX;
+          var startY = ev.clientY;
+          var startWidth = startRect.width;
+          var startHeight = startRect.height;
+          var computed = window.getComputedStyle(el);
+          var startW = parseFloat(computed.width) || startWidth;
+          var startH = parseFloat(computed.height) || startHeight;
+          function onMove(me) {
+            var dx = me.clientX - startX;
+            var dy = me.clientY - startY;
+            if (e === 'right') {
+              var nw = Math.max(4, startW + dx);
+              el.style.width = nw + 'px';
+            } else if (e === 'bottom') {
+              var nh = Math.max(4, startH + dy);
+              el.style.height = nh + 'px';
+            } else if (e === 'left') {
+              var nw2 = Math.max(4, startW - dx);
+              el.style.width = nw2 + 'px';
+            } else if (e === 'top') {
+              var nh2 = Math.max(4, startH - dy);
+              el.style.height = nh2 + 'px';
+            }
+            var newRect = el.getBoundingClientRect();
+            for (var j = 0; j < resizeHandles.length; j++) {
+              positionResizeHandle(resizeHandles[j], resizeHandles[j].getAttribute('data-od-resize-handle'), newRect);
+            }
+          }
+          function onUp() {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
+            var finalRect = el.getBoundingClientRect();
+            var id = stableId(el);
+            var styles = {};
+            if (e === 'left' || e === 'right') styles.width = Math.round(finalRect.width) + 'px';
+            if (e === 'top' || e === 'bottom') styles.height = Math.round(finalRect.height) + 'px';
+            window.parent.postMessage({ type: 'od-edit-resize-end', id: id, styles: styles }, '*');
+            // Reposition handles to final rect
+            var endRect = el.getBoundingClientRect();
+            for (var k = 0; k < resizeHandles.length; k++) {
+              positionResizeHandle(resizeHandles[k], resizeHandles[k].getAttribute('data-od-resize-handle'), endRect);
+            }
+          }
+          document.addEventListener('pointermove', onMove);
+          document.addEventListener('pointerup', onUp);
+          document.addEventListener('pointercancel', onUp);
+        });
+      })(handle, edge);
+    }
+  }
+  function positionResizeHandle(handle, edge, rect) {
+    var half = 4;
+    if (edge === 'top') {
+      handle.style.left = (rect.left + rect.width / 2 - half) + 'px';
+      handle.style.top = (rect.top - half) + 'px';
+    } else if (edge === 'bottom') {
+      handle.style.left = (rect.left + rect.width / 2 - half) + 'px';
+      handle.style.top = (rect.bottom - half) + 'px';
+    } else if (edge === 'left') {
+      handle.style.left = (rect.left - half) + 'px';
+      handle.style.top = (rect.top + rect.height / 2 - half) + 'px';
+    } else if (edge === 'right') {
+      handle.style.left = (rect.right - half) + 'px';
+      handle.style.top = (rect.top + rect.height / 2 - half) + 'px';
+    }
+  }
+  function refreshResizeHandles(el) {
+    if (!el || !resizeHandles.length) return;
+    var rect = el.getBoundingClientRect();
+    for (var i = 0; i < resizeHandles.length; i++) {
+      positionResizeHandle(resizeHandles[i], resizeHandles[i].getAttribute('data-od-resize-handle'), rect);
+    }
   }
   function closestTarget(event){
     var el = event.target;
@@ -477,6 +615,7 @@ export function buildManualEditBridge(enabled: boolean): string {
         if (typeof value !== 'string' || value.trim() === '') el.style.removeProperty(cssName);
         else el.style.setProperty(cssName, value.trim());
       }
+      if (el.hasAttribute('data-od-edit-selected')) refreshResizeHandles(el);
       window.parent.postMessage({ type: 'od-edit-preview-style-applied', id: id, version: Number(version) || 0, ok: true }, '*');
     } catch (e) {
       window.parent.postMessage({ type: 'od-edit-preview-style-applied', id: id, version: Number(version) || 0, ok: false, error: e && e.message ? String(e.message) : 'Could not apply preview styles' }, '*');
@@ -495,6 +634,10 @@ export function buildManualEditBridge(enabled: boolean): string {
       setSelectedTarget(ev.data.id || null);
       return;
     }
+    if (ev.data.type === 'od-edit-selected-targets') {
+      setSelectedTargets(Array.isArray(ev.data.ids) ? ev.data.ids : []);
+      return;
+    }
     if (ev.data.type === 'od-edit-hover-reset') {
       // Host signals the cursor truly left the canvas, so the next pointerover
       // re-announces the hovered element (defeats the per-element dedupe).
@@ -507,24 +650,262 @@ export function buildManualEditBridge(enabled: boolean): string {
       return;
     }
   });
+  var wasDrag = false;
+  function removeSnapOverlay() {
+    if (snapOverlay && snapOverlay.parentNode) snapOverlay.parentNode.removeChild(snapOverlay);
+    snapOverlay = null;
+  }
+  function showSnapGuides(guideLines) {
+    if (!snapOverlay) {
+      snapOverlay = document.createElement('div');
+      snapOverlay.setAttribute('data-od-snap-overlay', '');
+      snapOverlay.style.cssText = 'pointer-events:none;position:fixed;inset:0;z-index:99999;';
+      document.body.appendChild(snapOverlay);
+    }
+    snapOverlay.innerHTML = '';
+    for (var i = 0; i < guideLines.length; i++) {
+      var g = guideLines[i];
+      var line = document.createElement('div');
+      line.style.cssText = 'position:absolute;background:#f59e0b;';
+      if (g.dir === 'h') {
+        line.style.height = '1px';
+        line.style.left = g.x1 + 'px';
+        line.style.width = (g.x2 - g.x1) + 'px';
+        line.style.top = g.y + 'px';
+      } else {
+        line.style.width = '1px';
+        line.style.top = g.y1 + 'px';
+        line.style.height = (g.y2 - g.y1) + 'px';
+        line.style.left = g.x + 'px';
+      }
+      snapOverlay.appendChild(line);
+    }
+  }
+  function collectSnapEdges() {
+    var edges = [];
+    var nodes = document.body.querySelectorAll(discoverySelector);
+    var selected = document.querySelector('[data-od-edit-selected]');
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i] === selected) continue;
+      if (!isSourceMappable(nodes[i])) continue;
+      var r = nodes[i].getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) continue;
+      edges.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom,
+        centerX: r.left + r.width / 2, centerY: r.top + r.height / 2 });
+    }
+    return edges;
+  }
+  function findSnap(proposedRect, snapEdges) {
+    var guides = [];
+    var snappedX = proposedRect.left;
+    var snappedY = proposedRect.top;
+    var pLeft = proposedRect.left, pRight = proposedRect.right;
+    var pTop = proposedRect.top, pBottom = proposedRect.bottom;
+    var pCX = proposedRect.left + (proposedRect.right - proposedRect.left) / 2;
+    var pCY = proposedRect.top + (proposedRect.bottom - proposedRect.top) / 2;
+    var bestDx = snapThreshold + 1;
+    var bestDy = snapThreshold + 1;
+    var snapValueX = null;
+    var snapValueY = null;
+    for (var i = 0; i < snapEdges.length; i++) {
+      var e = snapEdges[i];
+      // Horizontal snap (left/right edges and center)
+      var checks = [
+        { val: pLeft, to: e.left }, { val: pLeft, to: e.right },
+        { val: pRight, to: e.left }, { val: pRight, to: e.right },
+        { val: pCX, to: e.centerX }
+      ];
+      for (var j = 0; j < checks.length; j++) {
+        var d = Math.abs(checks[j].val - checks[j].to);
+        if (d < snapThreshold && d < bestDx) {
+          bestDx = d;
+          snapValueX = checks[j].to - checks[j].val;
+        }
+      }
+      // Vertical snap (top/bottom edges and center)
+      var vChecks = [
+        { val: pTop, to: e.top }, { val: pTop, to: e.bottom },
+        { val: pBottom, to: e.top }, { val: pBottom, to: e.bottom },
+        { val: pCY, to: e.centerY }
+      ];
+      for (var k = 0; k < vChecks.length; k++) {
+        var dv = Math.abs(vChecks[k].val - vChecks[k].to);
+        if (dv < snapThreshold && dv < bestDy) {
+          bestDy = dv;
+          snapValueY = vChecks[k].to - vChecks[k].val;
+        }
+      }
+    }
+    return { dx: snapValueX, dy: snapValueY, guides: guides };
+  }
+  var dropPreviewEl = null;
+  function clearDropPreview(){
+    if (dropPreviewEl) {
+      dropPreviewEl.removeAttribute('data-od-reorder-target');
+      dropPreviewEl.removeAttribute('data-od-reorder-position');
+      dropPreviewEl = null;
+    }
+  }
+  function setDropPreview(drop){
+    clearDropPreview();
+    if (!drop || !drop.el) return;
+    dropPreviewEl = drop.el;
+    dropPreviewEl.setAttribute('data-od-reorder-target', 'true');
+    dropPreviewEl.setAttribute('data-od-reorder-position', drop.position);
+  }
+  function dropAxisFor(target){
+    var parent = target && target.parentElement;
+    if (!parent) return 'y';
+    var computed = window.getComputedStyle(parent);
+    var display = computed.display || '';
+    var direction = computed.flexDirection || '';
+    if (display.indexOf('flex') >= 0 && direction.indexOf('row') === 0) return 'x';
+    if (display.indexOf('grid') >= 0 && (computed.gridAutoFlow || '').indexOf('column') >= 0) return 'x';
+    return 'y';
+  }
+  function findDropTarget(dragged, clientX, clientY){
+    var nodes = document.body ? document.body.querySelectorAll(discoverySelector) : [];
+    var best = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!node || node === dragged) continue;
+      if (!isSourceMappable(node) || !isDiscoveryTarget(node)) continue;
+      if (dragged && dragged.contains && dragged.contains(node)) continue;
+      var rect = node.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) continue;
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) continue;
+      var area = rect.width * rect.height;
+      if (!best || area < best.area) best = { el: node, rect: rect, area: area };
+    }
+    if (!best) return null;
+    var axis = dropAxisFor(best.el);
+    var position = axis === 'x'
+      ? (clientX >= best.rect.left + best.rect.width / 2 ? 'after' : 'before')
+      : (clientY >= best.rect.top + best.rect.height / 2 ? 'after' : 'before');
+    return { el: best.el, id: stableId(best.el), position: position };
+  }
   document.addEventListener('click', function(ev){
     if (!enabled) return;
+    if (wasDrag) { wasDrag = false; return; }
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
     ev.preventDefault();
     ev.stopPropagation();
     var el = closestTarget(ev);
     if (!el) {
-      // Clicking empty canvas (no source-mapped ancestor) is the gesture for
-      // page-level styles; the host decides whether to surface the card.
       window.parent.postMessage({ type: 'od-edit-background' }, '*');
       return;
     }
+    var id = stableId(el);
+    var currentlySelected = document.querySelector('[data-od-edit-selected]');
+    if (currentlySelected && stableId(currentlySelected) === id && !ev.shiftKey) {
+      clearSelectedTarget();
+      window.parent.postMessage({ type: 'od-edit-deselect' }, '*');
+      return;
+    }
     var kind = inferKind(el);
-    window.parent.postMessage({ type: 'od-edit-select', target: targetFrom(el, true) }, '*');
-    if (kind === 'text' || kind === 'link') {
+    if (ev.shiftKey) {
+      if (el.hasAttribute('data-od-edit-selected')) el.removeAttribute('data-od-edit-selected');
+      else el.setAttribute('data-od-edit-selected', 'true');
+      removeResizeHandles();
+    } else {
+      setSelectedTarget(id);
+    }
+    var selectMessage = { type: 'od-edit-select', target: targetFrom(el, true) };
+    if (ev.shiftKey) selectMessage.append = true;
+    window.parent.postMessage(selectMessage, '*');
+    if (!ev.shiftKey && (kind === 'text' || kind === 'link')) {
       makeEditable(el, ev);
       return;
     }
+  }, true);
+  document.addEventListener('pointerdown', function(ev){
+    if (!enabled) return;
+    if (isMiddleButtonPan(ev)) return;
+    if (ev.target && ev.target.getAttribute && ev.target.getAttribute('data-od-resize-handle')) return;
+    var el = closestTarget(ev);
+    if (!el) return;
+    var selected = document.querySelector('[data-od-edit-selected]');
+    if (!selected || el !== selected) return;
+    var kind = inferKind(el);
+    if (kind === 'text' || kind === 'link') return;
+    ev.preventDefault();
+    var startX = ev.clientX;
+    var startY = ev.clientY;
+    var startRect = el.getBoundingClientRect();
+    var isDragging = false;
+    var snapEdges = collectSnapEdges();
+    var ownerDoc = el.ownerDocument || document;
+    var latestDx = 0;
+    var latestDy = 0;
+    var lastClientX = startX;
+    var lastClientY = startY;
+    var activeDrop = null;
+    function onMove(me) {
+      var dx = me.clientX - startX;
+      var dy = me.clientY - startY;
+      if (!isDragging && (Math.abs(dx) > dragThreshold || Math.abs(dy) > dragThreshold)) {
+        isDragging = true;
+        el.setAttribute('data-od-edit-dragging', 'true');
+      }
+      if (!isDragging) return;
+      me.preventDefault();
+      var newLeft = startRect.left + dx;
+      var newTop = startRect.top + dy;
+      var w = startRect.right - startRect.left;
+      var h = startRect.bottom - startRect.top;
+      var proposedRect = { left: newLeft, right: newLeft + w, top: newTop, bottom: newTop + h };
+      var snap = findSnap(proposedRect, snapEdges);
+      var finalDx = dx + (snap.dx || 0);
+      var finalDy = dy + (snap.dy || 0);
+      latestDx = finalDx;
+      latestDy = finalDy;
+      lastClientX = me.clientX;
+      lastClientY = me.clientY;
+      el.style.transform = 'translate(' + finalDx + 'px,' + finalDy + 'px)';
+      activeDrop = findDropTarget(el, me.clientX, me.clientY);
+      setDropPreview(activeDrop);
+      // Update resize handles position
+      var visRect = { left: startRect.left + finalDx, top: startRect.top + finalDy,
+        right: startRect.right + finalDx, bottom: startRect.bottom + finalDy };
+      for (var i = 0; i < resizeHandles.length; i++) {
+        positionResizeHandle(resizeHandles[i], resizeHandles[i].getAttribute('data-od-resize-handle'), visRect);
+      }
+    }
+    function onUp(upEvent) {
+      ownerDoc.removeEventListener('pointermove', onMove, true);
+      ownerDoc.removeEventListener('pointerup', onUp, true);
+      ownerDoc.removeEventListener('pointercancel', onUp, true);
+      el.removeAttribute('data-od-edit-dragging');
+      if (isDragging) {
+        wasDrag = true;
+        if (upEvent) {
+          lastClientX = Number(upEvent.clientX) || lastClientX;
+          lastClientY = Number(upEvent.clientY) || lastClientY;
+        }
+        var drop = activeDrop || findDropTarget(el, lastClientX, lastClientY);
+        el.style.transform = '';
+        clearDropPreview();
+        if (drop && drop.id) {
+          window.parent.postMessage({
+            type: 'od-edit-move-end',
+            id: stableId(el),
+            targetId: drop.id,
+            position: drop.position
+          }, '*');
+        }
+        removeSnapOverlay();
+        // Re-position resize handles after clearing the transient transform.
+        var endRect = { left: startRect.left + latestDx, top: startRect.top + latestDy,
+          right: startRect.right + latestDx, bottom: startRect.bottom + latestDy,
+          width: startRect.width, height: startRect.height };
+        for (var k = 0; k < resizeHandles.length; k++) {
+          positionResizeHandle(resizeHandles[k], resizeHandles[k].getAttribute('data-od-resize-handle'), endRect);
+        }
+      }
+    }
+    ownerDoc.addEventListener('pointermove', onMove, true);
+    ownerDoc.addEventListener('pointerup', onUp, true);
+    ownerDoc.addEventListener('pointercancel', onUp, true);
   }, true);
   document.addEventListener('pointerdown', function(ev){
     if (!enabled) return;
@@ -560,6 +941,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   document.addEventListener('pointerover', function(ev){
     if (!enabled) return;
     if (viewportPanActive) return;
+    if (ev.target && ev.target.getAttribute && ev.target.getAttribute('data-od-resize-handle')) return;
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
     var el = closestTarget(ev);
     if (!el) return;
@@ -604,12 +986,21 @@ html[data-od-edit-mode] body * { cursor: pointer !important; }
 html[data-od-edit-mode][data-od-edit-panning] body * { cursor: grabbing !important; }
 html[data-od-edit-mode] [data-od-edit-hover] {
   outline: 2px solid rgba(37, 99, 235, 0.5);
-  outline-offset: 2px;
+  outline-offset: 0;
 }
 html[data-od-edit-mode] [data-od-edit-selected] {
   outline: 2px solid #2563eb !important;
-  outline-offset: 2px;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+  outline-offset: 0;
+  cursor: move;
+}
+html[data-od-edit-mode] [data-od-edit-dragging],
+html[data-od-edit-mode] [data-od-edit-dragging] * {
+  cursor: move !important;
+}
+html[data-od-edit-mode] [data-od-reorder-target] {
+  outline: 2px solid rgba(37, 99, 235, 0.8) !important;
+  outline-offset: 4px;
+  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1), outline-offset 180ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 html[data-od-edit-mode] [data-od-editing="true"] {
   outline: 2px solid #2563eb !important;
