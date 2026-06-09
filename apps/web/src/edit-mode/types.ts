@@ -36,6 +36,7 @@ export interface ManualEditStyles {
   justifyContent: string;
   alignItems: string;
   backgroundColor: string;
+  backgroundImage: string;
   opacity: string;
   padding: string;
   paddingTop: string;
@@ -200,14 +201,16 @@ export type ManualEditBridgeMessage =
   | ManualEditPreviewAppliedMessage
   | ManualEditTextCommitMessage
   | ManualEditViewportWheelMessage
-  | ManualEditViewportPanMessage;
+  | ManualEditViewportPanMessage
+  | { type: 'od-edit-undo' }
+  | { type: 'od-edit-redo' };
 
 export const MANUAL_EDIT_STYLE_PROPS: readonly (keyof ManualEditStyles)[] = [
   'left', 'top',
   'fontFamily', 'fontSize', 'fontWeight', 'color', 'textAlign', 'lineHeight', 'letterSpacing',
   'width', 'height', 'minHeight',
   'display', 'gap', 'columnGap', 'rowGap', 'flexDirection', 'flexWrap', 'justifyContent', 'alignItems',
-  'backgroundColor', 'opacity',
+  'backgroundColor', 'backgroundImage', 'opacity',
   'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
   'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
   'border', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',

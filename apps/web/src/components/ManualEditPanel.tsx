@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useT } from '../i18n';
 import { emptyManualEditStyles, type ManualEditAlignMode, type ManualEditHistoryEntry, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../edit-mode/types';
 import { Icon } from './Icon';
+import { GradientEditor, createDefaultGradient, gradientToCss, parseGradientCss, type GradientValue } from './GradientEditor';
 
 export interface ManualEditDraft {
   text: string;
@@ -381,7 +382,18 @@ function PropertiesInspector({
     else u('opacity', v);
   };
 
-  const hasFill = hasVisibleFill(styles.backgroundColor);
+  const isGradientFill = isGradientCss(styles.backgroundImage);
+  const hasFill = hasVisibleFill(styles.backgroundColor) || isGradientFill;
+  const [fillMode, setFillMode] = useState<'solid' | 'gradient'>(isGradientFill ? 'gradient' : 'solid');
+  // Sync fillMode when selected element changes
+  const fillModeRef = useRef(fillMode);
+  useEffect(() => {
+    const next = isGradientFill ? 'gradient' : 'solid';
+    if (fillModeRef.current !== next) {
+      fillModeRef.current = next;
+      setFillMode(next);
+    }
+  }, [isGradientFill]);
   const hasStroke = hasVisibleStroke(styles);
   const hasEffect = hasVisibleShadow(styles.boxShadow);
   const displayMode = styles.display.trim();
@@ -544,13 +556,45 @@ function PropertiesInspector({
       {/* ── 5. Fill ── */}
       <Section title={t('manualEdit.section.fill')} id="fill" collapsed={collapsedSections} onToggle={onToggleSection}
         actions={
-          <button type="button" className="pp-section-add" data-tooltip={t('manualEdit.section.fill')}
-            onClick={() => onChangeStyles({ backgroundColor: hasFill ? '' : '#000000' })}>
-            <Icon name={hasFill ? 'minus' : 'plus'} size={12} />
-          </button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {hasFill ? (
+              <div className="ge-mode-toggle">
+                <button type="button" className={`ge-mode-btn ${fillMode === 'solid' ? 'ge-mode-active' : ''}`}
+                  onClick={() => {
+                    setFillMode('solid');
+                    if (isGradientFill) onChangeStyles({ backgroundImage: '', backgroundColor: '#000000' });
+                  }}>Solid</button>
+                <button type="button" className={`ge-mode-btn ${fillMode === 'gradient' ? 'ge-mode-active' : ''}`}
+                  onClick={() => {
+                    setFillMode('gradient');
+                    onChangeStyles({ backgroundColor: '', backgroundImage: gradientToCss(createDefaultGradient()) });
+                  }}>Gradient</button>
+              </div>
+            ) : null}
+            <button type="button" className="pp-section-add" data-tooltip={t('manualEdit.section.fill')}
+              onClick={() => {
+                if (hasFill) {
+                  onChangeStyles({ backgroundColor: '', backgroundImage: '' });
+                } else {
+                  onChangeStyles({ backgroundColor: '#000000' });
+                  setFillMode('solid');
+                }
+              }}>
+              <Icon name={hasFill ? 'minus' : 'plus'} size={12} />
+            </button>
+          </div>
         }
       >
-        {hasFill ? <ColorRow label="" value={styles.backgroundColor} onChange={(v) => u('backgroundColor', v)} compact /> : null}
+        {hasFill ? (
+          fillMode === 'gradient' && isGradientFill ? (
+            <GradientEditor
+              value={parseGradientCss(styles.backgroundImage) ?? createDefaultGradient()}
+              onChange={(g) => onChangeStyles({ backgroundImage: gradientToCss(g) })}
+            />
+          ) : (
+            <ColorRow label="" value={styles.backgroundColor} onChange={(v) => u('backgroundColor', v)} compact />
+          )
+        ) : null}
       </Section>
 
       {/* ── 6. Stroke ── */}
@@ -2078,6 +2122,11 @@ function borderWidthNumber(value: string): number {
   if (!match) return 0;
   const width = Number(match[1]);
   return Number.isFinite(width) ? width : 0;
+}
+
+function isGradientCss(value: string): boolean {
+  const t = value.trim().toLowerCase();
+  return t.startsWith('linear-gradient(') || t.startsWith('radial-gradient(');
 }
 
 function hasVisibleFill(value: string): boolean {

@@ -746,6 +746,38 @@ describe('FileViewer manual edit history regressions', () => {
       value: originalPostMessage,
     });
   });
+
+  // D: undo limit toast should NOT appear when no edits were made
+  it('does not show undo limit toast when pressing Ctrl+Z with no edit history', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={source}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+
+    // Press Ctrl+Z without having made any edits — should NOT show the undo limit toast
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+    });
+
+    // The undo limit toast message should not be present
+    expect(screen.queryByText(/undo/i)).toBeNull();
+  });
 });
 
 function isPlainMessage(value: unknown): value is { type?: string; ids?: unknown } {

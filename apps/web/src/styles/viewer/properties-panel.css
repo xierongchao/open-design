@@ -795,3 +795,256 @@
 .workspace-edit-active > .ws-tabs-shell {
   display: none;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Gradient Editor
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.ge-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.ge-preview {
+  width: 100%;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.ge-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 4px;
+  padding: 1px;
+}
+
+.ge-mode-btn {
+  font-size: 10px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ge-mode-btn.ge-mode-active {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.ge-type-row {
+  display: flex;
+  gap: 2px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 4px;
+  padding: 1px;
+}
+
+.ge-type-btn {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ge-type-btn.ge-type-active {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.ge-angle-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ge-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ge-angle-presets {
+  display: flex;
+  gap: 1px;
+  flex: 1;
+}
+
+.ge-angle-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ge-angle-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.ge-angle-btn.ge-angle-active {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.ge-angle-input {
+  width: 36px;
+  font-size: 10px;
+  text-align: center;
+  padding: 2px 4px;
+  border: 1px solid var(--manual-edit-field-border);
+  border-radius: 3px;
+  background: var(--manual-edit-field-bg);
+  color: var(--text);
+}
+
+.ge-unit {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ge-stops-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  cursor: pointer;
+  margin: 2px 0;
+  background: repeating-conic-gradient(
+    color-mix(in srgb, var(--text) 10%, transparent) 0% 25%,
+    transparent 0% 50%
+  ) 50% / 8px 8px;
+}
+
+.ge-stop-marker {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-panel);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 30%, transparent);
+  transform: translate(-50%, -50%);
+  padding: 0;
+  cursor: grab;
+  z-index: 1;
+  transition: box-shadow 0.15s;
+}
+
+.ge-stop-marker:active {
+  cursor: grabbing;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 50%, transparent);
+}
+
+.ge-stops-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ge-stop-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ge-stop-swatch-label {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.ge-stop-color-input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ge-stop-swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.ge-stop-hex {
+  width: 64px;
+  font-size: 10px;
+  padding: 2px 4px;
+  border: 1px solid var(--manual-edit-field-border);
+  border-radius: 3px;
+  background: var(--manual-edit-field-bg);
+  color: var(--text);
+}
+
+.ge-stop-pos {
+  width: 32px;
+  font-size: 10px;
+  text-align: center;
+  padding: 2px 4px;
+  border: 1px solid var(--manual-edit-field-border);
+  border-radius: 3px;
+  background: var(--manual-edit-field-bg);
+  color: var(--text);
+}
+
+.ge-stop-remove {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ge-stop-remove:hover {
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #ef4444;
+}
+
+.ge-add-stop {
+  font-size: 10px;
+  padding: 3px 0;
+  border: 1px dashed color-mix(in srgb, var(--text) 20%, transparent);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.ge-add-stop:hover {
+  border-color: color-mix(in srgb, var(--text) 40%, transparent);
+  color: var(--text);
+}

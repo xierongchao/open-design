@@ -1004,4 +1004,488 @@ describe('manual edit bridge target normalization', () => {
     expect(hoverRule).toContain('outline-offset: 0');
     expect(hoverRule).not.toContain('box-shadow: 0 0 0 2px');
   });
+
+  // A2: table cell selection border should use box-shadow instead of outline
+  it('uses box-shadow instead of outline for selected table cells to avoid border-collapse overflow', () => {
+    const style = buildManualEditBridgeStyle();
+
+    // Table cells should have specific rules using box-shadow:inset
+    const tdSelectedRule = style.match(/td\[data-od-edit-selected\][\s\S]*?\}/)?.[0] ?? '';
+    const thSelectedRule = style.match(/th\[data-od-edit-selected\][\s\S]*?\}/)?.[0] ?? '';
+
+    expect(tdSelectedRule).toContain('box-shadow: inset 0 0 0 2px #2563eb');
+    expect(tdSelectedRule).toContain('outline: none');
+    expect(thSelectedRule).toContain('box-shadow: inset 0 0 0 2px #2563eb');
+    expect(thSelectedRule).toContain('outline: none');
+  });
+
+  it('uses box-shadow instead of outline for hovered table cells to avoid border-collapse overflow', () => {
+    const style = buildManualEditBridgeStyle();
+
+    const tdHoverRule = style.match(/td\[data-od-edit-hover\][\s\S]*?\}/)?.[0] ?? '';
+    const thHoverRule = style.match(/th\[data-od-edit-hover\][\s\S]*?\}/)?.[0] ?? '';
+
+    expect(tdHoverRule).toContain('box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.5)');
+    expect(tdHoverRule).toContain('outline: none');
+    expect(thHoverRule).toContain('box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.5)');
+    expect(thHoverRule).toContain('outline: none');
+  });
+
+  // A1: div with only text content should be editable
+  it('makes a div with only text content inline-editable when clicked', () => {
+    const dom = new JSDOM(
+      `<main><div data-od-id="text-div">Just plain text</div></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const div = dom.window.document.querySelector('[data-od-id="text-div"]') as HTMLElement;
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    div.dispatchEvent(new dom.window.MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 8,
+      clientY: 8,
+    }));
+
+    // The div should become contenteditable because it only contains text
+    expect(div.getAttribute('contenteditable')).toBe('plaintext-only');
+    expect(div.getAttribute('data-od-editing')).toBe('true');
+    // kind stays 'container' in inferKind, but click handler enables editing for text-only containers
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-select',
+      target: expect.objectContaining({
+        id: 'text-div',
+        kind: 'container',
+      }),
+    }, '*');
+
+    // Edit the text and blur to commit
+    div.textContent = 'Edited div text';
+    div.dispatchEvent(new dom.window.FocusEvent('blur', { bubbles: false }));
+
+    expect(div.hasAttribute('contenteditable')).toBe(false);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-text-commit',
+      id: 'text-div',
+      value: 'Edited div text',
+    }, '*');
+
+    dom.window.close();
+  });
+
+  it('does not make a div with child elements inline-editable when clicked', () => {
+    const dom = new JSDOM(
+      `<main><div data-od-id="container-div"><p>Child paragraph</p></div></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const div = dom.window.document.querySelector('[data-od-id="container-div"]') as HTMLElement;
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    div.dispatchEvent(new dom.window.MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 8,
+      clientY: 8,
+    }));
+
+    // The div has child elements, so it should NOT become editable
+    expect(div.getAttribute('contenteditable')).toBeNull();
+    // It should be selected as a container kind instead
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-select',
+      target: expect.objectContaining({
+        id: 'container-div',
+        kind: 'container',
+      }),
+    }, '*');
+
+    dom.window.close();
+  });
+
+  // A2: table cells should be discoverable and editable
+  it('discovers table cells as editable targets', async () => {
+    const posts: Array<{ type?: string; targets?: Array<{ id: string; kind: string }> }> = [];
+    const dom = new JSDOM(
+      `<main>
+        <table data-od-source-path="path-0-0">
+          <thead data-od-source-path="path-0-0-0">
+            <tr data-od-source-path="path-0-0-0-0">
+              <th data-od-source-path="path-0-0-0-0-0">Header 1</th>
+              <th data-od-source-path="path-0-0-0-0-1">Header 2</th>
+            </tr>
+          </thead>
+          <tbody data-od-source-path="path-0-0-1">
+            <tr data-od-source-path="path-0-0-1-0">
+              <td data-od-source-path="path-0-0-1-0-0">Cell 1</td>
+              <td data-od-source-path="path-0-0-1-0-1">Cell 2</td>
+            </tr>
+          </tbody>
+        </table>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+
+    // Stub getBoundingClientRect for all table elements
+    for (const el of dom.window.document.querySelectorAll('table, thead, tbody, tr, th, td')) {
+      el.getBoundingClientRect = () => ({
+        x: 0, y: 0, width: 100, height: 30,
+        top: 0, right: 100, bottom: 30, left: 0,
+        toJSON: () => ({}),
+      } as DOMRect);
+    }
+
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as { type?: string; targets?: Array<{ id: string; kind: string }> });
+    }) as typeof dom.window.parent.postMessage;
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-mode', enabled: true },
+    }));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    const targetsMessage = posts.find((m) => m.type === 'od-edit-targets');
+    const ids = targetsMessage?.targets?.map((t) => t.id) ?? [];
+
+    // Table cells and headers should be discovered
+    expect(ids).toContain('path-0-0-0-0-0');
+    expect(ids).toContain('path-0-0-0-0-1');
+    expect(ids).toContain('path-0-0-1-0-0');
+    expect(ids).toContain('path-0-0-1-0-1');
+
+    dom.window.close();
+  });
+
+  it('makes table header cells inline-editable when clicked', () => {
+    const dom = new JSDOM(
+      `<main>
+        <table data-od-source-path="path-0-0">
+          <tr data-od-source-path="path-0-0-0">
+            <th data-od-source-path="path-0-0-0-0">Header Text</th>
+          </tr>
+        </table>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const th = dom.window.document.querySelector('th') as HTMLElement;
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    th.dispatchEvent(new dom.window.MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 8,
+      clientY: 8,
+    }));
+
+    // th should become contenteditable and classified as text
+    expect(th.getAttribute('contenteditable')).toBe('plaintext-only');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-select',
+      target: expect.objectContaining({
+        kind: 'text',
+      }),
+    }, '*');
+
+    // Edit and commit
+    th.textContent = 'Edited Header';
+    th.dispatchEvent(new dom.window.FocusEvent('blur', { bubbles: false }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-text-commit',
+      id: 'path-0-0-0-0',
+      value: 'Edited Header',
+    }, '*');
+
+    dom.window.close();
+  });
+
+  it('makes table data cells inline-editable when clicked', () => {
+    const dom = new JSDOM(
+      `<main>
+        <table data-od-source-path="path-0-0">
+          <tr data-od-source-path="path-0-0-0">
+            <td data-od-source-path="path-0-0-0-0">Cell Data</td>
+          </tr>
+        </table>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const td = dom.window.document.querySelector('td') as HTMLElement;
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    td.dispatchEvent(new dom.window.MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 8,
+      clientY: 8,
+    }));
+
+    // td should become contenteditable and classified as text
+    expect(td.getAttribute('contenteditable')).toBe('plaintext-only');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-select',
+      target: expect.objectContaining({
+        kind: 'text',
+      }),
+    }, '*');
+
+    // Edit and commit
+    td.textContent = 'Edited Cell';
+    td.dispatchEvent(new dom.window.FocusEvent('blur', { bubbles: false }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-text-commit',
+      id: 'path-0-0-0-0',
+      value: 'Edited Cell',
+    }, '*');
+
+    dom.window.close();
+  });
+
+  // A1: undo/redo shortcuts should be forwarded to parent via postMessage
+  it('posts od-edit-undo when Ctrl+Z is pressed inside the iframe', () => {
+    const dom = new JSDOM(
+      `<main><section data-od-id="hero">Hero</section></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    const event = new dom.window.KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      ctrlKey: true,
+    });
+    dom.window.document.dispatchEvent(event);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-undo',
+    }, '*');
+
+    dom.window.close();
+  });
+
+  it('posts od-edit-undo when Cmd+Z is pressed inside the iframe', () => {
+    const dom = new JSDOM(
+      `<main><section data-od-id="hero">Hero</section></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    const event = new dom.window.KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      metaKey: true,
+    });
+    dom.window.document.dispatchEvent(event);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-undo',
+    }, '*');
+
+    dom.window.close();
+  });
+
+  it('posts od-edit-redo when Ctrl+Shift+Z is pressed inside the iframe', () => {
+    const dom = new JSDOM(
+      `<main><section data-od-id="hero">Hero</section></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    const event = new dom.window.KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    dom.window.document.dispatchEvent(event);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-redo',
+    }, '*');
+
+    dom.window.close();
+  });
+
+  it('posts od-edit-redo when Ctrl+Y is pressed inside the iframe', () => {
+    const dom = new JSDOM(
+      `<main><section data-od-id="hero">Hero</section></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    const event = new dom.window.KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'y',
+      ctrlKey: true,
+    });
+    dom.window.document.dispatchEvent(event);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-redo',
+    }, '*');
+
+    dom.window.close();
+  });
+
+  it('does not post undo/redo when edit mode is disabled', () => {
+    const dom = new JSDOM(
+      `<main><section data-od-id="hero">Hero</section></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    // Disable edit mode first
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-mode', enabled: false },
+    }));
+
+    const event = new dom.window.KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      ctrlKey: true,
+    });
+    dom.window.document.dispatchEvent(event);
+
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'od-edit-undo' }),
+      '*',
+    );
+
+    dom.window.close();
+  });
+
+  it('does not post undo/redo when an element is being inline-edited', () => {
+    const dom = new JSDOM(
+      `<main><h1 data-od-id="title">Title</h1></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const title = dom.window.document.querySelector('[data-od-id="title"]') as HTMLElement;
+    const postMessage = vi.spyOn(dom.window.parent, 'postMessage');
+
+    // Click to start inline editing
+    title.dispatchEvent(new dom.window.MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 8,
+      clientY: 8,
+    }));
+    expect(title.getAttribute('contenteditable')).toBe('plaintext-only');
+
+    // Ctrl+Z should NOT post od-edit-undo during inline editing
+    postMessage.mockClear();
+    title.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'z',
+      ctrlKey: true,
+    }));
+
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'od-edit-undo' }),
+      '*',
+    );
+
+    dom.window.close();
+  });
+});
+
+// E: buttons and interactive elements without data-od-id should still be selectable via click
+describe('element selection without source mapping', () => {
+  it('allows clicking a button without data-od-id to select it via the bridge', async () => {
+    const posts: Array<{ type?: string; target?: { id: string; tagName: string } }> = [];
+    const dom = new JSDOM(
+      `<main>
+        <div data-od-id="toolbar" style="width:200px;height:40px;">
+          <button style="width:80px;height:24px;">Add</button>
+          <button style="width:80px;height:24px;">Delete</button>
+        </div>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true },
+    );
+    dom.window.parent.postMessage = (msg: unknown) => { posts.push(msg as typeof posts[0]); };
+    // Wait for bridge init
+    await new Promise((r) => setTimeout(r, 50));
+
+    const buttons = dom.window.document.querySelectorAll('button');
+    const addButton = buttons[0] as HTMLElement;
+
+    // Simulate layout
+    Object.defineProperty(addButton, 'getBoundingClientRect', {
+      value: () => ({ x: 10, y: 10, width: 80, height: 24, top: 10, right: 90, bottom: 34, left: 10 }),
+    });
+
+    addButton.dispatchEvent(new dom.window.MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 20,
+      clientY: 20,
+    }));
+
+    // The bridge should post an od-edit-select message for the button
+    const selectMsg = posts.find((p) => p.type === 'od-edit-select');
+    expect(selectMsg).toBeTruthy();
+    expect(selectMsg?.target?.tagName).toBe('button');
+
+    dom.window.close();
+  });
+});
+
+// A: gradient (backgroundImage) support
+describe('gradient background support', () => {
+  it('reads backgroundImage from an element with a gradient background', async () => {
+    const posts: Array<{ type?: string; target?: { styles?: { backgroundImage?: string; backgroundColor?: string } } }> = [];
+    const dom = new JSDOM(
+      `<main data-od-id="hero" style="background-image: linear-gradient(90deg, #ff0000, #0000ff); width: 200px; height: 100px;">Hero</main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true },
+    );
+    dom.window.parent.postMessage = (msg: unknown) => { posts.push(msg as typeof posts[0]); };
+    await new Promise((r) => setTimeout(r, 50));
+
+    const hero = dom.window.document.querySelector('[data-od-id="hero"]') as HTMLElement;
+    Object.defineProperty(hero, 'getBoundingClientRect', {
+      value: () => ({ x: 0, y: 0, width: 200, height: 100, top: 0, right: 200, bottom: 100, left: 0 }),
+    });
+
+    hero.dispatchEvent(new dom.window.MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 100,
+      clientY: 50,
+    }));
+
+    const selectMsg = posts.find((p) => p.type === 'od-edit-select');
+    expect(selectMsg).toBeTruthy();
+    expect(selectMsg?.target?.styles?.backgroundImage).toContain('linear-gradient');
+
+    dom.window.close();
+  });
+
+  it('applies a gradient backgroundImage via set-style patch', async () => {
+    const dom = new JSDOM(
+      `<main data-od-id="hero" style="width: 200px; height: 100px;">Hero</main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true },
+    );
+    await new Promise((r) => setTimeout(r, 50));
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'od-edit-preview-style',
+        id: 'hero',
+        version: 1,
+        styles: { backgroundImage: 'linear-gradient(180deg, #ef4444, #3b82f6)' },
+      },
+    }));
+
+    const hero = dom.window.document.querySelector('[data-od-id="hero"]') as HTMLElement;
+    expect(hero.style.backgroundImage).toContain('linear-gradient');
+    // JSDOM normalizes hex colors to rgb() in computed style values
+    expect(hero.style.backgroundImage).toMatch(/rgb\(/);
+
+    dom.window.close();
+  });
 });

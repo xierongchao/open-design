@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
+import { EditableCodeViewer } from './EditableCodeViewer';
 import {
   buildSocialSharePayload,
   OPEN_DESIGN_GITHUB_REPO_URL,
@@ -3780,9 +3781,9 @@ function ReactComponentViewer({
               style={{ width: '100%', height: '100%', border: 0 }}
             />
           </PreviewDrawOverlay>
-        ) : (
-          <CodeWithLines text={source} />
-        )}
+        ) : source !== null ? (
+          <EditableCodeViewer text={source} readOnly />
+        ) : null}
       </div>
     </div>
   );
@@ -4329,6 +4330,10 @@ function HtmlViewer({
   const [manualEditUndoLimitToast, setManualEditUndoLimitToast] = useState(false);
   const selectedManualEditTargetsRef = useRef<ManualEditTarget[]>([]);
   const manualEditSavingRef = useRef(false);
+  const manualEditHistoryRef = useRef(manualEditHistory);
+  const manualEditUndoneRef = useRef(manualEditUndone);
+  manualEditHistoryRef.current = manualEditHistory;
+  manualEditUndoneRef.current = manualEditUndone;
   const manualEditFlushAfterSaveRef = useRef(false);
   const manualEditPendingStyleRef = useRef<ManualEditPendingStyleSave | null>(null);
   const manualEditStyleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -5519,6 +5524,18 @@ function HtmlViewer({
         handleManualEditViewportPan(data);
         return;
       }
+      if (data.type === 'od-edit-undo') {
+        if (manualEditHistoryRef.current.length > 0 && !manualEditSavingRef.current) {
+          void undoManualEdit();
+        }
+        return;
+      }
+      if (data.type === 'od-edit-redo') {
+        if (manualEditUndoneRef.current.length > 0 && !manualEditSavingRef.current) {
+          void redoManualEdit();
+        }
+        return;
+      }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -6046,7 +6063,7 @@ function HtmlViewer({
       setSource(result.source);
       sourceRef.current = result.source;
       setInlinedSource(null);
-      if (patch.kind !== 'set-style') {
+      if (patch.kind !== 'set-style' && patch.kind !== 'set-text') {
         setManualEditFrozenSource(result.source);
       }
       setManualEditHistory((current) => {
@@ -6190,7 +6207,7 @@ function HtmlViewer({
         e.preventDefault();
         if (manualEditHistory.length > 0 && !manualEditSavingRef.current) {
           void undoManualEdit();
-        } else if (manualEditHistory.length === 0) {
+        } else if (manualEditHistory.length === 0 && manualEditUndone.length > 0) {
           setManualEditUndoLimitToast(true);
         }
       }
@@ -8720,8 +8737,10 @@ function HtmlViewer({
               />
             ) : null}
           </div>
+        ) : source !== null ? (
+          <EditableCodeViewer text={source} onChange={setSource} />
         ) : (
-          <pre className="viewer-source">{source}</pre>
+          <div className="viewer-empty">{t('fileViewer.loading')}</div>
         )}
       </div>
       {inTabPresent && source && typeof document !== 'undefined' ? createPortal(
@@ -9627,7 +9646,7 @@ export function SvgViewer({
         ) : sourceError ? (
           <div className="viewer-empty">{t('fileViewer.previewUnavailable')}</div>
         ) : (
-          <pre className="viewer-source">{source ?? ''}</pre>
+          <EditableCodeViewer text={source ?? ''} readOnly />
         )}
       </div>
     </div>
@@ -9724,7 +9743,7 @@ function TextViewer({
         {text === null ? (
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         ) : displayText !== null && lineCount > 0 ? (
-          <CodeWithLines text={displayText} />
+          <EditableCodeViewer text={displayText} readOnly />
         ) : (
           <pre className="viewer-source">{displayText}</pre>
         )}
