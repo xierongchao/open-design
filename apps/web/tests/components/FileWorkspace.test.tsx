@@ -772,7 +772,6 @@ describe('FileWorkspace upload input', () => {
       oldName: 'assets',
       newName: 'pages',
     });
-    vi.spyOn(window, 'prompt').mockReturnValue('pages');
     const onTabsStateChange = vi.fn();
 
     render(
@@ -790,6 +789,12 @@ describe('FileWorkspace upload input', () => {
 
     fireEvent.contextMenu(await screen.findByTestId('design-folder-row-assets'));
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    // Folder rename is inline now: the name becomes a prefilled input and
+    // typing + blur commits it (no native prompt).
+    const renameInput = await screen.findByDisplayValue('assets');
+    fireEvent.change(renameInput, { target: { value: 'pages' } });
+    fireEvent.blur(renameInput);
 
     await waitFor(() => {
       expect(mockedRenameProjectFolder).toHaveBeenCalledWith('project-1', 'assets', 'pages');

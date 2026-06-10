@@ -195,7 +195,7 @@ export function DesignFilesPanel({
   const [menuPos, setMenuPos] = useState<{ name: string; top: number; left: number } | null>(null);
   const [folderMenuPos, setFolderMenuPos] = useState<{ path: string; top: number; left: number } | null>(null);
   const MENU_ESTIMATED_HEIGHT = 145;
-  const FOLDER_MENU_ESTIMATED_HEIGHT = 86;
+  const FOLDER_MENU_ESTIMATED_HEIGHT = 128;
   const MENU_SAFE_PADDING = 8;
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -215,6 +215,11 @@ export function DesignFilesPanel({
   const [sharingFolder, setSharingFolder] = useState<string | null>(null);
   const [installNotice, setInstallNotice] = useState<ActionNotice | null>(null);
   const [renaming, setRenaming] = useState<{ name: string; draft: string; saving: boolean } | null>(null);
+  const [folderRenaming, setFolderRenaming] = useState<{ path: string; draft: string; saving: boolean } | null>(null);
+  const folderRenameInputRef = useRef<HTMLInputElement>(null);
+  const [movePickerOpen, setMovePickerOpen] = useState(false);
+  const [movePickerSelected, setMovePickerSelected] = useState<string | null>(null);
+  const [movePickerExpanded, setMovePickerExpanded] = useState<Set<string>>(() => new Set());
   const [currentDir, setCurrentDir] = useState<string>(() => navState?.currentDir ?? '');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [rootExpanded, setRootExpanded] = useState(true);
@@ -239,9 +244,12 @@ export function DesignFilesPanel({
     });
   }, [currentDir, navState?.kindFilter, onNavStateChange]);
 
-  // Derive files at the current directory level from the flat file list.
+  // Derive files for the current directory from the flat file list.
+  // At root (currentDir === ''), show ALL files recursively so the user
+  // sees the full project contents. For subdirectories, only direct children.
   const filesAtCurrentDir = useMemo(() => {
-    const prefix = currentDir === '' ? '' : `${currentDir}/`;
+    if (currentDir === '') return [...files];
+    const prefix = `${currentDir}/`;
     const localFiles: ProjectFile[] = [];
     for (const f of files) {
       if (!f.name.startsWith(prefix)) continue;
@@ -259,6 +267,9 @@ export function DesignFilesPanel({
     () => [...filesAtCurrentDir].sort((a, b) => b.mtime - a.mtime),
     [filesAtCurrentDir],
   );
+  // Flat list of every folder (persisted + derived from file paths) for the
+  // "Add to folder" picker.
+  const folderPaths = useMemo(() => flattenFolderPaths(folderTree), [folderTree]);
 
   // Reset selection and renaming state when the user navigates into or out of
   // a directory.
@@ -338,6 +349,7 @@ export function DesignFilesPanel({
     const close = () => {
       setMenuPos(null);
       setFolderMenuPos(null);
+      setMovePickerOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
@@ -423,17 +435,30 @@ export function DesignFilesPanel({
     setRenaming({ name, draft, saving: false });
   }
 
-  async function startRenameFolder(path: string) {
+  function startRenameFolder(path: string) {
     if (!onRenameFolder || folderAction) return;
     setFolderMenuPos(null);
+    setFolderRenaming({ path, draft: basenameForPath(path), saving: false });
+  }
+
+  async function commitFolderRename(path: string, draft: string) {
+    if (!onRenameFolder) return;
+    const trimmedLeaf = draft.trim();
+    if (!trimmedLeaf) {
+      // Empty names are intercepted, not silently dropped: tell the user and
+      // keep them in the editor so the folder is never left nameless.
+      window.alert(t('designFiles.folderNameEmpty'));
+      requestAnimationFrame(() => folderRenameInputRef.current?.focus());
+      return;
+    }
     const currentLeaf = basenameForPath(path);
-    const nextLeaf = window.prompt(t('designs.renamePrompt', { name: path }), currentLeaf);
-    if (nextLeaf === null) return;
-    const trimmedLeaf = nextLeaf.trim();
-    if (!trimmedLeaf || trimmedLeaf === currentLeaf) return;
+    if (trimmedLeaf === currentLeaf) {
+      setFolderRenaming(null);
+      return;
+    }
     const parent = dirnameForPath(path);
     const nextPath = parent ? `${parent}/${trimmedLeaf}` : trimmedLeaf;
-    setFolderAction({ kind: 'renaming', path });
+    setFolderRenaming((curr) => (curr ? { ...curr, saving: true } : curr));
     setFolderNotice(null);
     try {
       const folder = await onRenameFolder(path, nextPath);
@@ -445,6 +470,52 @@ export function DesignFilesPanel({
         return dir;
       });
       expandFolderPath(folder.path);
+      setFolderRenaming(null);
+    } catch (err) {
+      setFolderNotice({ message: err instanceof Error ? err.message : String(err) });
+      setFolderRenaming({ path, draft: currentLeaf, saving: false });
+      requestAnimationFrame(() => folderRenameInputRef.current?.focus());
+    }
+  }
+
+  // Default leaf name for "New subfolder", de-duped against the parent's
+  // existing direct children (files and folders) so the create never collides.
+  function uniqueFolderLeafName(parentPath: string, base: string): string {
+    const prefix = parentPath ? `${parentPath}/` : '';
+    const taken = new Set<string>();
+    const collect = (rest: string) => {
+      const slash = rest.indexOf('/');
+      const direct = slash === -1 ? rest : rest.slice(0, slash);
+      if (direct) taken.add(direct.toLowerCase());
+    };
+    for (const f of files) {
+      if (f.name.startsWith(prefix)) collect(f.name.slice(prefix.length));
+    }
+    for (const fo of folders ?? []) {
+      if (fo.path.startsWith(prefix)) collect(fo.path.slice(prefix.length));
+    }
+    if (!taken.has(base.toLowerCase())) return base;
+    let n = 2;
+    while (taken.has(`${base} ${n}`.toLowerCase())) n++;
+    return `${base} ${n}`;
+  }
+
+  async function startCreateSubfolder(parentPath: string) {
+    if (!onCreateFolder || folderAction) return;
+    setFolderMenuPos(null);
+    const leaf = uniqueFolderLeafName(parentPath, t('designFiles.untitledFolderName'));
+    const path = parentPath ? `${parentPath}/${leaf}` : leaf;
+    setFolderAction({ kind: 'creating', path });
+    setFolderNotice(null);
+    try {
+      const folder = await onCreateFolder(path);
+      if (!folder) throw new Error('Folder could not be created');
+      expandFolderPath(parentPath);
+      expandFolderPath(folder.path);
+      // Drop the freshly created default-named folder straight into inline
+      // rename so the user can name it without a second round-trip.
+      setFolderRenaming({ path: folder.path, draft: basenameForPath(folder.path), saving: false });
+      setFolderNotice({ message: t('designFiles.folderCreated', { name: folder.path }) });
     } catch (err) {
       setFolderNotice({ message: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -1040,6 +1111,7 @@ export function DesignFilesPanel({
     const expanded = expandedFolders.has(node.path) || currentDir.startsWith(`${node.path}/`);
     const deletingThisFolder = folderAction?.kind === 'deleting' && folderAction.path === node.path;
     const renamingThisFolder = folderAction?.kind === 'renaming' && folderAction.path === node.path;
+    const isRenamingThisFolder = folderRenaming?.path === node.path;
     const row = renderFolderDropZone(
       node.path,
       [
@@ -1067,14 +1139,39 @@ export function DesignFilesPanel({
         <span className="df-tree-folder-icon" aria-hidden>
           <Icon name={currentDir === node.path ? 'folder-filled' : 'folder'} size={15} />
         </span>
-        <button type="button" className="df-row-name-btn" onClick={() => openFolderPath(node.path)}>
-          <span className="df-tree-name" title={node.name}>{node.name}</span>
-        </button>
+        {isRenamingThisFolder && folderRenaming ? (
+          <input
+            ref={folderRenameInputRef}
+            autoFocus
+            className="df-rename-input df-tree-rename-input"
+            data-testid="design-folder-rename-input"
+            value={folderRenaming.draft}
+            disabled={folderRenaming.saving}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => setFolderRenaming({ ...folderRenaming, draft: e.target.value })}
+            onBlur={() => void commitFolderRename(node.path, folderRenaming.draft)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                e.currentTarget.blur();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setFolderRenaming(null);
+              }
+            }}
+          />
+        ) : (
+          <button type="button" className="df-row-name-btn" onClick={() => openFolderPath(node.path)}>
+            <span className="df-tree-name" title={node.name}>{node.name}</span>
+          </button>
+        )}
       </>,
       () => openFolderPath(node.path),
       `design-folder-row-${node.path}`,
       (ev) => {
-        if (!onRenameFolder && !onDeleteFolder) return;
+        if (!onCreateFolder && !onRenameFolder && !onDeleteFolder) return;
         ev.preventDefault();
         ev.stopPropagation();
         if (deletingThisFolder || renamingThisFolder) return;
@@ -1088,6 +1185,56 @@ export function DesignFilesPanel({
         {expanded && node.children.length > 0 ? (
           <div className="df-tree-children">
             {node.children.map((child) => renderTreeNode(child, depth + 1))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function toggleMovePickerExpansion(path: string) {
+    setMovePickerExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) { next.delete(path); } else { next.add(path); }
+      return next;
+    });
+  }
+
+  function renderMovePickerNode(node: FolderTreeNode, depth: number): React.ReactNode {
+    const isSelected = movePickerSelected === node.path;
+    const expanded = movePickerExpanded.has(node.path);
+    const hasChildren = node.children.length > 0;
+    return (
+      <div key={`move:${node.path}`}>
+        <div
+          className={`df-move-tree-row ${isSelected ? 'selected' : ''}`}
+          style={{ paddingLeft: `${8 + depth * 16}px` }}
+        >
+          <button
+            type="button"
+            className="df-tree-toggle"
+            disabled={!hasChildren}
+            aria-label={expanded ? 'Collapse folder' : 'Expand folder'}
+            onClick={(e) => { e.stopPropagation(); if (hasChildren) toggleMovePickerExpansion(node.path); }}
+          >
+            {hasChildren ? (
+              <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className="df-move-tree-node-btn"
+            data-testid={`design-move-target-${node.path}`}
+            onClick={() => setMovePickerSelected(node.path)}
+          >
+            <span className="df-tree-folder-icon" aria-hidden>
+              <Icon name={isSelected ? 'folder-filled' : 'folder'} size={15} />
+            </span>
+            <span className="df-tree-name" title={node.name}>{node.name}</span>
+          </button>
+        </div>
+        {expanded && hasChildren ? (
+          <div>
+            {node.children.map((child) => renderMovePickerNode(child, depth + 1))}
           </div>
         ) : null}
       </div>
@@ -1373,6 +1520,21 @@ export function DesignFilesPanel({
                   <Icon name="download" size={13} />
                   <span>{t('designFiles.download')}</span>
                 </button>
+                {onMoveFiles ? (
+                  <button
+                    type="button"
+                    data-testid="design-files-add-to-folder"
+                    title={t('designFiles.addToFolder')}
+                    onClick={() => {
+                      setMovePickerSelected(null);
+                      setMovePickerExpanded(new Set());
+                      setMovePickerOpen((v) => !v);
+                    }}
+                  >
+                    <Icon name="folder" size={13} />
+                    <span>{t('designFiles.addToFolder')}</span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="danger"
@@ -1653,12 +1815,24 @@ export function DesignFilesPanel({
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
+          {onCreateFolder ? (
+            <button
+              type="button"
+              data-testid={`design-folder-new-subfolder-${folderMenuPos.path}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void startCreateSubfolder(folderMenuPos.path);
+              }}
+            >
+              {t('designFiles.newSubfolder')}
+            </button>
+          ) : null}
           {onRenameFolder ? (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                void startRenameFolder(folderMenuPos.path);
+                startRenameFolder(folderMenuPos.path);
               }}
             >
               {t('common.rename')}
@@ -1680,6 +1854,66 @@ export function DesignFilesPanel({
               {t('designFiles.delete')}
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {movePickerOpen && hasSelection ? (
+        <div
+          data-testid="design-move-picker"
+          className="df-move-dialog-overlay"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="df-move-dialog" role="dialog" aria-label={t('designFiles.addToFolder')}>
+            <div className="df-move-dialog-header">
+              <span className="df-move-dialog-title">{t('designFiles.selectFolder')}</span>
+              <button
+                type="button"
+                className="df-move-dialog-close"
+                onClick={() => { setMovePickerOpen(false); setMovePickerSelected(null); }}
+                aria-label={t('common.close')}
+              >
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <div className="df-move-dialog-tree">
+              {/* Root option */}
+              <button
+                type="button"
+                className={`df-move-tree-row ${movePickerSelected === '' ? 'selected' : ''}`}
+                onClick={() => setMovePickerSelected('')}
+                data-testid="design-move-target-"
+              >
+                <span className="df-tree-folder-icon" aria-hidden>
+                  <Icon name="folder-filled" size={15} />
+                </span>
+                <span className="df-tree-name">{rootDirName ?? t('designFiles.crumbs')}</span>
+              </button>
+              {folderTree.map((node) => renderMovePickerNode(node, 1))}
+            </div>
+            <div className="df-move-dialog-footer">
+              <button
+                type="button"
+                className="df-move-dialog-btn-cancel"
+                onClick={() => { setMovePickerOpen(false); setMovePickerSelected(null); }}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="df-move-dialog-btn-confirm"
+                disabled={movePickerSelected === null}
+                data-testid="design-move-confirm"
+                onClick={() => {
+                  if (movePickerSelected === null) return;
+                  setMovePickerOpen(false);
+                  void moveFilesToFolder([...selected], movePickerSelected);
+                  setMovePickerSelected(null);
+                }}
+              >
+                {t('common.save')}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
@@ -1858,6 +2092,18 @@ function childFolderPathsForParent(nodes: FolderTreeNode[], parentPath: string):
     stack.push(...node.children);
   }
   return [];
+}
+
+function flattenFolderPaths(nodes: FolderTreeNode[]): string[] {
+  const out: string[] = [];
+  const walk = (list: FolderTreeNode[]) => {
+    for (const node of list) {
+      out.push(node.path);
+      walk(node.children);
+    }
+  };
+  walk(nodes);
+  return out;
 }
 
 function reorderFolderPathList(

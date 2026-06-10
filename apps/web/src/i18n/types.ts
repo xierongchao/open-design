@@ -2519,6 +2519,12 @@ export interface Dict {
   'designFiles.folderCreated': string;
   'designFiles.folderDeleted': string;
   'designFiles.filesMoved': string;
+  'designFiles.newSubfolder': string;
+  'designFiles.untitledFolderName': string;
+  'designFiles.folderNameEmpty': string;
+  'designFiles.addToFolder': string;
+  'designFiles.addToFolderEmpty': string;
+  'designFiles.selectFolder': string;
   'designFiles.colName': string;
   'designFiles.colKind': string;
   'designFiles.colModified': string;

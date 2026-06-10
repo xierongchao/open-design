@@ -430,9 +430,32 @@ describe('DesignFilesPanel directory navigation', () => {
     expect(onDeleteFolder).toHaveBeenCalledWith('assets');
   });
 
-  it('renames folders from the right-click menu', async () => {
+  it('renames folders inline (blur saves) from the right-click menu', async () => {
     const onRenameFolder = vi.fn(async (_from: string, to: string) => folder(to));
-    vi.spyOn(window, 'prompt').mockReturnValue('pages');
+    renderPanel([
+      file({ name: 'assets/logo.png', kind: 'image' }),
+    ], { onRenameFolder });
+
+    // Rename no longer uses a native prompt — the folder name becomes an
+    // inline input. No prompt should be involved.
+    const promptSpy = vi.spyOn(window, 'prompt');
+
+    fireEvent.contextMenu(screen.getByTestId('design-folder-row-assets'));
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    expect(promptSpy).not.toHaveBeenCalled();
+    const input = screen.getByDisplayValue('assets') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'pages' } });
+    fireEvent.blur(input);
+
+    await waitFor(() => {
+      expect(onRenameFolder).toHaveBeenCalledWith('assets', 'pages');
+    });
+  });
+
+  it('blocks saving an empty folder name and notifies the user', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const onRenameFolder = vi.fn(async (_from: string, to: string) => folder(to));
     renderPanel([
       file({ name: 'assets/logo.png', kind: 'image' }),
     ], { onRenameFolder });
@@ -440,7 +463,59 @@ describe('DesignFilesPanel directory navigation', () => {
     fireEvent.contextMenu(screen.getByTestId('design-folder-row-assets'));
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
-    expect(onRenameFolder).toHaveBeenCalledWith('assets', 'pages');
+    const input = screen.getByDisplayValue('assets') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.blur(input);
+
+    expect(alertSpy).toHaveBeenCalled();
+    expect(onRenameFolder).not.toHaveBeenCalled();
+  });
+
+  it('creates a default-named subfolder and enters inline rename from the context menu', async () => {
+    const createdFolders: ProjectFolder[] = [];
+    const onCreateFolder = vi.fn(async (path: string) => {
+      const created = folder(path);
+      createdFolders.push(created);
+      return created;
+    });
+
+    function makePanel(folders: ProjectFolder[]) {
+      return (
+        <DesignFilesPanel
+          projectId="test-project"
+          files={[file({ name: 'assets/logo.png', kind: 'image' })]}
+          folders={folders}
+          liveArtifacts={[]}
+          onRefreshFiles={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenLiveArtifact={vi.fn()}
+          onRenameFile={vi.fn()}
+          onDeleteFile={vi.fn()}
+          onDeleteFiles={vi.fn()}
+          onCreateFolder={onCreateFolder}
+          onUpload={vi.fn()}
+          onUploadFiles={vi.fn()}
+          onPaste={vi.fn()}
+          onNewSketch={vi.fn()}
+        />
+      );
+    }
+
+    const { rerender } = render(makePanel([]));
+
+    fireEvent.contextMenu(screen.getByTestId('design-folder-row-assets'));
+    fireEvent.click(screen.getByRole('button', { name: 'New subfolder' }));
+
+    await waitFor(() => {
+      expect(onCreateFolder).toHaveBeenCalledWith('assets/Untitled folder');
+    });
+    // Simulate the parent refreshing the persisted-folders list after the
+    // create resolves — that is what surfaces the new folder in the tree so
+    // the inline rename input can mount on it.
+    rerender(makePanel(createdFolders));
+
+    const input = await screen.findByDisplayValue('Untitled folder');
+    expect(input).toBeTruthy();
   });
 
   it('clicking a folder row navigates into it and shows only basenames and nested dirs', () => {
@@ -497,14 +572,14 @@ describe('DesignFilesPanel directory navigation', () => {
     expect(screen.getByTestId('design-folder-row-assets')).toBeTruthy();
   });
 
-  it('keeps subdirectory files out of the root file table', () => {
+  it('shows all files including subdirectory files at root', () => {
     renderPanel([
       file({ name: 'assets/logo.png', kind: 'image' }),
       file({ name: 'top.html', kind: 'html' }),
     ]);
 
     expect(screen.getByTestId('design-folder-row-assets')).toBeTruthy();
-    expect(screen.queryByTestId('design-file-row-assets/logo.png')).toBeNull();
+    expect(screen.getByTestId('design-file-row-assets/logo.png')).toBeTruthy();
     expect(screen.getByTestId('design-file-row-top.html')).toBeTruthy();
   });
 
@@ -617,6 +692,35 @@ describe('DesignFilesPanel directory navigation', () => {
 
 describe('DesignFilesPanel current-directory sync', () => {
   afterEach(() => cleanup());
+
+  it('moves selected files into a chosen folder via the add-to-folder picker', async () => {
+    const onMoveFiles = vi.fn(async () => {});
+    const { container } = renderPanel(
+      [
+        file({ name: 'index.html', kind: 'html' }),
+        file({ name: 'about.html', kind: 'html' }),
+        file({ name: 'assets/logo.png', kind: 'image' }),
+      ],
+      { onMoveFiles },
+    );
+
+    fireEvent.click(screen.getByTestId('design-file-row-index.html').querySelector('.df-row-check')!);
+    fireEvent.click(screen.getByTestId('design-file-row-about.html').querySelector('.df-row-check')!);
+
+    expect(container.querySelector('[data-testid="design-files-batch-bar"]')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('design-files-add-to-folder'));
+
+    // Dialog opens with a folder tree. Click a folder to select it, then
+    // confirm the move through the dialog's confirm button.
+    const dialog = screen.getByTestId('design-move-picker');
+    expect(dialog).toBeTruthy();
+    fireEvent.click(screen.getByTestId('design-move-target-assets'));
+    fireEvent.click(screen.getByTestId('design-move-confirm'));
+
+    await waitFor(() => {
+      expect(onMoveFiles).toHaveBeenCalledWith(['index.html', 'about.html'], 'assets');
+    });
+  });
 
   it('reports the active folder so new files are created under it, not the root', () => {
     const onCurrentDirChange = vi.fn();
