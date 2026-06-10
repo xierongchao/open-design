@@ -1488,4 +1488,67 @@ describe('gradient background support', () => {
 
     dom.window.close();
   });
+
+  it('posts od-edit-deselect on Escape when a target is selected', async () => {
+    const posts: Array<{ type?: string }> = [];
+    const dom = new JSDOM(
+      `<main><h1 data-od-id="hero" data-od-source-path="path-0-0">Title</h1></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const h1 = dom.window.document.querySelector('h1')!;
+    h1.getBoundingClientRect = () => ({
+      x: 0, y: 0, width: 160, height: 32,
+      top: 0, right: 160, bottom: 32, left: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as { type?: string });
+    }) as typeof dom.window.parent.postMessage;
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-mode', enabled: true },
+    }));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    // Select target via the host→bridge message (same as setSelectedTarget)
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'hero' },
+    }));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    expect(h1.hasAttribute('data-od-edit-selected')).toBe(true);
+
+    // Press Escape — should deselect and post od-edit-deselect
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    expect(posts.some((m) => m.type === 'od-edit-deselect')).toBe(true);
+    expect(h1.hasAttribute('data-od-edit-selected')).toBe(false);
+
+    dom.window.close();
+  });
+
+  it('does not post od-edit-deselect on Escape when no target is selected', async () => {
+    const posts: Array<{ type?: string }> = [];
+    const dom = new JSDOM(
+      `<main><h1 data-od-id="hero" data-od-source-path="path-0-0">Title</h1></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as { type?: string });
+    }) as typeof dom.window.parent.postMessage;
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-mode', enabled: true },
+    }));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    // No element selected — Escape should NOT post od-edit-deselect
+    posts.length = 0;
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    expect(posts.some((m) => m.type === 'od-edit-deselect')).toBe(false);
+
+    dom.window.close();
+  });
 });

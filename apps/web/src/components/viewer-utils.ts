@@ -461,13 +461,17 @@ export function effectivePreviewScale(
   canvasSize?: PreviewCanvasSize,
   options?: PreviewScaleOptions,
 ) {
-  if (viewport === 'desktop') return previewScale;
   const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
   if (!preset?.width || !preset.height || !canvasSize?.width || !canvasSize.height) return previewScale;
-  const canvasPadding = options?.canvasPadding ?? 48;
+  const canvasPadding = viewport === 'desktop' ? 0 : (options?.canvasPadding ?? 48);
   const availableWidth = Math.max(1, canvasSize.width - canvasPadding);
   const availableHeight = Math.max(1, canvasSize.height - canvasPadding);
   const fitScale = Math.min(1, availableWidth / preset.width, availableHeight / preset.height);
+  if (viewport === 'desktop') {
+    // For desktop, auto-fit 1920x1080 into the container.
+    // User zoom is applied relative to the fit scale.
+    return fitScale * previewScale;
+  }
   return Math.min(previewScale, fitScale);
 }
 
@@ -494,14 +498,9 @@ export function previewScaleShellStyle(
   viewport: PreviewViewportId,
   previewScale: number,
 ): CSSProperties & Record<string, string | number> {
-  if (viewport === 'desktop') {
-    return {
-      width: `${100 / previewScale}%`,
-      height: `${100 / previewScale}%`,
-      transform: `scale(${previewScale})`,
-      transformOrigin: '0 0',
-    };
-  }
+  // All viewports use the same CSS-variable approach so the iframe
+  // always renders at its natural viewport size (e.g. 1920x1080 for
+  // desktop) and the CSS transform scales it to fit.
   return {
     width: 'var(--preview-viewport-width)',
     height: 'var(--preview-viewport-height)',
@@ -510,25 +509,82 @@ export function previewScaleShellStyle(
   };
 }
 
+/**
+ * Computes the auto-fit zoom and centering translate for desktop edit mode.
+ * Uses CSS `zoom` for scaling (re-renders at zoomed resolution → crisp text)
+ * and `transform: translate()` only for positioning.
+ *
+ * Visual math is identical to translate+scale with transformOrigin: 0 0:
+ *   content at (cx, cy) → screen at (tx + cx * zoom, ty + cy * zoom)
+ * But `zoom` causes the browser to allocate a proper rasterization buffer
+ * instead of stretching pixels in the compositor.
+ */
+export function desktopEditAutoFitTransform(
+  containerWidth: number,
+  containerHeight: number,
+  contentWidth: number,
+  contentHeight: number,
+  userScale: number,
+  panOffset: ManualEditViewportTransform,
+): { zoom: number; translateX: number; translateY: number } {
+  if (containerWidth <= 0 || containerHeight <= 0 || contentWidth <= 0 || contentHeight <= 0) {
+    return { zoom: 1, translateX: 0, translateY: 0 };
+  }
+  const fitScale = Math.min(1, containerWidth / contentWidth, containerHeight / contentHeight);
+  const effectiveZoom = fitScale * userScale;
+  const scaledWidth = contentWidth * effectiveZoom;
+  const scaledHeight = contentHeight * effectiveZoom;
+  const centerX = Math.max(0, (containerWidth - scaledWidth) / 2);
+  const centerY = Math.max(0, (containerHeight - scaledHeight) / 2);
+  return {
+    zoom: effectiveZoom,
+    translateX: centerX + panOffset.x,
+    translateY: centerY + panOffset.y,
+  };
+}
+
 export function manualEditPreviewShellStyle(
   viewport: PreviewViewportId,
   previewScale: number,
-  frozenWidth: number | null,
   viewportTransform: ManualEditViewportTransform = { x: 0, y: 0 },
+  canvasSize?: PreviewCanvasSize,
 ): CSSProperties & Record<string, string | number> {
-  const transform = `translate(${viewportTransform.x}px, ${viewportTransform.y}px) scale(${previewScale})`;
   if (viewport === 'desktop') {
-    const width = frozenWidth && frozenWidth > 0 ? `${frozenWidth}px` : '100%';
+    const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
+    const contentWidth = preset?.width ?? 1920;
+    const contentHeight = preset?.height ?? 1080;
+    // When canvasSize is available, compute auto-fit zoom and centering.
+    // Otherwise fall back to raw user zoom + pan (legacy behavior).
+    const autoFit = canvasSize?.width && canvasSize.height
+      ? desktopEditAutoFitTransform(
+          canvasSize.width,
+          canvasSize.height,
+          contentWidth,
+          contentHeight,
+          previewScale,
+          viewportTransform,
+        )
+      : null;
+    if (autoFit) {
+      return {
+        width: 'var(--preview-viewport-width)',
+        height: 'var(--preview-viewport-height)',
+        zoom: autoFit.zoom,
+        transform: `translate(${autoFit.translateX.toFixed(2)}px, ${autoFit.translateY.toFixed(2)}px)`,
+        transformOrigin: '0 0',
+        willChange: 'transform',
+      };
+    }
     return {
-      width,
-      minWidth: width,
-      height: '100%',
-      minHeight: '100%',
-      transform,
+      width: 'var(--preview-viewport-width)',
+      height: 'var(--preview-viewport-height)',
+      zoom: previewScale,
+      transform: `translate(${viewportTransform.x}px, ${viewportTransform.y}px)`,
       transformOrigin: '0 0',
       willChange: 'transform',
     };
   }
+  const transform = `translate(${viewportTransform.x}px, ${viewportTransform.y}px) scale(${previewScale})`;
   return {
     width: 'var(--preview-viewport-width)',
     height: 'var(--preview-viewport-height)',

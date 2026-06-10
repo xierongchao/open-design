@@ -422,6 +422,76 @@ describe('FileViewer manual edit regressions', () => {
     });
     expect(document.querySelector('.manual-edit-workspace')).not.toBeNull();
   });
+
+  it('does not re-fire onEditSelectionChange when the same target is updated in-place', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } }),
+    ));
+    const editHost = document.createElement('div');
+    editHost.id = 'edit-inspector-host';
+    document.body.append(editHost);
+    const onEditSelectionChange = vi.fn();
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml={source}
+        editPortalId={editHost.id}
+        onEditSelectionChange={onEditSelectionChange}
+        defaultEditMode
+      />,
+    );
+
+    const activeFrame = await waitFor(() => {
+      const frame = document.querySelector<HTMLIFrameElement>(
+        'iframe[data-od-active="true"][data-od-render-mode="srcdoc"]',
+      );
+      if (!frame?.contentWindow) throw new Error('Active edit frame not ready');
+      return frame;
+    });
+
+    // Select a target
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-select', target: heroTarget() },
+        source: activeFrame.contentWindow,
+      }));
+    });
+    await waitFor(() => {
+      expect(onEditSelectionChange).toHaveBeenLastCalledWith(true);
+    });
+    const callCountAfterSelect = onEditSelectionChange.mock.calls.length;
+
+    // Simulate an in-place target update (same id, new object reference).
+    // This happens when a style patch is applied and the target object is
+    // recreated with updated text/styles. onEditSelectionChange must NOT
+    // fire again because the selection id hasn't changed.
+    const updatedTarget = { ...heroTarget(), text: 'Updated Hero', fields: { text: 'Updated Hero' } };
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-select', target: updatedTarget },
+        source: activeFrame.contentWindow,
+      }));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The callback must not have been called again for the same target id.
+    expect(onEditSelectionChange.mock.calls.length).toBe(callCountAfterSelect);
+
+    // Now deselect — should fire with false.
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-deselect' },
+        source: activeFrame.contentWindow,
+      }));
+    });
+    await waitFor(() => {
+      expect(onEditSelectionChange).toHaveBeenLastCalledWith(false);
+    });
+  });
 });
 
 function heroTarget(): ManualEditTarget {

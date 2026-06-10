@@ -188,6 +188,7 @@ import {
   copyTextToClipboard,
   decorateMarkdownCodeBlocks,
   deployResultState,
+  desktopEditAutoFitTransform,
   effectivePreviewScale,
   ensureMarkdownCodeBlockControls,
   getDeployProviderOption,
@@ -4194,7 +4195,6 @@ function HtmlViewer({
   const [manualEditMode, setManualEditModeRaw] = useState(defaultEditMode);
   const [manualEditSrcDocActive, setManualEditSrcDocActive] = useState(defaultEditMode);
   const [manualEditFrozenSource, setManualEditFrozenSource] = useState<string | null>(null);
-  const [manualEditViewportWidth, setManualEditViewportWidth] = useState<number | null>(null);
   const [commentPortalHost, setCommentPortalHost] = useState<HTMLElement | null>(null);
   const [manualEditPortalHost, setManualEditPortalHost] = useState<HTMLElement | null>(null);
   const [previewBodyRef, previewBodySize] = usePreviewCanvasSize<HTMLDivElement>();
@@ -4263,9 +4263,6 @@ function HtmlViewer({
   const setManualEditMode = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
     setManualEditModeRaw((prev) => {
       const value = typeof next === 'function' ? (next as (p: boolean) => boolean)(prev) : next;
-      if (value !== prev && !value) {
-        setManualEditViewportWidth(null);
-      }
       return value;
     });
   }, []);
@@ -4273,11 +4270,6 @@ function HtmlViewer({
     setManualEditSrcDocActive(defaultEditMode);
     setManualEditFrozenSource(null);
   }, [defaultEditMode, projectId, file.name]);
-  useEffect(() => {
-    if (!defaultEditMode || !manualEditMode || manualEditViewportWidth !== null) return;
-    const width = previewBodyRef.current?.clientWidth ?? 0;
-    if (width > 0) setManualEditViewportWidth(width);
-  }, [defaultEditMode, manualEditMode, manualEditViewportWidth, previewBodySize?.width]);
   useEffect(() => {
     onCommentModeChange?.(commentPanelOpen);
   }, [commentPanelOpen, onCommentModeChange]);
@@ -4400,9 +4392,10 @@ function HtmlViewer({
   const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([]);
   const [selectedManualEditTarget, setSelectedManualEditTarget] = useState<ManualEditTarget | null>(null);
   const [selectedManualEditTargets, setSelectedManualEditTargets] = useState<ManualEditTarget[]>([]);
+  const selectedManualEditTargetId = selectedManualEditTarget?.id ?? null;
   useEffect(() => {
-    onEditSelectionChange?.(manualEditMode && Boolean(selectedManualEditTarget));
-  }, [manualEditMode, onEditSelectionChange, selectedManualEditTarget]);
+    onEditSelectionChange?.(manualEditMode && selectedManualEditTargetId !== null);
+  }, [manualEditMode, onEditSelectionChange, selectedManualEditTargetId]);
   useEffect(() => () => {
     onEditSelectionChange?.(false);
   }, [onEditSelectionChange]);
@@ -5248,7 +5241,6 @@ function HtmlViewer({
     setQueuedBoardNotes([]);
     setStrokePoints([]);
     setManualEditFrozenSource(null);
-    setManualEditViewportWidth(null);
     setManualEditTargets([]);
     setSelectedManualEditTarget(null);
     setManualEditPanelPosition(null);
@@ -5889,17 +5881,41 @@ function HtmlViewer({
     const nextZoom = nextManualEditWheelZoom(currentZoom, deltaY);
     if (nextZoom === currentZoom) return;
 
-    const oldScale = currentZoom / 100;
-    const nextScale = nextZoom / 100;
-    const anchor = normalizeManualEditViewportPoint(data, oldScale);
+    const oldUserScale = currentZoom / 100;
+    const nextUserScale = nextZoom / 100;
+    // For desktop edit mode, the effective transform includes an auto-fit
+    // base centering offset. We must account for it in anchor-based zoom so
+    // the content under the mouse stays fixed.
+    const baseFit = previewViewport === 'desktop' && previewBodySize?.width && previewBodySize.height
+      ? desktopEditAutoFitTransform(
+          previewBodySize.width,
+          previewBodySize.height,
+          1920,
+          1080,
+          1.0,
+          { x: 0, y: 0 },
+        )
+      : null;
+    const effectiveOldScale = baseFit ? baseFit.zoom * oldUserScale : oldUserScale;
+    const anchor = normalizeManualEditViewportPoint(data, effectiveOldScale);
     if (anchor) {
-      const current = manualEditViewportTransformRef.current;
-      const contentX = (anchor.x - current.x) / oldScale;
-      const contentY = (anchor.y - current.y) / oldScale;
-      setManualEditViewportTransformValue({
-        x: anchor.x - contentX * nextScale,
-        y: anchor.y - contentY * nextScale,
-      });
+      const pan = manualEditViewportTransformRef.current;
+      if (baseFit) {
+        // Transform = translate(baseCenter + pan) scale(fitScale * userScale).
+        // Keep the canvas point under the mouse fixed when user zoom changes.
+        const ratio = nextUserScale / oldUserScale;
+        setManualEditViewportTransformValue({
+          x: anchor.x - baseFit.translateX - (anchor.x - baseFit.translateX - pan.x) * ratio,
+          y: anchor.y - baseFit.translateY - (anchor.y - baseFit.translateY - pan.y) * ratio,
+        });
+      } else {
+        const contentX = (anchor.x - pan.x) / oldUserScale;
+        const contentY = (anchor.y - pan.y) / oldUserScale;
+        setManualEditViewportTransformValue({
+          x: anchor.x - contentX * nextUserScale,
+          y: anchor.y - contentY * nextUserScale,
+        });
+      }
     }
 
     zoomRef.current = nextZoom;
@@ -6579,6 +6595,25 @@ function HtmlViewer({
     };
   }, [deployMenuOpen, downloadMenuOpen]);
 
+  // Cmd+\ (macOS) / Ctrl+\ (Windows/Linux) toggles fullscreen.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === '\\' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        } else {
+          const el = previewBodyRef.current;
+          if (el && typeof el.requestFullscreen === 'function') {
+            el.requestFullscreen().catch(() => {});
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   useEffect(() => {
     if (!inTabPresent) return;
     const bodyStyle = document.body.style;
@@ -6593,19 +6628,6 @@ function HtmlViewer({
       }
     };
     const onKey = (e: KeyboardEvent) => {
-      // Cmd+\ (macOS) / Ctrl+\ (Windows/Linux) toggles in-tab presentation
-      if (e.key === '\\' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-        e.preventDefault();
-        if (document.fullscreenElement) {
-          document.exitFullscreen().catch(() => {});
-        } else {
-          const el = previewBodyRef.current;
-          if (el && typeof el.requestFullscreen === 'function') {
-            el.requestFullscreen().catch(() => {});
-          }
-        }
-        return;
-      }
       if (inTabPresent && e.key === 'Escape') setInTabPresent(false);
     };
     updateChromeHeight();
@@ -7080,7 +7102,6 @@ function HtmlViewer({
       setInspectMode(false);
       setDrawOverlayOpen(false);
       setMode('preview');
-      setManualEditViewportWidth(previewBodyRef.current?.clientWidth ?? null);
       setManualEditSrcDocActive(true);
       setManualEditMode(true);
       closeArtifactToolMenus();
@@ -7090,18 +7111,21 @@ function HtmlViewer({
     void exitManualEditModeAfterFlush();
   }
 
-  // Cmd+\ (macOS) / Ctrl+\ (Windows/Linux) toggles the properties panel
+  // ESC deselects the current edit-mode target without exiting edit mode.
+  // The primary ESC→deselect handler lives in the edit bridge (inside the
+  // iframe) so it fires even when focus is inside the iframe. This host-side
+  // handler covers the case where focus returned to the parent window (e.g.
+  // after interacting with a docked inspector).
   useEffect(() => {
-    if (mode !== 'preview') return;
+    if (!manualEditMode) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === '\\' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        activateManualEditTool();
+      if (e.key === 'Escape' && selectedManualEditTargetId) {
+        void clearManualEditTargetSelection();
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [mode, manualEditMode]);
+  }, [manualEditMode, selectedManualEditTargetId]);
 
   function queueCurrentDraft() {
     const note = commentDraft.trim();
@@ -8574,7 +8598,7 @@ function HtmlViewer({
                 <div
                   style={
                     manualEditMode
-                      ? manualEditPreviewShellStyle(previewViewport, previewScale, manualEditViewportWidth, manualEditViewportTransform)
+                      ? manualEditPreviewShellStyle(previewViewport, previewScale, manualEditViewportTransform, previewBodySize)
                       : previewScaleShellStyle(previewViewport, previewScale)
                   }
                 >

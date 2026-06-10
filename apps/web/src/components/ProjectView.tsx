@@ -294,7 +294,7 @@ interface QueuedChatSendUpdate {
 
 let liveArtifactEventSequence = 0;
 const CHAT_PANEL_WIDTH_STORAGE_KEY = 'open-design.project.chatPanelWidth.v2';
-const DEFAULT_CHAT_PANEL_WIDTH = 760;
+const DEFAULT_CHAT_PANEL_WIDTH = 500;
 const MIN_CHAT_PANEL_WIDTH = 345;
 const MAX_CHAT_PANEL_WIDTH = 1040;
 const COMMENT_INSPECTOR_PANEL_WIDTH = 320;
@@ -882,7 +882,10 @@ export function ProjectView({
     setEditSelectionActive(active);
     if (active) {
       setEditPanelAvailable(true);
-      setWorkspaceSideTab('edit');
+      // Only auto-switch to the edit tab on the initial selection.
+      // Subsequent selection changes (e.g. after the user manually
+      // switched to the chat tab) should not force the tab back.
+      setWorkspaceSideTab((prev) => prev === 'chat' ? 'edit' : prev);
     }
   }, []);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);

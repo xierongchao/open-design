@@ -1129,6 +1129,26 @@ html.od-export-capture-active .od-toast {
 .preview-viewport-mobile.manual-edit-workspace .manual-edit-canvas {
   border-radius: 28px;
 }
+/* Desktop viewport: maintain 1920x1080 and auto-fit via CSS scale.
+   When the container is smaller than 1920x1080, the canvas scales down
+   to fit without horizontal scrollbar. */
+.preview-viewport.preview-viewport-desktop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.preview-viewport.preview-viewport-desktop:not(.manual-edit-workspace):not(.comment-preview-layer-with-side-dock) .comment-preview-canvas {
+  width: calc(var(--preview-viewport-width) * var(--preview-scale, 1));
+  height: calc(var(--preview-viewport-height) * var(--preview-scale, 1));
+  max-width: none;
+  max-height: none;
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+.preview-viewport.preview-viewport-desktop .comment-frame-clip,
+.preview-viewport.preview-viewport-desktop .manual-edit-canvas > div {
+  will-change: transform;
+}
 .preview-frame-clip,
 .comment-frame-clip {
   position: absolute;

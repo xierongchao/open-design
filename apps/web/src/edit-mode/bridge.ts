@@ -857,16 +857,26 @@ export function buildManualEditBridge(enabled: boolean): string {
   }, { capture: true, passive: false });
   document.addEventListener('keydown', function(ev){
     if (!enabled) return;
-    var mod = ev.metaKey || ev.ctrlKey;
-    if (!mod) return;
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
-    if (ev.key === 'z' && !ev.shiftKey) {
-      ev.preventDefault();
-      window.parent.postMessage({ type: 'od-edit-undo' }, '*');
+    var mod = ev.metaKey || ev.ctrlKey;
+    if (mod) {
+      if (ev.key === 'z' && !ev.shiftKey) {
+        ev.preventDefault();
+        window.parent.postMessage({ type: 'od-edit-undo' }, '*');
+      }
+      if ((ev.key === 'z' && ev.shiftKey) || ev.key === 'y') {
+        ev.preventDefault();
+        window.parent.postMessage({ type: 'od-edit-redo' }, '*');
+      }
+      return;
     }
-    if ((ev.key === 'z' && ev.shiftKey) || ev.key === 'y') {
-      ev.preventDefault();
-      window.parent.postMessage({ type: 'od-edit-redo' }, '*');
+    if (ev.key === 'Escape') {
+      var selected = document.querySelector('[data-od-edit-selected]');
+      if (selected) {
+        ev.preventDefault();
+        clearSelectedTarget();
+        window.parent.postMessage({ type: 'od-edit-deselect' }, '*');
+      }
     }
   }, true);
   window.addEventListener('resize', postTargets);
