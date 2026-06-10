@@ -117,6 +117,16 @@ export interface DeleteProjectFileResponse extends OkResponse {}
 
 export interface DeleteProjectFolderResponse extends OkResponse {}
 
+export interface CopyProjectFileRequest {
+  name: string;
+}
+
+export interface CopyProjectFileResponse {
+  file: ProjectFile;
+  sourceName: string;
+  newName: string;
+}
+
 export interface RenameProjectFolderRequest {
   from: string;
   to: string;

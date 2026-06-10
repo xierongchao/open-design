@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -334,172 +334,45 @@ function unreadableDropDataTransfer(fallbackFiles: File[] = []) {
 }
 
 describe('FileWorkspace upload input', () => {
-  it('does not promote raw design-system assets into component review cards', () => {
-    const markup = renderToStaticMarkup(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[
-          workspaceFile('DESIGN.md'),
-          workspaceFile('tokens.css'),
-          workspaceFile('preview/logo.html'),
-          workspaceFile('ui_kits/website/index.html'),
-          baseFile({ name: 'assets/favicon.png', path: 'assets/favicon.png' }),
-          baseFile({ name: 'assets/site/avatar-1.png', path: 'assets/site/avatar-1.png' }),
-          baseFile({ name: 'assets/site/community.png', path: 'assets/site/community.png' }),
-        ]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{ tabs: [], active: null }}
-        onTabsStateChange={vi.fn()}
-        designSystemProject={{
-          id: 'user:passive-book',
-          title: 'Passive Book Design System',
-          category: 'Brand',
-          summary: 'Passive Book brand system',
-          source: 'user',
-          status: 'draft',
-        }}
-      />,
-    );
-
-    expect(markup).toContain('<strong>website</strong>');
-    expect(markup).not.toContain('<strong>favicon</strong>');
-    expect(markup).not.toContain('<strong>avatar-1</strong>');
-    expect(markup).not.toContain('<strong>community</strong>');
-  });
-
-  it('keeps image-based UI kit previews as component review cards', () => {
-    const markup = renderToStaticMarkup(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[
-          workspaceFile('DESIGN.md'),
-          baseFile({ name: 'ui_kits/button.png', path: 'ui_kits/button.png' }),
-          baseFile({ name: 'src/components/card.svg', path: 'src/components/card.svg' }),
-          baseFile({ name: 'assets/site/avatar-1.png', path: 'assets/site/avatar-1.png' }),
-        ]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{ tabs: [], active: null }}
-        onTabsStateChange={vi.fn()}
-        designSystemProject={{
-          id: 'user:passive-book',
-          title: 'Passive Book Design System',
-          category: 'Brand',
-          summary: 'Passive Book brand system',
-          source: 'user',
-          status: 'draft',
-        }}
-      />,
-    );
-
-    expect(markup).toContain('<strong>button</strong><small>Reusable product interface examples</small>');
-    expect(markup).toContain('<strong>card</strong><small>Reusable product interface examples</small>');
-    expect(markup).not.toContain('<strong>avatar-1</strong>');
-  });
-
-  it('renders a design-system contents rail with review and edit actions', () => {
-    const markup = renderToStaticMarkup(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[
-          workspaceFile('DESIGN.md'),
-          workspaceFile('preview/logo.html'),
-          workspaceFile('ui_kits/website/index.html'),
-        ]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{ tabs: [], active: null }}
-        onTabsStateChange={vi.fn()}
-        designSystemProject={{
-          id: 'user:passive-book',
-          title: 'Passive Book Design System',
-          category: 'Brand',
-          summary: 'Passive Book brand system',
-          source: 'user',
-          status: 'draft',
-        }}
-      />,
-    );
-
-    expect(markup).toContain('data-testid="design-system-review-toc"');
-    expect(markup).toContain('href="#design-system-section-');
-    expect(markup).toContain('Looks good');
-    expect(markup).toContain('Needs work...');
-    expect(markup).toContain('data-testid="design-system-review-edit-');
-    expect(markup).not.toContain('data-testid="design-system-review-open-');
-  });
-
-  it('opens the section preview file for editing from the design-system review card', () => {
+  it('previews an HTML file inline while keeping the Design Files tree and toolbar visible', async () => {
+    mockedFetchProjectFileText.mockResolvedValue('<!doctype html><h1>Preview</h1>');
     const onTabsStateChange = vi.fn();
-    render(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[
-          workspaceFile('DESIGN.md'),
-          workspaceFile('ui_kits/website/index.html'),
-        ]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{ tabs: [], active: null }}
-        onTabsStateChange={onTabsStateChange}
-        designSystemProject={{
-          id: 'user:passive-book',
-          title: 'Passive Book Design System',
-          category: 'Brand',
-          summary: 'Passive Book brand system',
-          source: 'user',
-          status: 'draft',
-        }}
-      />,
+
+    function Harness() {
+      const [tabsState, setTabsState] = useState({ tabs: [] as string[], active: null as string | null });
+      return (
+        <FileWorkspace
+          projectId="project-1"
+          projectKind="prototype"
+          files={[workspaceFile('index.html')]}
+          liveArtifacts={[]}
+          onRefreshFiles={vi.fn()}
+          isDeck={false}
+          tabsState={tabsState}
+          onTabsStateChange={(next) => {
+            onTabsStateChange(next);
+            setTabsState(next);
+          }}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    expect(screen.getByTestId('design-files-empty')).toBeTruthy();
+    fireEvent.click(
+      screen.getByTestId('design-file-row-index.html').querySelector('.df-row-name-btn')!,
     );
 
-    act(() => {
-      fireEvent.click(screen.getByTitle('Edit ui_kits/website/index.html'));
+    await waitFor(() => {
+      expect(screen.getByTestId('design-files-inline-preview')).toBeTruthy();
+      expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
     });
-
-    expect(onTabsStateChange).toHaveBeenCalledWith(expect.objectContaining({
-      active: 'ui_kits/website/index.html',
-      tabs: ['ui_kits/website/index.html'],
-    }));
-  });
-
-  it('treats favicon previews as brand guidance', () => {
-    const markup = renderToStaticMarkup(
-      <FileWorkspace
-        projectId="project-1"
-        projectKind="prototype"
-        files={[
-          workspaceFile('DESIGN.md'),
-          workspaceFile('preview/favicon.html'),
-          baseFile({ name: 'assets/favicon.png', path: 'assets/favicon.png' }),
-        ]}
-        liveArtifacts={[]}
-        onRefreshFiles={vi.fn()}
-        isDeck={false}
-        tabsState={{ tabs: [], active: null }}
-        onTabsStateChange={vi.fn()}
-        designSystemProject={{
-          id: 'user:passive-book',
-          title: 'Passive Book Design System',
-          category: 'Brand',
-          summary: 'Passive Book brand system',
-          source: 'user',
-          status: 'draft',
-        }}
-      />,
-    );
-
-    expect(markup).toContain('<strong>favicon</strong><small>Brand app icon and favicon</small>');
-    expect(markup).not.toContain('<strong>favicon</strong><small>Reusable product interface examples</small>');
+    expect(screen.getByRole('tab', { name: 'Design Files' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('design-file-row-index.html')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Preview' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Code' })).toBeTruthy();
+    expect(onTabsStateChange).not.toHaveBeenCalled();
   });
 
   it('keeps the Design Files picker aligned with drag-and-drop file support', () => {
@@ -1015,7 +888,7 @@ describe('FileWorkspace upload input', () => {
     const onUploadFiles = vi.fn();
     const { container } = renderDesignFilesPanel({ onUploadFiles });
 
-    fireEvent.drop(container.querySelector('.df-drop')!, {
+    fireEvent.drop(container.querySelector('.df-content-pane')!, {
       dataTransfer: unreadableDropDataTransfer([fallbackFile]),
     });
 
@@ -1027,7 +900,7 @@ describe('FileWorkspace upload input', () => {
     const onUploadFiles = vi.fn();
     const { container } = renderDesignFilesPanel({ onUploadFiles });
 
-    fireEvent.drop(container.querySelector('.df-drop')!, {
+    fireEvent.drop(container.querySelector('.df-content-pane')!, {
       dataTransfer: unreadableDropDataTransfer(),
     });
 

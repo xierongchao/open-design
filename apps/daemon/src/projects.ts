@@ -7,7 +7,8 @@
 // All paths flowing in from HTTP handlers are validated against the project
 // directory to prevent path traversal — see resolveSafe().
 
-import { link, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { copyFile, link, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
 import {
@@ -998,6 +999,122 @@ export async function deleteProjectFile(projectsRoot, projectId, name, metadata?
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   const file = await resolveSafeReal(dir, name);
   await unlink(file);
+}
+
+export async function copyProjectFile(projectsRoot, projectId, name, metadata?) {
+  const dir = resolveProjectDir(projectsRoot, projectId, metadata);
+  const sourceName = validateProjectPath(name);
+  const source = await resolveSafeReal(dir, sourceName);
+  const sourceStat = await stat(source);
+  if (!sourceStat.isFile()) {
+    const err = new Error('source is not a regular file');
+    err.code = 'EISDIR';
+    throw err;
+  }
+
+  const parsed = path.posix.parse(sourceName);
+  let stem = parsed.name;
+  let startIndex = 1;
+  const numericSuffix = /^(.*?)(\d+)$/u.exec(stem);
+  if (numericSuffix?.[1]) {
+    const suffixNumber = Number(numericSuffix[2]);
+    if (Number.isSafeInteger(suffixNumber) && suffixNumber >= 0) {
+      stem = numericSuffix[1];
+      startIndex = suffixNumber + 1;
+    }
+  }
+
+  for (let index = startIndex; ; index += 1) {
+    const newName = path.posix.join(parsed.dir, `${stem}${index}${parsed.ext}`);
+    const target = await resolveSafeReal(dir, newName);
+    const manifestCopy = await prepareArtifactManifestCopy(dir, sourceName, newName);
+    if (manifestCopy?.targetOccupied) continue;
+    await mkdir(path.dirname(target), { recursive: true });
+    try {
+      await copyFile(source, target, fsConstants.COPYFILE_EXCL);
+    } catch (err) {
+      if (err?.code === 'EEXIST') continue;
+      throw err;
+    }
+
+    try {
+      await commitArtifactManifestCopy(manifestCopy);
+    } catch (err) {
+      await unlink(target).catch(() => {});
+      if (err?.code === 'EEXIST') continue;
+      throw err;
+    }
+
+    const copiedStat = await stat(target);
+    const manifest = await readManifestForPath(dir, newName);
+    return {
+      file: {
+        name: newName,
+        path: newName,
+        size: copiedStat.size,
+        mtime: copiedStat.mtimeMs,
+        kind: kindFor(newName),
+        mime: mimeFor(newName),
+        artifactKind: manifest?.kind,
+        artifactManifest: manifest,
+      },
+      sourceName,
+      newName,
+    };
+  }
+}
+
+async function prepareArtifactManifestCopy(dir, sourceName, newName) {
+  const sourceManifestPath = await resolveSafeReal(
+    dir,
+    artifactManifestNameFor(sourceName),
+  ).catch((err) => {
+    if (err?.code === 'ENOENT') return null;
+    throw err;
+  });
+  if (!sourceManifestPath) return null;
+
+  let raw;
+  try {
+    raw = await readFile(sourceManifestPath, 'utf8');
+  } catch (err) {
+    if (err?.code === 'ENOENT') return null;
+    throw err;
+  }
+
+  const parsed = parseManifest(raw);
+  if (!parsed) return null;
+  const rewritten = rewriteArtifactManifestRenameRefs(parsed, {
+    ownerName: sourceName,
+    oldName: sourceName,
+    newName,
+  });
+  const validated = validateArtifactManifestInput(rewritten, newName);
+  if (!validated.ok || !validated.value) return null;
+
+  const targetManifestPath = await resolveSafeReal(dir, artifactManifestNameFor(newName));
+  try {
+    await stat(targetManifestPath);
+    return { targetOccupied: true };
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+
+  return {
+    targetOccupied: false,
+    targetManifestPath,
+    value: validated.value,
+  };
+}
+
+async function commitArtifactManifestCopy(manifestCopy) {
+  if (!manifestCopy || manifestCopy.targetOccupied) return;
+  await mkdir(path.dirname(manifestCopy.targetManifestPath), { recursive: true });
+  await writeFile(
+    manifestCopy.targetManifestPath,
+    JSON.stringify(manifestCopy.value, null, 2),
+    { flag: 'wx' },
+  );
 }
 
 export async function renameProjectFile(projectsRoot, projectId, fromName, toName, metadata?) {

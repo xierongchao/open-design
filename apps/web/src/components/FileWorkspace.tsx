@@ -14,12 +14,12 @@ import {
   trackFileManagerClick,
   trackFileUploadResult,
   trackPageView,
-  trackTabLauncherClick,
 } from '../analytics/events';
 import { deriveUploadCohort } from '../analytics/upload-tracking';
 import { useT } from '../i18n';
 import { isMacPlatform } from '../utils/platform';
 import {
+  copyProjectFile,
   deleteProjectFile,
   fetchProjectFileText,
   fetchProjectFolders,
@@ -90,6 +90,9 @@ import {
   type SketchItem,
 } from './sketch-model';
 import { AnimatePresence } from 'motion/react';
+import { GenerationPreviewStage } from './GenerationPreviewStage';
+import { AmrGuidance } from './AmrGuidance';
+import { buildGenerationPreviewState } from '../runtime/generation-preview';
 import type { ChatMessage } from '../types';
 
 interface Props {
@@ -117,9 +120,6 @@ interface Props {
   // Open the named file AND surface its Share/Export menu. Drives the chat-side
   // "Share" next-step action without a dedicated share backend.
   shareRequest?: { name: string; nonce: number } | null;
-  // Open the named file AND surface its Download/Export menu. Drives the
-  // chat-side "Download" next-step action.
-  downloadRequest?: { name: string; nonce: number } | null;
   // Flip a deck preview to a given slide when a queued chat send starts. Mirrors
   // `shareRequest`: the named file is activated (if open) and the matching
   // FileViewer consumes the nonce to navigate.
@@ -382,7 +382,6 @@ export function FileWorkspace({
   commentSendDisabled = false,
   openRequest,
   shareRequest,
-  downloadRequest,
   slideNavRequest,
   liveArtifactEvents = [],
   designSystemActivityEvents = [],
@@ -425,6 +424,11 @@ export function FileWorkspace({
   onWorkspaceContextsChange,
   onEditModeChange,
   messages = [],
+  artifactHtml,
+  conversationError,
+  onRetry,
+  onAuthorizeAndRetry,
+  onLaunchTerminalAuth,
   conversationId,
   onBack,
   backLabel,
@@ -484,6 +488,12 @@ export function FileWorkspace({
   // onCurrentDirChange). New files — uploads, pastes, sketches, dropped files —
   // are created under this folder instead of the project root.
   const [uploadDir, setUploadDir] = useState<string>('');
+  const [designFilesPreview, setDesignFilesPreview] = useState<{
+    projectId: string;
+    name: string;
+  } | null>(null);
+  const designFilesPreviewName =
+    designFilesPreview?.projectId === projectId ? designFilesPreview.name : null;
   const [sketches, setSketches] = useState<Record<string, SketchState>>({});
   const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
   const [projectFolders, setProjectFolders] = useState<ProjectFolder[]>(EMPTY_PROJECT_FOLDERS);
@@ -553,6 +563,15 @@ export function FileWorkspace({
     () => files.filter((file) => !isLiveArtifactImplementationPath(file.name)),
     [files],
   );
+  const designFilesPreviewFile = useMemo(
+    () => visibleFiles.find((file) => file.name === designFilesPreviewName) ?? null,
+    [designFilesPreviewName, visibleFiles],
+  );
+
+  useEffect(() => {
+    if (!designFilesPreviewName || designFilesPreviewFile) return;
+    setDesignFilesPreview(null);
+  }, [designFilesPreviewFile, designFilesPreviewName]);
 
   const liveArtifactEntries = useMemo(
     () => liveArtifacts.map(liveArtifactSummaryToWorkspaceEntry),
@@ -577,15 +596,20 @@ export function FileWorkspace({
     };
   }, [projectId]);
 
-  // True when the Design Files tab has nothing to attach: no files, no live
-  // artifacts, no folders. Mirrors DesignFilesPanel's own empty-state gate so
-  // the "Design files" composer context and the empty placeholder agree on
-  // when the tab is actually empty. Reused below to suppress the auto-attached
-  // workspace context for a brand-new/empty project.
-  const designFilesTabIsEmpty =
-    visibleFiles.length === 0
-    && liveArtifactEntries.length === 0
-    && projectFolders.length === 0;
+  const generationPreview = useMemo(
+    () =>
+      buildGenerationPreviewState({
+        designSystemProject: Boolean(designSystemProject),
+        messages,
+        streaming: Boolean(streaming),
+        activeTab,
+        projectFiles: visibleFiles,
+        liveArtifacts,
+        artifactHtml,
+        conversationError,
+      }),
+    [designSystemProject, messages, streaming, activeTab, visibleFiles, liveArtifacts, artifactHtml, conversationError],
+  );
 
   // Pull the persisted active tab in when the parent's hydration completes
   // (or on project switch). Fall back to the Design Files browser so a
@@ -725,11 +749,7 @@ export function FileWorkspace({
   // back to the last remaining tab. Skip transient activeTab values
   // (DESIGN_FILES_TAB, pending sketches) since those aren't in persistedTabs.
   useEffect(() => {
-    if (
-      activeTab === DESIGN_FILES_TAB
-      || activeTab === DESIGN_SYSTEM_TAB
-      || activeTab === QUESTIONS_TAB
-    ) return;
+    if (activeTab === DESIGN_FILES_TAB || activeTab === DESIGN_SYSTEM_TAB || activeTab === QUESTIONS_TAB) return;
     if (isBrowserTabId(activeTab)) {
       if (!browserTabs.some((tab) => tab.id === activeTab)) {
         setActiveTab(DESIGN_FILES_TAB);
@@ -792,21 +812,6 @@ export function FileWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shareRequest]);
 
-  // Download request: same as shareRequest, but the FileViewer opens its
-  // Download/Export menu. Without this, Download did nothing whenever the target
-  // artifact was not already the active tab (it forwards only on a name match).
-  useEffect(() => {
-    if (!downloadRequest) return;
-    const name = downloadRequest.name;
-    if (!name) return;
-    commitTabsState(workspaceTabsState(
-      persistedTabs.includes(name) ? persistedTabs : [...persistedTabs, name],
-      name,
-    ));
-    setActiveTab(name);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [downloadRequest]);
-
   // Slide-nav request: decide deliverability once, at fire time. Only if the
   // named deck is already an open tab do we mark this nonce deliverable and
   // bring it forward so the matching FileViewer is mounted and flips. We never
@@ -855,7 +860,6 @@ export function FileWorkspace({
   }, [activeTab, showQuestionsTab]);
 
   function openFile(name: string) {
-    setUploadError(null);
     // Read from the ref, not the `persistedTabs` prop closure: this path is
     // reached asynchronously from launcher "create" actions (after the daemon
     // resolves a new terminal/side-chat id), so the closure could be stale and
@@ -869,6 +873,10 @@ export function FileWorkspace({
     if (nextBrowserTabs !== browserTabs) setBrowserTabs(nextBrowserTabs);
     commitTabsState(workspaceTabsState(nextTabs, name, nextBrowserTabs));
     setActiveTab(name);
+  }
+
+  function openDesignFilesPreview(name: string) {
+    setDesignFilesPreview({ projectId, name });
   }
 
   function focusWorkspaceTab(tabId: string) {
@@ -893,7 +901,7 @@ export function FileWorkspace({
   function activateWorkspaceTab(tabId: string) {
     if (tabId === QUESTIONS_TAB) {
       setUploadError(null);
-      setActiveTab(tabId);
+      setActiveTab(QUESTIONS_TAB);
       return;
     }
     const sketchEntry = sketches[tabId];
@@ -1232,6 +1240,7 @@ export function FileWorkspace({
     const ok = await deleteProjectFile(projectId, name);
     if (ok) {
       await onRefreshFiles();
+      if (designFilesPreviewName === name) setDesignFilesPreview(null);
       const nextTabs = persistedTabs.filter((n) => n !== name);
       if (activeTab === name) {
         // User is viewing the file being deleted: fall back to another
@@ -1270,6 +1279,9 @@ export function FileWorkspace({
     if (deleted.length > 0) {
       await onRefreshFiles();
       const deletedSet = new Set(deleted);
+      if (designFilesPreviewName && deletedSet.has(designFilesPreviewName)) {
+        setDesignFilesPreview(null);
+      }
       const nextTabs = persistedTabs.filter((n) => !deletedSet.has(n));
       if (activeTab && deletedSet.has(activeTab)) {
         const nextActive = nextTabs[nextTabs.length - 1] ?? null;
@@ -1310,6 +1322,9 @@ export function FileWorkspace({
     const nextActive = tabsState.active === oldName ? renamed.name : tabsState.active;
     onTabsStateChange(workspaceTabsState(nextTabs, nextActive));
     if (activeTab === oldName) setActiveTab(renamed.name);
+    if (designFilesPreviewName === oldName) {
+      setDesignFilesPreview({ projectId, name: renamed.name });
+    }
 
     setSketches((curr) => {
       const entry = curr[oldName];
@@ -1321,6 +1336,13 @@ export function FileWorkspace({
     });
 
     return renamed;
+  }
+
+  async function handleCopy(name: string): Promise<ProjectFile | null> {
+    const result = await copyProjectFile(projectId, name);
+    await onRefreshFiles();
+    await refreshProjectFolders();
+    return result.file;
   }
 
   async function handleCreateFolder(path: string): Promise<ProjectFolder | null> {
@@ -1337,6 +1359,7 @@ export function FileWorkspace({
     await refreshProjectFolders();
 
     const prefix = `${folderPath}/`;
+    if (designFilesPreviewName?.startsWith(prefix)) setDesignFilesPreview(null);
     const nextTabs = persistedTabs.filter((name) => !name.startsWith(prefix));
     const activeWasDeleted = typeof tabsState.active === 'string' && tabsState.active.startsWith(prefix);
     const nextActive = activeWasDeleted ? DESIGN_FILES_TAB : tabsState.active;
@@ -1390,6 +1413,12 @@ export function FileWorkspace({
       onTabsStateChange(workspaceTabsState(nextTabs, nextActive));
       if (activeTab && activeTab.startsWith(oldPrefix)) {
         setActiveTab(renamePath(activeTab));
+      }
+      if (designFilesPreviewName?.startsWith(oldPrefix)) {
+        setDesignFilesPreview({
+          projectId,
+          name: renamePath(designFilesPreviewName),
+        });
       }
 
       setSketches((curr) => {
@@ -1459,6 +1488,12 @@ export function FileWorkspace({
         onTabsStateChange(workspaceTabsState(nextTabs, nextActive));
         if (activeTab && renameMap.has(activeTab)) {
           setActiveTab(renameMap.get(activeTab)!);
+        }
+        if (designFilesPreviewName && renameMap.has(designFilesPreviewName)) {
+          setDesignFilesPreview({
+            projectId,
+            name: renameMap.get(designFilesPreviewName)!,
+          });
         }
 
         setSketches((curr) => {
@@ -1648,8 +1683,17 @@ export function FileWorkspace({
       };
     }
     if (activeTab === DESIGN_FILES_TAB) {
-      // Nothing to reference yet — don't auto-stage an empty "Design files" chip.
-      if (designFilesTabIsEmpty) return null;
+      if (designFilesPreviewFile) {
+        const filePath = designFilesPreviewFile.path ?? designFilesPreviewFile.name;
+        return {
+          id: `file:${filePath}`,
+          kind: 'file',
+          label: filePath.split('/').filter(Boolean).pop() || filePath,
+          tabId: activeTab,
+          path: filePath,
+          ...(resolvedDir ? { absolutePath: joinDisplayPath(resolvedDir, filePath) } : {}),
+        };
+      }
       const trimmedDir = uploadDir.trim();
       const label = trimmedDir.split('/').filter(Boolean).pop() || t('workspace.designFiles');
       return {
@@ -1721,7 +1765,7 @@ export function FileWorkspace({
     activeTab,
     browserTabs,
     conversations,
-    designFilesTabIsEmpty,
+    designFilesPreviewFile,
     designSystemProject,
     resolvedDir,
     t,
@@ -1911,6 +1955,30 @@ export function FileWorkspace({
 
   const isActiveSketch = activeFile?.kind === 'sketch' && isSketchName(activeFile.name);
   const activeSketch = activeFile && isActiveSketch ? sketches[activeFile.name] : null;
+  // The design-files tab is the default landing tab, so while a run is in
+  // flight and no previewable artifact exists yet the progress card must take
+  // over its empty "Creations will appear here" state rather than leave an idle
+  // empty list. (Pre-#3516 the preview branch rendered before the design-files
+  // branch with no tab guard; the composer rewrite added an `activeTab !==
+  // DESIGN_FILES_TAB` clause here that hid the progress card on the default
+  // tab.) But the override is scoped to the *empty* design-files tab: a
+  // populated project keeps its file browser while generating. The condition
+  // mirrors DesignFilesPanel's own empty-state gate exactly (no files, no live
+  // artifacts, no folders), so the card only wins where the panel would have
+  // shown its empty placeholder.
+  const designFilesTabIsEmpty =
+    visibleFiles.length === 0
+    && liveArtifactEntries.length === 0
+    && projectFolders.length === 0;
+  const showGenerationPreview = Boolean(generationPreview)
+    && activeTab !== DESIGN_SYSTEM_TAB
+    && (activeTab !== DESIGN_FILES_TAB || designFilesTabIsEmpty)
+    && !isBrowserTabId(activeTab)
+    && !isSideChatTabId(activeTab)
+    && !isTerminalTabId(activeTab)
+    && !activeLiveArtifact
+    && !activeFile;
+
   // The "+" launcher's create-new actions come from the registry. `openTab`
   // reuses the same tab-state path as opening a file so a new terminal:<id>
   // tab is focused; `createBrowser` opens an embedded browser tab.
@@ -2201,14 +2269,6 @@ export function FileWorkspace({
           launcherContext={launcherContext}
           onOpenFile={openFile}
           onOpenTab={focusWorkspaceTab}
-          onTrack={(input) =>
-            trackTabLauncherClick(analytics.track, {
-              page_name: 'file_manager',
-              area: 'tab_launcher',
-              ...(projectId ? { project_id: projectId } : {}),
-              ...input,
-            })
-          }
           onClose={() => setLauncherOpen(false)}
         />
       ) : null}
@@ -2266,7 +2326,6 @@ export function FileWorkspace({
         {activeTab === QUESTIONS_TAB ? (
           <QuestionsPanel
             key={questionFormKey ?? undefined}
-            projectId={projectId}
             formKey={questionFormKey}
             form={questionForm ?? questionFormPreview}
             interactive={questionFormInteractive}
@@ -2294,13 +2353,46 @@ export function FileWorkspace({
             onConnectRepo={onConnectRepo}
             githubConnected={githubConnected}
           />
+        ) : showGenerationPreview && generationPreview ? (
+          <GenerationPreviewStage
+            model={generationPreview}
+            onRetry={
+              generationPreview.retryTarget && onRetry
+                ? () => onRetry(generationPreview.retryTarget!)
+                : undefined
+            }
+            onAuthorizeAndRetry={
+              generationPreview.retryTarget && onAuthorizeAndRetry
+                ? () => onAuthorizeAndRetry(generationPreview.retryTarget!)
+                : undefined
+            }
+            onLaunchTerminalAuth={onLaunchTerminalAuth}
+            amrAuthorizeSourceDetail="generation_preview_authorize_retry"
+            amrRechargeSourceDetail="generation_preview_recharge"
+            amrGuidance={
+              generationPreview.promoteAmrSwitch
+                && generationPreview.errorCode
+                && generationPreview.retryTarget
+                && onAuthorizeAndRetry ? (
+                <AmrGuidance
+                  errorCode={generationPreview.errorCode}
+                  projectId={projectId}
+                  projectKind={projectKind}
+                  conversationId={conversationId ?? null}
+                  assistantMessageId={generationPreview.retryTarget.id}
+                  runId={generationPreview.retryTarget.runId ?? null}
+                  sourceDetail="generation_preview_switch_retry_card"
+                  onActivate={() => onAuthorizeAndRetry(generationPreview.retryTarget!)}
+                />
+              ) : undefined
+            }
+          />
         ) : activeTab === DESIGN_FILES_TAB ? (
           <DesignFilesPanel
             key={projectId}
             projectId={projectId}
             rootDirName={rootDirName}
             reloading={reloading}
-            running={Boolean(streaming)}
             files={visibleFiles}
             folders={projectFolders}
             liveArtifacts={liveArtifactEntries}
@@ -2308,8 +2400,47 @@ export function FileWorkspace({
             onCurrentDirChange={setUploadDir}
             navState={designFilesNavRef.current}
             onNavStateChange={onDesignFilesNavStateChange}
-            onOpenFile={openFile}
+            onOpenFile={openDesignFilesPreview}
             onOpenLiveArtifact={(tabId) => openFile(tabId)}
+            activeFileName={designFilesPreviewName}
+            previewContent={
+              designFilesPreviewFile ? (
+                <FileViewer
+                  key={`${projectId}:${designFilesPreviewFile.name}`}
+                  projectId={projectId}
+                  projectKind={projectKind}
+                  file={designFilesPreviewFile}
+                  filesRefreshKey={filesRefreshKey}
+                  isDeck={isDeck}
+                  onExportAsPptx={onExportAsPptx}
+                  streaming={streaming}
+                  commentQueueOnSend={commentQueueOnSend}
+                  commentSendDisabled={commentSendDisabled}
+                  previewComments={previewComments.filter(
+                    (comment) => comment.filePath === designFilesPreviewFile.name,
+                  )}
+                  onSavePreviewComment={onSavePreviewComment}
+                  onRemovePreviewComment={onRemovePreviewComment}
+                  onSendBoardCommentAttachments={onSendBoardCommentAttachments}
+                  onFileSaved={onRefreshFiles}
+                  onOpenFileReplacing={(openName) => openDesignFilesPreview(openName)}
+                  commentPortalId={commentPortalId}
+                  onCommentModeChange={onCommentModeChange}
+                  shareRequest={
+                    shareRequest && shareRequest.name === designFilesPreviewFile.name
+                      ? { nonce: shareRequest.nonce }
+                      : null
+                  }
+                  slideNavRequest={deliverableSlideNavForActiveFile(
+                    slideNavRequest,
+                    designFilesPreviewFile.name,
+                    slideNavDeliverableNonce,
+                  )}
+                  onEditModeChange={handleEditModeChange}
+                />
+              ) : null
+            }
+            onCopyFile={handleCopy}
             onRenameFile={handleRename}
             onDeleteFile={(name) => {
               trackFileManagerClick(analytics.track, {
@@ -2437,11 +2568,6 @@ export function FileWorkspace({
             shareRequest={
               shareRequest && shareRequest.name === activeFile.name
                 ? { nonce: shareRequest.nonce }
-                : null
-            }
-            downloadRequest={
-              downloadRequest && downloadRequest.name === activeFile.name
-                ? { nonce: downloadRequest.nonce }
                 : null
             }
             slideNavRequest={deliverableSlideNavForActiveFile(

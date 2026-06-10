@@ -75,7 +75,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Single-line top toolbar: left = up + refresh + breadcrumbs, right = file actions. */
+/* Single-line path bar above the unified file tree. */
 .df-topbar {
   margin: 0 20px 8px;
   display: flex;
@@ -614,7 +614,7 @@
   align-items: center;
   gap: 14px;
   padding: 28px 36px;
-  border-radius: 24px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-panel);
   box-shadow:
@@ -627,7 +627,7 @@
   font-size: 16px;
   color: var(--text-strong);
   font-weight: 500;
-  letter-spacing: -0.005em;
+  letter-spacing: 0;
   line-height: 1.3;
 }
 .df-empty-cta {
@@ -636,7 +636,7 @@
   gap: 6px;
   padding: 7px 14px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--bg);
   color: var(--text);
   font: inherit;
@@ -659,7 +659,7 @@
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 304px) minmax(0, 1fr);
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
   background: color-mix(in srgb, var(--bg-panel) 94%, var(--bg-subtle));
@@ -675,6 +675,7 @@
 }
 
 .df-tree-head {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -685,6 +686,11 @@
   font-size: 12px;
   font-weight: 600;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.df-tree-create-menu-wrap {
+  position: relative;
+  display: inline-flex;
 }
 
 .df-tree-add {
@@ -699,6 +705,51 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+
+.df-create-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 20;
+  width: 176px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-md);
+}
+
+.df-create-menu button {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.df-create-menu button:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+
+.df-create-menu button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.df-create-menu button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .df-tree-add:hover:not(:disabled) {
@@ -730,6 +781,98 @@
   cursor: pointer;
   position: relative;
   transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1), color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.df-tree-file-row {
+  grid-template-columns:
+    calc(var(--df-tree-depth, 0) * 16px)
+    20px
+    18px
+    22px
+    minmax(0, 1fr)
+    26px;
+}
+
+.df-tree-live-row {
+  width: 100%;
+  grid-template-columns:
+    calc(var(--df-tree-depth, 0) * 16px)
+    18px
+    22px
+    minmax(0, 1fr);
+  border: 0;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.df-tree-live-label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.df-tree-file-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.df-tree-file-icon[data-kind="html"] { color: var(--accent-strong); }
+.df-tree-file-icon[data-kind="image"] { color: var(--green); }
+.df-tree-file-icon[data-kind="stylesheet"] { color: var(--blue, var(--accent-strong)); }
+.df-tree-file-icon[data-kind="live-artifact"] { color: var(--green); }
+
+.df-tree-file-row .df-row-check {
+  width: 20px;
+  height: 20px;
+}
+
+.df-tree-file-row .df-row-menu {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+}
+
+.df-tree-file-row:hover .df-row-menu,
+.df-tree-file-row.active .df-row-menu,
+.df-tree-file-row .df-row-menu:focus-visible {
+  opacity: 1;
+}
+
+.df-tree-file-row .df-row-menu:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+.df-tree-file-row.selected {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+  color: var(--text);
+}
+
+.df-tree-file-row.selected:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-panel));
+}
+
+.df-tree-file-row.selected .df-row-check,
+.df-tree-file-row.selected .df-row-check:hover {
+  color: var(--accent-strong);
 }
 
 .df-tree-row[draggable="true"] {
@@ -914,12 +1057,36 @@
   background: transparent;
 }
 
-.df-file-table-panel {
+.df-content-pane {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
+}
+
+.df-content-pane.dragging {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
+}
+
+.df-inline-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.df-inline-preview > .viewer {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.df-inline-preview .viewer-toolbar {
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .df-file-table-head {
@@ -1045,40 +1212,31 @@
   border-bottom: 1px solid var(--border-soft);
 }
 
-.df-drop {
-  flex: 0 0 auto;
-  margin: 10px 12px 12px;
-  padding: 10px 14px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 8px;
-  background: var(--bg-panel);
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  text-align: center;
-  color: var(--text-muted);
+.df-content-pane > .df-empty {
+  min-height: 0;
 }
-.df-drop.dragging {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
-  color: var(--text);
+
+.df-content-pane .df-row-plugin-folder {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
-.df-drop .label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-faint);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-}
-.df-drop .desc {
-  font-size: 12px;
-  line-height: 1.5;
-  max-width: 56ch;
+
+@container (max-width: 620px) {
+  .df-browser {
+    grid-template-columns: minmax(170px, 42%) minmax(0, 1fr);
+  }
+
+  .df-empty {
+    padding: 24px 10px;
+  }
+
+  .df-empty-pill {
+    width: calc(100% - 12px);
+    padding: 20px 12px;
+  }
+
+  .df-empty-title {
+    font-size: 13.5px;
+  }
 }
 
 /* Row context menu */

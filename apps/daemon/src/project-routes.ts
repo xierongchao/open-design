@@ -1964,7 +1964,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { upload } = ctx.uploads;
   const { fs } = ctx.node;
   const { getProject } = ctx.projectStore;
-  const { listFiles, listProjectFolders, createProjectFolder, deleteProjectFolder, renameProjectFolder, searchProjectFiles, readProjectFile, resolveProjectDir, resolveProjectFilePath, parseByteRange, renameProjectFile, deleteProjectFile, writeProjectFile, sanitizeName, ensureProject } = ctx.projectFiles;
+  const { listFiles, listProjectFolders, createProjectFolder, copyProjectFile, deleteProjectFolder, renameProjectFolder, searchProjectFiles, readProjectFile, resolveProjectDir, resolveProjectFilePath, parseByteRange, renameProjectFile, deleteProjectFile, writeProjectFile, sanitizeName, ensureProject } = ctx.projectFiles;
   const { buildDocumentPreview } = ctx.documents;
   const { validateArtifactManifestInput } = ctx.artifacts;
   const { projectPreviewScopes } = ctx;
@@ -2626,6 +2626,31 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (err?.code === 'EEXIST') {
         return sendApiError(res, 409, 'CONFLICT', String(err?.message || err));
       }
+      const message = String(err?.message || err);
+      if (err?.code === 'ENOENT' || message.includes('ENOENT') || message.includes('no such file or directory')) {
+        return sendApiError(res, 404, 'FILE_NOT_FOUND', message);
+      }
+      sendApiError(res, 400, 'BAD_REQUEST', message);
+    }
+  });
+
+  app.post('/api/projects/:id/files/copy', async (req, res) => {
+    try {
+      const { name } = req.body || {};
+      if (typeof name !== 'string') {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'name required');
+      }
+      const project = getProject(db, req.params.id);
+      const result = await copyProjectFile(
+        PROJECTS_DIR,
+        req.params.id,
+        name,
+        project?.metadata,
+      );
+      /** @type {import('@open-design/contracts').CopyProjectFileResponse} */
+      const body = result;
+      res.json(body);
+    } catch (err: any) {
       const message = String(err?.message || err);
       if (err?.code === 'ENOENT' || message.includes('ENOENT') || message.includes('no such file or directory')) {
         return sendApiError(res, 404, 'FILE_NOT_FOUND', message);

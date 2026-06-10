@@ -5425,6 +5425,7 @@ async function runFiles(args) {
                                                Write content from stdin.
   od files upload <projectId> <localpath> [--as <relpath>]
                                                Upload a local file.
+  od files copy   <projectId> <name>           Copy a project file with a numeric suffix.
   od files delete <projectId> <name>           Delete a project file.
   od files diff   <projectId> <relpathA> [<relpathB> | --against -]
                                                Print a unified diff.
@@ -5523,6 +5524,24 @@ Common options:
       const data = await resp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
       console.log(`[files] wrote ${data?.file?.name ?? rel}`);
+      return;
+    }
+    case 'copy': {
+      const positional = rest.filter((a) => !a.startsWith('-'));
+      const [id, name] = positional;
+      if (!id || !name) {
+        console.error('Usage: od files copy <projectId> <name>');
+        process.exit(2);
+      }
+      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/files/copy`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[files] copied ${name} -> ${data?.file?.name ?? data?.newName}`);
       return;
     }
     case 'delete': {

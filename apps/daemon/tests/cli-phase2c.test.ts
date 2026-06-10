@@ -338,6 +338,37 @@ describe('Phase 2C CLI wrappers', () => {
     expect(stdinDiff.stdout).toContain('+four');
   });
 
+  it('copies project files through the shared files API', async () => {
+    const folder = makeFolder();
+    await writeFile(path.join(folder, 'page.html'), '<h1>original</h1>');
+    await writeFile(path.join(folder, 'page1.html'), '<h1>existing</h1>');
+    const imported = await runCli(['project', 'import', folder, '--json']);
+    const importBody = JSON.parse(imported.stdout) as { project: { id: string } };
+
+    const copied = await runCli([
+      'files',
+      'copy',
+      importBody.project.id,
+      'page.html',
+      '--json',
+    ]);
+    const copyBody = JSON.parse(copied.stdout) as {
+      sourceName: string;
+      newName: string;
+      file: { name: string };
+    };
+
+    expect(copyBody).toMatchObject({
+      sourceName: 'page.html',
+      newName: 'page2.html',
+      file: { name: 'page2.html' },
+    });
+    const copiedFile = await fetch(
+      `${baseUrl}/api/projects/${importBody.project.id}/raw/page2.html`,
+    );
+    expect(await copiedFile.text()).toBe('<h1>original</h1>');
+  });
+
   it('prints EOF-newline-only file diffs', async () => {
     const folder = makeFolder();
     await writeFile(path.join(folder, 'with-newline.txt'), 'same\n');

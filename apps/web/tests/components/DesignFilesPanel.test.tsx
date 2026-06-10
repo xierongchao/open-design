@@ -137,7 +137,7 @@ describe('DesignFilesPanel sections', () => {
     expect(document.querySelector('.df-page-btn')).toBeNull();
   });
 
-  it('renders a single-line toolbar with file actions and no up/refresh buttons', () => {
+  it('groups create actions under the folder-tree plus menu', () => {
     renderPanel([file({ name: 'page.html', kind: 'html' })]);
 
     expect(document.querySelector('.df-topbar')).toBeTruthy();
@@ -145,58 +145,70 @@ describe('DesignFilesPanel sections', () => {
     expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
     expect(document.querySelector('.df-up-btn')).toBeNull();
     expect(document.querySelector('.df-refresh-control')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('design-files-create-menu-trigger'));
+
+    expect(screen.getByRole('menuitem', { name: 'New folder' })).toBeTruthy();
     expect(screen.getByTestId('design-files-upload-trigger')).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'New sketch' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Paste' })).toBeTruthy();
+    expect(document.querySelector('.df-topbar .df-actions')).toBeNull();
   });
 
-  it('renders project files in a table with kind metadata instead of section groups', () => {
+  it('closes the folder-tree create menu when its trigger is clicked again', () => {
+    renderPanel([file({ name: 'page.html', kind: 'html' })]);
+    const trigger = screen.getByTestId('design-files-create-menu-trigger');
+
+    fireEvent.click(trigger);
+    expect(screen.getByRole('menu')).toBeTruthy();
+
+    fireEvent.mouseDown(trigger);
+    fireEvent.click(trigger);
+
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('renders project files directly in the folder tree without a file table', () => {
     renderPanel([
       file({ name: 'page.html', kind: 'html', mime: 'text/html' }),
       file({ name: 'chart.png', kind: 'image', mime: 'image/png' }),
     ]);
 
-    const header = document.querySelector('.df-file-table-header')?.textContent ?? '';
-    expect(header).toContain('Name');
-    expect(header).toContain('Kind');
-    expect(header).toContain('Size');
-    expect(header).toContain('Modified');
-    expect(document.querySelector('.df-section-label')).toBeNull();
+    expect(document.querySelector('.df-file-table-panel')).toBeNull();
     expect(screen.getByTestId('design-file-row-page.html')).toBeTruthy();
     expect(screen.getByTestId('design-file-row-chart.png')).toBeTruthy();
-    expect(screen.getByTestId('design-file-row-page.html').querySelector('.df-row-kind')?.textContent).toBe('HTML page');
-    expect(screen.getByTestId('design-file-row-chart.png').querySelector('.df-row-kind')?.textContent).toBe('Image');
+    expect(screen.getByTestId('design-file-row-page.html').closest('.df-tree-pane')).toBeTruthy();
+    expect(screen.getByTestId('design-file-row-chart.png').closest('.df-tree-pane')).toBeTruthy();
   });
 
-  it('shows stylesheets as their own table kind without creating a separate section', () => {
+  it('uses distinct tree icons for stylesheets and scripts', () => {
     renderPanel([
       file({ name: 'styles.css', kind: 'code', mime: 'text/css' }),
       file({ name: 'app.ts', kind: 'code', mime: 'text/typescript' }),
     ]);
 
-    expect(document.querySelector('.df-section-label')).toBeNull();
-
     const cssRow = screen.getByTestId('design-file-row-styles.css');
-    expect(cssRow.querySelector('.df-row-sub')?.textContent).toBe('Stylesheet');
-    expect(cssRow.querySelector('.df-row-kind')?.textContent).toBe('Stylesheet');
+    expect(cssRow.querySelector('.df-tree-file-icon')?.getAttribute('data-kind')).toBe('stylesheet');
     const tsRow = screen.getByTestId('design-file-row-app.ts');
-    expect(tsRow.querySelector('.df-row-sub')?.textContent).toBe('Script');
-    expect(tsRow.querySelector('.df-row-kind')?.textContent).toBe('Script');
+    expect(tsRow.querySelector('.df-tree-file-icon')?.getAttribute('data-kind')).toBe('code');
   });
 
-  it('shows type and size in separate table columns', () => {
+  it('keeps tree file rows compact without table metadata columns', () => {
     renderPanel([file({ name: 'chart.png', kind: 'image', size: 4096 })]);
 
     const row = screen.getByTestId('design-file-row-chart.png');
-    expect(row.querySelector('.df-row-sub')?.textContent).toBe('Image');
-    expect(row.querySelector('.df-row-kind')?.textContent).toBe('Image');
-    expect(row.querySelector('.df-row-size')?.textContent).toContain('KB');
+    expect(row.querySelector('.df-tree-file-icon')?.getAttribute('data-kind')).toBe('image');
+    expect(row.querySelector('.df-row-kind')).toBeNull();
+    expect(row.querySelector('.df-row-size')).toBeNull();
   });
 
-  it('renders the file tree and table without the old preview footer', () => {
+  it('renders the file tree and a default empty content state without the old table', () => {
     renderPanel([file({ name: 'page.html', kind: 'html' })]);
 
     expect(document.querySelector('.df-browser')).toBeTruthy();
     expect(document.querySelector('.df-tree-pane')).toBeTruthy();
-    expect(document.querySelector('.df-file-table-panel')).toBeTruthy();
+    expect(document.querySelector('.df-file-table-panel')).toBeNull();
+    expect(screen.getByTestId('design-files-empty')).toBeTruthy();
     expect(document.querySelector('.df-useful-info-label')).toBeNull();
     expect(document.querySelector('[data-testid="design-file-preview"]')).toBeNull();
   });
@@ -221,6 +233,18 @@ describe('DesignFilesPanel large list', () => {
 
 describe('DesignFilesPanel selection', () => {
   afterEach(() => cleanup());
+
+  it('copies a file from its tree-row action menu', async () => {
+    const onCopyFile = vi.fn(async () => file({ name: 'page1.html' }));
+    renderPanel([file({ name: 'page.html' })], { onCopyFile });
+
+    fireEvent.click(screen.getByTestId('design-file-menu-page.html'));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    await waitFor(() => {
+      expect(onCopyFile).toHaveBeenCalledWith('page.html');
+    });
+  });
 
   it('shows the batch bar and passes every selected file to batch delete', () => {
     const files = generateFiles(3);
@@ -253,22 +277,33 @@ describe('DesignFilesPanel selection', () => {
     expect(onOpenFile).not.toHaveBeenCalled();
   });
 
-  it('uses non-control row targets to focus and open without rendering a preview panel', () => {
+  it('selects a file from a single click in the tree', () => {
     const files = generateFiles(1);
     const { container, onOpenFile } = renderPanel(files);
     const row = container.querySelector('.df-file-row')!;
 
-    fireEvent.click(row.querySelector('.df-row-icon')!);
+    fireEvent.click(row.querySelector('.df-tree-file-icon')!);
     expect(row.classList.contains('active')).toBe(true);
     expect(container.querySelector('[data-testid="design-file-preview"]')).toBeNull();
-    expect(onOpenFile).not.toHaveBeenCalled();
-
-    fireEvent.doubleClick(row.querySelector('.df-row-name-btn')!);
     expect(onOpenFile).toHaveBeenCalledWith('file-1.html');
     onOpenFile.mockClear();
 
-    fireEvent.doubleClick(row.querySelector('.df-row-time')!);
+    fireEvent.click(row.querySelector('.df-row-name-btn')!);
     expect(onOpenFile).toHaveBeenCalledWith('file-1.html');
+  });
+
+  it('keeps the tree visible while rendering the selected file inline', () => {
+    const files = generateFiles(1);
+    const { container } = renderPanel(files, {
+      activeFileName: 'file-1.html',
+      previewContent: <div data-testid="mock-inline-file-viewer">Preview toolbar and content</div>,
+    });
+
+    expect(screen.getByTestId('design-file-row-file-1.html')).toBeTruthy();
+    expect(screen.getByTestId('mock-inline-file-viewer')).toBeTruthy();
+    expect(screen.queryByTestId('design-files-empty')).toBeNull();
+    expect(container.querySelector('.df-drop')).toBeNull();
+    expect(container.querySelector('.df-file-row')?.classList.contains('active')).toBe(true);
   });
 });
 
@@ -282,7 +317,8 @@ describe('DesignFilesPanel folders', () => {
     ], { onCreateFolder });
 
     fireEvent.click(screen.getByTestId('design-folder-row-assets').querySelector('.df-row-name-btn')!);
-    fireEvent.click(screen.getByRole('button', { name: 'New folder' }));
+    fireEvent.click(screen.getByTestId('design-files-create-menu-trigger'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'New folder' }));
     fireEvent.change(screen.getByPlaceholderText('Folder name'), {
       target: { value: 'icons' },
     });
@@ -530,8 +566,8 @@ describe('DesignFilesPanel directory navigation', () => {
     expect(document.querySelector('.df-breadcrumb-current')?.textContent).toBe('assets');
 
     const fileRow = screen.getByTestId('design-file-row-assets/logo.png');
-    expect(fileRow.querySelector('.df-row-name')?.textContent).toBe('logo.png');
-    expect(fileRow.querySelector('.df-row-name')?.textContent).not.toContain('assets/');
+    expect(fileRow.querySelector('.df-tree-name')?.textContent).toBe('logo.png');
+    expect(fileRow.querySelector('.df-tree-name')?.textContent).not.toContain('assets/');
 
     expect(screen.getByTestId('design-folder-row-assets/icons')).toBeTruthy();
   });
@@ -572,15 +608,18 @@ describe('DesignFilesPanel directory navigation', () => {
     expect(screen.getByTestId('design-folder-row-assets')).toBeTruthy();
   });
 
-  it('shows all files including subdirectory files at root', () => {
+  it('shows root files immediately and nested files after expanding their folder', () => {
     renderPanel([
       file({ name: 'assets/logo.png', kind: 'image' }),
       file({ name: 'top.html', kind: 'html' }),
     ]);
 
     expect(screen.getByTestId('design-folder-row-assets')).toBeTruthy();
-    expect(screen.getByTestId('design-file-row-assets/logo.png')).toBeTruthy();
     expect(screen.getByTestId('design-file-row-top.html')).toBeTruthy();
+    expect(screen.queryByTestId('design-file-row-assets/logo.png')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('design-folder-row-assets').querySelector('.df-tree-toggle')!);
+    expect(screen.getByTestId('design-file-row-assets/logo.png')).toBeTruthy();
   });
 
   it('preserves the current directory when remounted with navState from a previous render', () => {

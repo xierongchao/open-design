@@ -2030,19 +2030,6 @@
 .app .df-page-info {
   color: var(--text-soft);
 }
-.app .df-drop {
-  margin: 18px 0 0;
-  padding: 18px;
-  border-radius: 10px;
-  background: var(--bg-panel);
-}
-.app .df-drop .label {
-  font-size: 10.5px;
-}
-.app .df-drop .desc {
-  font-size: 12px;
-  max-width: 48ch;
-}
 
 /* -- Hand-off button in ChatPane header (paseo-style open-in-editor) -- */
 .app .handoff-wrap {

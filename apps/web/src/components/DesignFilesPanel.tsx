@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEven
 import { useAnalytics } from '../analytics/provider';
 import { trackFileManagerClick } from '../analytics/events';
 import { useT } from '../i18n';
-import type { Dict } from '../i18n/types';
 import { projectFileUrl } from '../providers/registry';
 import type { LiveArtifactWorkspaceEntry, ProjectFile, ProjectFileKind, ProjectFolder } from '../types';
 import {
@@ -14,8 +13,6 @@ import type { PluginFolderAgentAction } from './design-files/pluginFolderActions
 import { getPluginFolderCandidates } from './design-files/pluginFolders';
 import { Icon } from './Icon';
 import { LiveArtifactBadges } from './LiveArtifactBadges';
-
-type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
 export interface DesignFilesNavState {
   kindFilter: Set<ProjectFileKind>;
@@ -43,6 +40,9 @@ interface Props {
   onRefreshFiles: () => Promise<void> | void;
   onOpenFile: (name: string) => void;
   onOpenLiveArtifact: (tabId: LiveArtifactWorkspaceEntry['tabId']) => void;
+  activeFileName?: string | null;
+  previewContent?: ReactNode;
+  onCopyFile?: (name: string) => Promise<ProjectFile | null> | ProjectFile | null;
   onRenameFile: (from: string, to: string) => Promise<ProjectFile | null> | ProjectFile | null;
   onDeleteFile: (name: string) => void;
   onDeleteFiles: (names: string[]) => Promise<void> | void;
@@ -149,13 +149,9 @@ function ActionNoticeView({ notice }: { notice: ActionNotice | null }) {
 }
 
 /**
- * Full-panel browser for a project's `.od/projects/<id>/` folder. Mirrors
- * Claude Design's "Design Files" surface: a single-line toolbar (up / refresh
- * / breadcrumbs + actions), semantic sections (Folders, Stylesheets, Scripts,
- * Documents, Images …), hover-revealed row checkbox + menu, a right-side
- * file management surface with semantic sections, nested folders, row actions,
- * and a static "useful info" footer. Triggered as a sticky first tab in
- * FileWorkspace.
+ * Full-panel browser for a project's `.od/projects/<id>/` folder. Files and
+ * folders share one compact tree; selecting a file keeps the tree mounted and
+ * renders the existing FileWorkspace preview surface beside it.
  */
 export function DesignFilesPanel({
   projectId,
@@ -166,6 +162,9 @@ export function DesignFilesPanel({
   liveArtifacts,
   onOpenFile,
   onOpenLiveArtifact,
+  activeFileName,
+  previewContent,
+  onCopyFile,
   onRenameFile,
   onDeleteFile,
   onDeleteFiles,
@@ -191,15 +190,15 @@ export function DesignFilesPanel({
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [dropReadError, setDropReadError] = useState<string | null>(null);
   const dragDepthRef = useRef(0);
-  const [hover, setHover] = useState<string | null>(null);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ name: string; top: number; left: number } | null>(null);
   const [folderMenuPos, setFolderMenuPos] = useState<{ path: string; top: number; left: number } | null>(null);
   const MENU_ESTIMATED_HEIGHT = 145;
   const FOLDER_MENU_ESTIMATED_HEIGHT = 128;
   const MENU_SAFE_PADDING = 8;
   const [activeFile, setActiveFile] = useState<string | null>(null);
+  const resolvedActiveFile = activeFileName === undefined ? activeFile : activeFileName;
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const lastKeyPress = useRef<Map<string, number>>(new Map());
   const [deleting, setDeleting] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [folderDraft, setFolderDraft] = useState('');
@@ -244,29 +243,21 @@ export function DesignFilesPanel({
     });
   }, [currentDir, navState?.kindFilter, onNavStateChange]);
 
-  // Derive files for the current directory from the flat file list.
-  // At root (currentDir === ''), show ALL files recursively so the user
-  // sees the full project contents. For subdirectories, only direct children.
-  const filesAtCurrentDir = useMemo(() => {
-    if (currentDir === '') return [...files];
-    const prefix = `${currentDir}/`;
-    const localFiles: ProjectFile[] = [];
-    for (const f of files) {
-      if (!f.name.startsWith(prefix)) continue;
-      const remainder = f.name.slice(prefix.length);
-      const slashIdx = remainder.indexOf('/');
-      if (slashIdx === -1) {
-        localFiles.push(f);
-      }
-    }
-    return localFiles;
-  }, [files, currentDir]);
-
   const folderTree = useMemo(() => buildFolderTree(files, folders ?? [], folderOrder), [files, folders, folderOrder]);
-  const tableFiles = useMemo(
-    () => [...filesAtCurrentDir].sort((a, b) => b.mtime - a.mtime),
-    [filesAtCurrentDir],
-  );
+  const filesByDirectory = useMemo(() => {
+    const grouped = new Map<string, ProjectFile[]>();
+    for (const file of files) {
+      const slash = file.name.lastIndexOf('/');
+      const directory = slash === -1 ? '' : file.name.slice(0, slash);
+      const entries = grouped.get(directory) ?? [];
+      entries.push(file);
+      grouped.set(directory, entries);
+    }
+    for (const entries of grouped.values()) {
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return grouped;
+  }, [files]);
   // Flat list of every folder (persisted + derived from file paths) for the
   // "Add to folder" picker.
   const folderPaths = useMemo(() => flattenFolderPaths(folderTree), [folderTree]);
@@ -345,10 +336,11 @@ export function DesignFilesPanel({
   }, [activeFile, files]);
 
   useEffect(() => {
-    if (!menuPos && !folderMenuPos) return;
+    if (!menuPos && !folderMenuPos && !createMenuOpen) return;
     const close = () => {
       setMenuPos(null);
       setFolderMenuPos(null);
+      setCreateMenuOpen(false);
       setMovePickerOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -360,7 +352,7 @@ export function DesignFilesPanel({
       window.removeEventListener('mousedown', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [menuPos, folderMenuPos]);
+  }, [menuPos, folderMenuPos, createMenuOpen]);
 
   useEffect(() => {
     if (currentDir !== '') setRootExpanded(true);
@@ -790,153 +782,6 @@ export function DesignFilesPanel({
     }
   }
 
-  function renderFileRow(f: ProjectFile, category: FileCategory) {
-    const active = activeFile === f.name;
-    const isSelected = selected.has(f.name);
-    const isHovered = hover === f.name;
-    const renameState = renaming?.name === f.name ? renaming : null;
-    return (
-      <div
-        key={f.name}
-        data-testid={`design-file-row-${f.name}`}
-        className={`df-row df-file-row ${active ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
-        onMouseEnter={() => setHover(f.name)}
-        onMouseLeave={() => setHover((c) => (c === f.name ? null : c))}
-        draggable={!renameState}
-        onDragStart={(e) => {
-          const names = draggedNamesForFile(f.name);
-          setDraggedProjectFiles(names);
-          setActiveFile(f.name);
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData(DESIGN_FILE_DRAG_TYPE, JSON.stringify(names));
-          e.dataTransfer.setData('text/plain', names.join('\n'));
-        }}
-        onDragEnd={() => {
-          setDraggedProjectFiles([]);
-          setFolderDropTarget(null);
-        }}
-      >
-        <span
-          className="df-row-check"
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleSelect(f.name);
-          }}
-          role="checkbox"
-          aria-checked={isSelected}
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              e.stopPropagation();
-              toggleSelect(f.name);
-            }
-          }}
-        >
-          {isSelected ? '☑' : '☐'}
-        </span>
-        <span
-          className="df-row-icon df-row-openable"
-          data-kind={category}
-          aria-hidden
-          onClick={() => setActiveFile(f.name)}
-          onDoubleClick={() => onOpenFile(f.name)}
-        >
-          {categoryGlyph(category)}
-        </span>
-        <div className="df-row-name-wrap">
-          {renameState ? (
-            <input
-              autoFocus
-              className="df-rename-input"
-              value={renameState.draft}
-              disabled={renameState.saving}
-              onChange={(e) => setRenaming({ ...renameState, draft: e.target.value })}
-              onClick={(e) => e.stopPropagation()}
-              onDoubleClick={(e) => e.stopPropagation()}
-              onBlur={(e) => {
-                if (e.currentTarget.dataset.skipRenameCommit === '1') return;
-                void commitRename(f.name, renameState.draft);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  e.currentTarget.dataset.skipRenameCommit = '1';
-                  void commitRename(f.name, renameState.draft);
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  e.currentTarget.dataset.skipRenameCommit = '1';
-                  setRenaming(null);
-                }
-              }}
-            />
-          ) : (
-            <button
-              type="button"
-              className="df-row-name-btn"
-              onClick={() => setActiveFile(f.name)}
-              onDoubleClick={() => onOpenFile(f.name)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  const now = Date.now();
-                  const last = lastKeyPress.current.get(f.name) ?? 0;
-                  if (now - last < 300) {
-                    lastKeyPress.current.delete(f.name);
-                    onOpenFile(f.name);
-                  } else {
-                    lastKeyPress.current.set(f.name, now);
-                    setActiveFile(f.name);
-                  }
-                }
-              }}
-            >
-              <span className="df-row-name-wrap">
-                <span
-                  className="df-row-name"
-                  title={currentDir === '' ? f.name : f.name.slice(currentDir.length + 1)}
-                >
-                  {currentDir === '' ? f.name : f.name.slice(currentDir.length + 1)}
-                </span>
-                <span className="df-row-sub">{categoryLabel(category, t)}</span>
-              </span>
-            </button>
-          )}
-        </div>
-        <span className="df-row-kind">{categoryLabel(category, t)}</span>
-        <span className="df-row-size">{humanBytes(f.size)}</span>
-        <span
-          className="df-row-time df-row-openable"
-          onClick={() => setActiveFile(f.name)}
-          onDoubleClick={() => onOpenFile(f.name)}
-        >
-          {relativeTime(f.mtime, t)}
-        </span>
-        <span
-          data-testid={`design-file-menu-${f.name}`}
-          className="df-row-menu"
-          style={isHovered || active ? { opacity: 1 } : undefined}
-          role="button"
-          tabIndex={0}
-          aria-label={t('designFiles.rowMenu')}
-          onClick={(e) => {
-            e.stopPropagation();
-            openMenuFor(f.name, e.target as HTMLElement);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              e.stopPropagation();
-              openMenuFor(f.name, e.currentTarget as HTMLElement);
-            }
-          }}
-        >
-          ⋯
-        </span>
-      </div>
-    );
-  }
-
   function expandFolderPath(path: string) {
     setExpandedFolders((prev) => {
       const next = new Set(prev);
@@ -1065,7 +910,11 @@ export function DesignFilesPanel({
   }
 
   function renderTreeRoot() {
-    const hasChildren = folderTree.length > 0 || creatingFolder;
+    const hasChildren =
+      folderTree.length > 0
+      || (filesByDirectory.get('')?.length ?? 0) > 0
+      || liveArtifacts.length > 0
+      || creatingFolder;
     return renderFolderDropZone(
       '',
       [
@@ -1106,8 +955,144 @@ export function DesignFilesPanel({
     );
   }
 
+  function renderTreeFile(file: ProjectFile, depth: number) {
+    const category = fileCategory(file);
+    const active = resolvedActiveFile === file.name;
+    const isSelected = selected.has(file.name);
+    const renameState = renaming?.name === file.name ? renaming : null;
+    const label = basenameForPath(file.name);
+    return (
+      <div
+        key={`file:${file.name}`}
+        data-testid={`design-file-row-${file.name}`}
+        className={`df-tree-row df-tree-file-row df-file-row ${active ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
+        style={{ '--df-tree-depth': depth } as CSSProperties}
+        draggable={!renameState}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const menuButton = event.currentTarget.querySelector<HTMLElement>('.df-row-menu');
+          if (menuButton) openMenuFor(file.name, menuButton);
+        }}
+        onDragStart={(event) => {
+          const names = draggedNamesForFile(file.name);
+          setDraggedProjectFiles(names);
+          setActiveFile(file.name);
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData(DESIGN_FILE_DRAG_TYPE, JSON.stringify(names));
+          event.dataTransfer.setData('text/plain', names.join('\n'));
+        }}
+        onDragEnd={() => {
+          setDraggedProjectFiles([]);
+          setFolderDropTarget(null);
+        }}
+      >
+        <span className="df-tree-indent" aria-hidden />
+        <span
+          className="df-row-check"
+          role="checkbox"
+          aria-checked={isSelected}
+          tabIndex={0}
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleSelect(file.name);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              event.stopPropagation();
+              toggleSelect(file.name);
+            }
+          }}
+        >
+          {isSelected ? '☑' : '☐'}
+        </span>
+        <span className="df-tree-toggle-spacer" aria-hidden />
+        <span
+          className="df-tree-file-icon"
+          data-kind={category}
+          aria-hidden
+          onClick={() => {
+            setActiveFile(file.name);
+            onOpenFile(file.name);
+          }}
+        >
+          {categoryGlyph(category)}
+        </span>
+        {renameState ? (
+          <input
+            autoFocus
+            className="df-rename-input df-tree-rename-input"
+            value={renameState.draft}
+            disabled={renameState.saving}
+            onChange={(event) => setRenaming({ ...renameState, draft: event.target.value })}
+            onBlur={() => void commitRename(file.name, renameState.draft)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                event.currentTarget.blur();
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                setRenaming(null);
+              }
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="df-row-name-btn"
+            title={file.name}
+            onClick={() => {
+              setActiveFile(file.name);
+              onOpenFile(file.name);
+            }}
+          >
+            <span className="df-tree-name">{label}</span>
+          </button>
+        )}
+        <button
+          type="button"
+          className="df-row-menu"
+          data-testid={`design-file-menu-${file.name}`}
+          aria-label={t('designFiles.rowMenu')}
+          onClick={(event) => {
+            event.stopPropagation();
+            openMenuFor(file.name, event.currentTarget);
+          }}
+        >
+          <Icon name="more-horizontal" size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  function renderTreeLiveArtifact(artifact: LiveArtifactWorkspaceEntry) {
+    return (
+      <button
+        key={artifact.artifactId}
+        type="button"
+        data-testid={`design-file-row-${artifact.tabId}`}
+        className="df-tree-row df-tree-live-row"
+        onClick={() => onOpenLiveArtifact(artifact.tabId)}
+      >
+        <span className="df-tree-indent" aria-hidden />
+        <span className="df-tree-toggle-spacer" aria-hidden />
+        <span className="df-tree-file-icon" data-kind="live-artifact" aria-hidden>◉</span>
+        <span className="df-tree-live-label">
+          <span className="df-tree-name" title={artifact.title}>{artifact.title}</span>
+          <LiveArtifactBadges
+            compact
+            status={artifact.status}
+            refreshStatus={artifact.refreshStatus}
+          />
+        </span>
+      </button>
+    );
+  }
+
   function renderTreeNode(node: FolderTreeNode, depth = 0): React.ReactNode {
-    const hasChildren = node.children.length > 0;
+    const directFiles = filesByDirectory.get(node.path) ?? [];
+    const hasChildren = node.children.length > 0 || directFiles.length > 0;
     const expanded = expandedFolders.has(node.path) || currentDir.startsWith(`${node.path}/`);
     const deletingThisFolder = folderAction?.kind === 'deleting' && folderAction.path === node.path;
     const renamingThisFolder = folderAction?.kind === 'renaming' && folderAction.path === node.path;
@@ -1182,9 +1167,10 @@ export function DesignFilesPanel({
     return (
       <div key={`dir:${node.path}`} className="df-tree-node">
         {row}
-        {expanded && node.children.length > 0 ? (
+        {expanded && hasChildren ? (
           <div className="df-tree-children">
             {node.children.map((child) => renderTreeNode(child, depth + 1))}
+            {directFiles.map((file) => renderTreeFile(file, depth + 1))}
           </div>
         ) : null}
       </div>
@@ -1331,7 +1317,7 @@ export function DesignFilesPanel({
     }
   }
 
-  async function handleDrop(ev: React.DragEvent<HTMLDivElement>) {
+  async function handleDrop(ev: ReactDragEvent<HTMLElement>) {
     if (!dataTransferHasFiles(ev.dataTransfer)) return;
     ev.preventDefault();
     dragDepthRef.current = 0;
@@ -1374,28 +1360,6 @@ export function DesignFilesPanel({
     }
   }
 
-  const fileActions = (
-    <div className="df-actions">
-      <button type="button" onClick={onNewSketch} title={t('designFiles.newSketch')}>
-        <Icon name="pencil" size={13} />
-        <span>{t('designFiles.newSketch')}</span>
-      </button>
-      <button type="button" onClick={onPaste} title={t('designFiles.paste.title')}>
-        <Icon name="copy" size={13} />
-        <span>{t('designFiles.paste.label')}</span>
-      </button>
-      <button
-        type="button"
-        data-testid="design-files-upload-trigger"
-        onClick={onUpload}
-        title={t('designFiles.upload.title')}
-      >
-        <Icon name="upload" size={13} />
-        <span>{t('designFiles.upload.label')}</span>
-      </button>
-    </div>
-  );
-
   const breadcrumbs = (
     <nav className="df-breadcrumbs" aria-label={t('designFiles.crumbs')}>
       {currentDir === '' ? (
@@ -1436,35 +1400,6 @@ export function DesignFilesPanel({
 
   const visibleUploadError = uploadError ?? dropReadError;
   const hasSelection = selected.size > 0;
-  const dropZone = (
-    <div
-      className={`df-drop ${draggingFiles ? 'dragging' : ''}`}
-      onDragEnter={(ev) => {
-        if (!dataTransferHasFiles(ev.dataTransfer)) return;
-        ev.preventDefault();
-        dragDepthRef.current += 1;
-        setDraggingFiles(true);
-      }}
-      onDragOver={(ev) => {
-        if (!dataTransferHasFiles(ev.dataTransfer)) return;
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = 'copy';
-      }}
-      onDragLeave={(ev) => {
-        if (!ev.currentTarget.contains(ev.relatedTarget as Node | null)) {
-          dragDepthRef.current = 0;
-          setDraggingFiles(false);
-          return;
-        }
-        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-        if (dragDepthRef.current === 0) setDraggingFiles(false);
-      }}
-      onDrop={handleDrop}
-    >
-      <span className="label">{t('designFiles.dropTitle')}</span>
-      <span className="desc">{t('designFiles.dropDesc')}</span>
-    </div>
-  );
 
   return (
     <div className={`df-panel no-preview ${hasSelection ? 'has-selection' : ''} ${draggedFolderPath ? 'is-folder-dragging' : ''}`}>
@@ -1479,7 +1414,6 @@ export function DesignFilesPanel({
       <div className="df-main">
         <div className="df-topbar">
           <div className="df-topbar-left">{breadcrumbs}</div>
-          <div className="df-topbar-right">{fileActions}</div>
         </div>
         <div className="df-body">
           {visibleUploadError ? (
@@ -1555,19 +1489,81 @@ export function DesignFilesPanel({
             <aside className="df-tree-pane" aria-label={t('designFiles.sectionFolders')}>
               <div className="df-tree-head">
                 <span>{t('designFiles.sectionFolders')}</span>
-                {onCreateFolder ? (
+                <div className="df-tree-create-menu-wrap">
                   <button
                     type="button"
                     className="df-tree-add od-tooltip"
-                    aria-label={t('designFiles.newFolderTitle')}
-                    title={t('designFiles.newFolderTitle')}
-                    data-tooltip={t('designFiles.newFolderTitle')}
+                    data-testid="design-files-create-menu-trigger"
+                    aria-label={t('common.create')}
+                    aria-haspopup="menu"
+                    aria-expanded={createMenuOpen}
+                    title={t('common.create')}
+                    data-tooltip={t('common.create')}
                     data-tooltip-placement="right"
-                    onClick={startCreateFolder}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setCreateMenuOpen((open) => !open);
+                    }}
                   >
                     <Icon name="plus" size={13} />
                   </button>
-                ) : null}
+                  {createMenuOpen ? (
+                    <div
+                      className="df-create-menu"
+                      role="menu"
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!onCreateFolder}
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          startCreateFolder();
+                        }}
+                      >
+                        <Icon name="folder" size={14} />
+                        <span>{t('designFiles.newFolderTitle')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        data-testid="design-files-upload-trigger"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          onUpload();
+                        }}
+                      >
+                        <Icon name="upload" size={14} />
+                        <span>{t('designFiles.upload.label')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          onNewSketch();
+                        }}
+                      >
+                        <Icon name="pencil" size={14} />
+                        <span>{t('designFiles.newSketch')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          onPaste();
+                        }}
+                      >
+                        <Icon name="copy" size={14} />
+                        <span>{t('designFiles.paste.label')}</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
               <div className="df-tree-scroll">
                 {renderTreeRoot()}
@@ -1582,17 +1578,36 @@ export function DesignFilesPanel({
                       </div>
                     ) : null}
                     {folderTree.map((node) => renderTreeNode(node))}
+                    {(filesByDirectory.get('') ?? []).map((file) => renderTreeFile(file, 0))}
+                    {liveArtifacts.map(renderTreeLiveArtifact)}
                   </>
                 ) : null}
               </div>
             </aside>
-            <section className="df-file-table-panel">
-              <div className="df-file-table-head">
-                <div className="df-file-table-title">
-                  <span>{currentDir || (rootDirName ?? t('designFiles.crumbs'))}</span>
-                  <span>{t('designFiles.folderCount', { n: tableFiles.length })}</span>
-                </div>
-              </div>
+            <section
+              className={`df-content-pane ${draggingFiles ? 'dragging' : ''}`}
+              onDragEnter={(event) => {
+                if (!dataTransferHasFiles(event.dataTransfer)) return;
+                event.preventDefault();
+                dragDepthRef.current += 1;
+                setDraggingFiles(true);
+              }}
+              onDragOver={(event) => {
+                if (!dataTransferHasFiles(event.dataTransfer)) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  dragDepthRef.current = 0;
+                  setDraggingFiles(false);
+                  return;
+                }
+                dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+                if (dragDepthRef.current === 0) setDraggingFiles(false);
+              }}
+              onDrop={handleDrop}
+            >
               {folderNotice ? (
                 <div className="df-inline-notice" role="status">
                   <ActionNoticeView notice={folderNotice} />
@@ -1603,7 +1618,70 @@ export function DesignFilesPanel({
                   <ActionNoticeView notice={installNotice} />
                 </div>
               ) : null}
-              {files.length === 0 && liveArtifacts.length === 0 && (folders?.length ?? 0) === 0 ? (
+              {currentDir === '' && pluginFolders.length > 0 ? (
+                <div className="df-plugin-strip">
+                  {pluginFolders.filter((folder) => !hiddenPluginActionPaths.has(folder.path)).map((folder) => {
+                    const actionBusy = activePluginActionPaths.has(folder.path);
+                    return (
+                      <div
+                        key={folder.path}
+                        className="df-row df-row-plugin-folder"
+                        data-testid={`design-plugin-folder-${folder.path}`}
+                      >
+                        <button
+                          type="button"
+                          className="df-row-folder-main"
+                          onClick={() => setActiveFile(folder.manifestPath)}
+                        >
+                          <span className="df-row-icon" data-kind="folder" aria-hidden>
+                            <Icon name="folder" size={14} />
+                          </span>
+                          <span className="df-row-name-wrap">
+                            <span className="df-row-name">{folder.path}</span>
+                            <span className="df-row-sub">{folder.fileCount} files</span>
+                          </span>
+                        </button>
+                        {onPluginFolderAgentAction ? (
+                          <div className="df-plugin-actions">
+                            <button
+                              type="button"
+                              className="df-plugin-install"
+                              data-testid={`design-plugin-folder-install-${folder.path}`}
+                              disabled={actionBusy || installingFolder !== null || sharingFolder !== null}
+                              onClick={() => void handlePluginFolderAgentAction(folder.path, 'install')}
+                            >
+                              {installingFolder === folder.path ? 'Sending…' : 'Add to My plugins'}
+                            </button>
+                            <button
+                              type="button"
+                              className="df-plugin-install"
+                              data-testid={`design-plugin-folder-publish-${folder.path}`}
+                              disabled={actionBusy || installingFolder !== null || sharingFolder !== null}
+                              onClick={() => void handlePluginFolderAgentAction(folder.path, 'publish')}
+                            >
+                              {sharingFolder === `publish:${folder.path}` ? 'Sending…' : 'Publish repo'}
+                            </button>
+                            <button
+                              type="button"
+                              className="df-plugin-install"
+                              data-testid={`design-plugin-folder-contribute-${folder.path}`}
+                              disabled={actionBusy || installingFolder !== null || sharingFolder !== null}
+                              onClick={() => void handlePluginFolderAgentAction(folder.path, 'contribute')}
+                            >
+                              {sharingFolder === `contribute:${folder.path}` ? 'Sending…' : 'Open Design PR'}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {previewContent != null ? (
+                <div className="df-inline-preview" data-testid="design-files-inline-preview">
+                  {previewContent}
+                </div>
+              ) : (
                 <div className="df-empty" data-testid="design-files-empty">
                   <div className="df-empty-pill">
                     <span className="df-empty-title">
@@ -1621,129 +1699,7 @@ export function DesignFilesPanel({
                     </button>
                   </div>
                 </div>
-              ) : (
-                <>
-                  {currentDir === '' && liveArtifacts.length > 0 ? (
-                    <div className="df-live-strip">
-                      {liveArtifacts.map((artifact) => (
-                        <button
-                          key={artifact.artifactId}
-                          type="button"
-                          data-testid={`design-file-row-${artifact.tabId}`}
-                          className="df-row df-row-live-artifact"
-                          onDoubleClick={() => onOpenLiveArtifact(artifact.tabId)}
-                          onClick={() => onOpenLiveArtifact(artifact.tabId)}
-                        >
-                          <span className="df-row-icon" data-kind="live-artifact" aria-hidden>
-                            ◉
-                          </span>
-                          <span className="df-row-name-wrap">
-                            <span className="df-row-name" title={artifact.title}>
-                              {artifact.title}
-                            </span>
-                            <span className="df-row-sub">
-                              <span>{t('designFiles.kindLiveArtifact')}</span>
-                              <LiveArtifactBadges
-                                compact
-                                status={artifact.status}
-                                refreshStatus={artifact.refreshStatus}
-                              />
-                            </span>
-                          </span>
-                          <span className="df-row-time">
-                            {relativeTime(Date.parse(artifact.updatedAt) || Date.now(), t)}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {currentDir === '' && pluginFolders.length > 0 ? (
-                    <div className="df-plugin-strip">
-                      {pluginFolders.filter((folder) => !hiddenPluginActionPaths.has(folder.path)).map((folder) => {
-                        const actionBusy = activePluginActionPaths.has(folder.path);
-                        return (
-                          <div
-                            key={folder.path}
-                            className="df-row df-row-plugin-folder"
-                            data-testid={`design-plugin-folder-${folder.path}`}
-                          >
-                            <button
-                              type="button"
-                              className="df-row-folder-main"
-                              onClick={() => setActiveFile(folder.manifestPath)}
-                            >
-                              <span className="df-row-icon" data-kind="folder" aria-hidden>
-                                <Icon name="folder" size={14} />
-                              </span>
-                              <span className="df-row-name-wrap">
-                                <span className="df-row-name">{folder.path}</span>
-                                <span className="df-row-sub">
-                                  {folder.fileCount} files · ready to add to My plugins
-                                </span>
-                              </span>
-                            </button>
-                            <span className="df-row-time">{relativeTime(folder.updatedAt, t)}</span>
-                            {onPluginFolderAgentAction ? (
-                              <div className="df-plugin-actions">
-                                <button
-                                  type="button"
-                                  className="df-plugin-install"
-                                  data-testid={`design-plugin-folder-install-${folder.path}`}
-                                  disabled={actionBusy || installingFolder !== null || sharingFolder !== null}
-                                  onClick={() =>
-                                    void handlePluginFolderAgentAction(folder.path, 'install')
-                                  }
-                                >
-                                  {installingFolder === folder.path ? 'Sending…' : 'Add to My plugins'}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="df-plugin-install"
-                                  data-testid={`design-plugin-folder-publish-${folder.path}`}
-                                  disabled={actionBusy || installingFolder !== null || sharingFolder !== null}
-                                  onClick={() =>
-                                    void handlePluginFolderAgentAction(folder.path, 'publish')
-                                  }
-                                >
-                                  {sharingFolder === `publish:${folder.path}` ? 'Sending…' : 'Publish repo'}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="df-plugin-install"
-                                  data-testid={`design-plugin-folder-contribute-${folder.path}`}
-                                  disabled={actionBusy || installingFolder !== null || sharingFolder !== null}
-                                  onClick={() =>
-                                    void handlePluginFolderAgentAction(folder.path, 'contribute')
-                                  }
-                                >
-                                  {sharingFolder === `contribute:${folder.path}` ? 'Sending…' : 'Open Design PR'}
-                                </button>
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                  <div className="df-file-table" role="table" aria-label="Project files">
-                    <div className="df-file-table-header" role="row">
-                      <span>Name</span>
-                      <span>Kind</span>
-                      <span>Size</span>
-                      <span>Modified</span>
-                      <span aria-hidden />
-                    </div>
-                    {tableFiles.length > 0 ? (
-                      tableFiles.map((f) => renderFileRow(f, fileCategory(f)))
-                    ) : (
-                      <div className="df-table-empty">
-                        {t('designFiles.empty')}
-                      </div>
-                    )}
-                  </div>
-                </>
               )}
-              {dropZone}
             </section>
           </div>
         </div>
@@ -1767,6 +1723,27 @@ export function DesignFilesPanel({
           >
             {t('designFiles.openInTab')}
           </button>
+          {onCopyFile ? (
+            <button
+              type="button"
+              onClick={async (e) => {
+                e.stopPropagation();
+                const name = menuPos.name;
+                setMenuPos(null);
+                setFolderNotice(null);
+                try {
+                  const copied = await onCopyFile(name);
+                  if (copied) {
+                    setFolderNotice({ message: `${t('fileViewer.copied')}: ${copied.name}` });
+                  }
+                } catch (err) {
+                  setFolderNotice({ message: err instanceof Error ? err.message : String(err) });
+                }
+              }}
+            >
+              {t('fileViewer.copy')}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={(e) => {
@@ -1920,12 +1897,6 @@ export function DesignFilesPanel({
   );
 }
 
-// Singular row subtitle for a category.
-function categoryLabel(category: FileCategory, t: TranslateFn): string {
-  if (category === 'stylesheet') return t('designFiles.kindStylesheet');
-  return kindLabel(category, t);
-}
-
 function categoryGlyph(category: FileCategory): string {
   if (category === 'stylesheet') return '#';
   return kindGlyph(category);
@@ -1999,19 +1970,6 @@ function kindGlyph(kind: ProjectFileKind): string {
   if (kind === 'presentation') return 'PPT';
   if (kind === 'spreadsheet') return 'XLS';
   return '·';
-}
-
-function kindLabel(kind: ProjectFileKind, t: TranslateFn): string {
-  if (kind === 'html') return t('designFiles.kindHtml');
-  if (kind === 'image') return t('designFiles.kindImage');
-  if (kind === 'sketch') return t('designFiles.kindSketch');
-  if (kind === 'text') return t('designFiles.kindText');
-  if (kind === 'code') return t('designFiles.kindCode');
-  if (kind === 'pdf') return t('designFiles.kindPdf');
-  if (kind === 'document') return t('designFiles.kindDocument');
-  if (kind === 'presentation') return t('designFiles.kindPresentation');
-  if (kind === 'spreadsheet') return t('designFiles.kindSpreadsheet');
-  return t('designFiles.kindBinary');
 }
 
 const DESIGN_FILE_DRAG_TYPE = 'application/x-open-design-project-files';
@@ -2200,26 +2158,4 @@ function normalizeFolderPath(path: string): string {
 function dirnameForPath(path: string): string {
   const slash = path.lastIndexOf('/');
   return slash >= 0 ? path.slice(0, slash) : '';
-}
-
-function humanBytes(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '0 B';
-  if (n < 1024) return `${Math.round(n)} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
-}
-
-function relativeTime(ts: number, t: TranslateFn): string {
-  const diff = Date.now() - ts;
-  const min = 60_000;
-  const hr = 60 * min;
-  const day = 24 * hr;
-  if (diff < min) return t('common.justNow');
-  if (diff < hr) return t('common.minutesAgo', { n: Math.floor(diff / min) });
-  if (diff < day) return t('common.hoursAgo', { n: Math.floor(diff / hr) });
-  if (diff < 7 * day) return t('common.daysAgo', { n: Math.floor(diff / day) });
-  if (diff < 30 * day)
-    return t('designFiles.weeksAgo', { n: Math.floor(diff / (7 * day)) });
-  return new Date(ts).toLocaleDateString();
 }

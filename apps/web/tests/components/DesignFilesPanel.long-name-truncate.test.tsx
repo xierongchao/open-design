@@ -6,19 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DesignFilesPanel } from '../../src/components/DesignFilesPanel';
 import type { ProjectFile } from '../../src/types';
 
-// Regression coverage for #3260. In the no-preview state of the file
-// list, a very long filename used to expand its `<td>` and push the
-// kind / mtime / menu columns off-screen. The CSS fix locks
-// `.df-cell-name` to `max-width: 0; min-width: 0` so the auto-layout
-// table truncates the name with the existing `text-overflow: ellipsis`
-// instead of growing the cell. The JSX fix adds `title={f.name}` so the
-// browser surfaces the full filename on hover even when the visible
-// text is truncated.
+// Regression coverage for #3260. Files now live in the folder tree rather
+// than a table, so the contract is that the tree name stays in a min-width:0
+// grid track, truncates through `.df-tree-name`, and exposes the complete path
+// on its button tooltip.
 //
 // jsdom does not measure layout, so the truncation itself can't be
 // asserted directly. These specs encode the contract: the rendered DOM
 // keeps the structural classes the CSS relies on, and the `title` is
-// present on every name span so hover-tooltip is available even on the
+// present on every name button so hover-tooltip is available even on the
 // very long row.
 
 const lsStore = new Map<string, string>();
@@ -79,30 +75,20 @@ describe('DesignFilesPanel long filename truncation (#3260)', () => {
     expect(row).toBeTruthy();
   });
 
-  it('exposes the full filename via a `title` attribute on the name span (hover tooltip)', () => {
+  it('exposes the full filename via a `title` attribute on the name button', () => {
     const { container } = renderPanel([file({ name: LONG_NAME })]);
-    const nameSpan = container.querySelector('.df-row-name') as HTMLElement | null;
-    expect(nameSpan).toBeTruthy();
-    // The tooltip contract: hovering a truncated row reveals the full
-    // filename. Without this users see "...g-helmet.jpeg" with no way
-    // to read the leading characters.
-    expect(nameSpan?.getAttribute('title')).toBe(LONG_NAME);
+    const nameButton = container.querySelector('.df-tree-file-row .df-row-name-btn');
+    expect(nameButton).toBeTruthy();
+    expect(nameButton?.getAttribute('title')).toBe(LONG_NAME);
   });
 
-  it('keeps the truncate-friendly DOM structure (.df-row-name-wrap > .df-row-name-btn > .df-row-name-wrap > .df-row-name)', () => {
+  it('keeps the truncate-friendly tree name inside the file name button', () => {
     const { container } = renderPanel([file({ name: LONG_NAME })]);
-    // The CSS fix relies on this nesting: the outer `.df-row-name-wrap`
-    // cell constrains its width, the inner wrap is min-width:0 /
-    // max-width:100%, and `.df-row-name` carries `text-overflow: ellipsis`.
-    // If the JSX shape ever changes the CSS regression risk returns
-    // silently — this asserts the chain stays intact.
-    const cell = container.querySelector('div.df-row-name-wrap');
-    expect(cell).toBeTruthy();
-    const btn = cell!.querySelector('button.df-row-name-btn');
-    expect(btn).toBeTruthy();
-    const wrap = btn!.querySelector('span.df-row-name-wrap');
-    expect(wrap).toBeTruthy();
-    const name = wrap!.querySelector('span.df-row-name');
+    const row = container.querySelector('.df-tree-file-row');
+    const button = row?.querySelector('button.df-row-name-btn');
+    const name = button?.querySelector('span.df-tree-name');
+    expect(row).toBeTruthy();
+    expect(button).toBeTruthy();
     expect(name).toBeTruthy();
   });
 });

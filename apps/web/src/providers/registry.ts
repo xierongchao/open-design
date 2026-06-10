@@ -57,6 +57,7 @@ import type {
   PromptTemplateSummary,
   ProjectFile,
   ProjectFolder,
+  CopyProjectFileResponse,
   RenameProjectFileResponse,
   SkillDetail,
   SkillSummary,
@@ -2025,6 +2026,22 @@ export async function renameProjectFile(
     throw new Error(errorBody.message);
   }
   return (await resp.json()) as RenameProjectFileResponse;
+}
+
+export async function copyProjectFile(
+  projectId: string,
+  name: string,
+): Promise<CopyProjectFileResponse> {
+  const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!resp.ok) {
+    const errorBody = await readApiErrorBody(resp);
+    throw new Error(errorBody.message);
+  }
+  return (await resp.json()) as CopyProjectFileResponse;
 }
 
 export async function openFolderDialog(): Promise<string | null> {
