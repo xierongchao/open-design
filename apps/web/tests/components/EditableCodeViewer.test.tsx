@@ -120,9 +120,17 @@ describe('EditableCodeViewer', () => {
     expect(focusSpy).toHaveBeenCalled();
 
     // The selection start should point to the first "foo" occurrence
-    const firstCall = selectSpy.mock.calls[0]!;
-    expect(firstCall[0]).toBeGreaterThanOrEqual(0); // selectionStart
-    expect(firstCall[1]).toBeGreaterThan(firstCall[0]); // selectionEnd > selectionStart
+    const firstCall = selectSpy.mock.calls[0];
+    expect(firstCall).toBeDefined();
+    if (!firstCall) throw new Error('Expected setSelectionRange to be called');
+
+    const [selectionStart, selectionEnd] = firstCall;
+    if (selectionStart == null || selectionEnd == null) {
+      throw new Error('Expected setSelectionRange to receive numeric selection bounds');
+    }
+
+    expect(selectionStart).toBeGreaterThanOrEqual(0);
+    expect(selectionEnd).toBeGreaterThan(selectionStart);
 
     selectSpy.mockRestore();
     focusSpy.mockRestore();

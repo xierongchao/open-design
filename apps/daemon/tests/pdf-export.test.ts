@@ -39,6 +39,7 @@ describe('buildDesktopPdfExportInput', () => {
       deck: true,
       defaultFilename: 'Seed-Deck.pdf',
       html: '<!doctype html><section class="slide">One</section>',
+      sourceUrl: 'http://127.0.0.1:7456/api/projects/proj-pdf-test/raw/deck/index.html',
       title: 'Seed Deck',
     });
   });
@@ -54,6 +55,42 @@ describe('buildDesktopPdfExportInput', () => {
 
     expect(input.title).toBe('index');
     expect(input.defaultFilename).toBe('index.pdf');
+  });
+
+  it('inlines same-project CSS and JS before sending HTML to the desktop PDF renderer', async () => {
+    await writeFile(
+      path.join(projectsRoot, projectId, 'deck', 'index.html'),
+      [
+        '<!doctype html>',
+        '<html><head>',
+        '<link rel="stylesheet" href="assets/app.css">',
+        '<script type="module" src="assets/app.js"></script>',
+        '</head><body><section class="slide">One</section></body></html>',
+      ].join(''),
+    );
+    await writeFile(
+      path.join(projectsRoot, projectId, 'deck', 'assets', 'app.css'),
+      'body{color:#237a3b}.slide{background:#eef7ed}',
+    );
+    await writeFile(
+      path.join(projectsRoot, projectId, 'deck', 'assets', 'app.js'),
+      'document.body.dataset.ready="1";',
+    );
+
+    const input = await buildDesktopPdfExportInput({
+      daemonUrl: 'http://127.0.0.1:7456',
+      fileName: 'deck/index.html',
+      projectId,
+      projectsRoot,
+      title: 'Styled Staff',
+    });
+
+    expect(input.html).toContain('<style data-od-inline-asset="assets/app.css">');
+    expect(input.html).toContain('body{color:#237a3b}.slide{background:#eef7ed}');
+    expect(input.html).toContain('<script type="module">');
+    expect(input.html).toContain('document.body.dataset.ready="1";');
+    expect(input.html).not.toContain('<link rel="stylesheet" href="assets/app.css">');
+    expect(input.html).not.toContain('src="assets/app.js"');
   });
 });
 
@@ -94,6 +131,7 @@ describe('POST /api/projects/:id/export/pdf', () => {
           deck: true,
           defaultFilename: 'Seed-Deck.pdf',
           html: '<!doctype html><section class="slide">One</section>',
+          sourceUrl: `${started.url}/api/projects/${encodeURIComponent(projectId)}/raw/deck/index.html`,
           title: 'Seed Deck',
         },
       ]);

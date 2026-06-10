@@ -2599,6 +2599,7 @@ export interface Dict {
   'fileViewer.copyTitle': string;
   'fileViewer.saveDisabled': string;
   'fileViewer.save': string;
+  'fileViewer.codeUnsavedConfirm': string;
   'fileViewer.preview': string;
   'fileViewer.source': string;
   'fileViewer.tweaks': string;

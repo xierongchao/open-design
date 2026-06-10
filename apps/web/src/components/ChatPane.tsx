@@ -565,6 +565,7 @@ interface Props {
   onOpenPetSettings?: () => void;
   projectMetadata?: ProjectMetadata;
   onProjectMetadataChange?: (metadata: ProjectMetadata) => void;
+  showImportedFolderArtifacts?: boolean;
   activeWorkspaceContext?: WorkspaceContextItem | null;
   workspaceContexts?: WorkspaceContextItem[];
   currentSkillId?: string | null;
@@ -603,6 +604,8 @@ interface Props {
   // renders these as slots rather than ChatPane re-deriving the data.
   onBack?: () => void;
   backLabel?: string;
+  onCollapseChat?: () => void;
+  collapseChatLabel?: string;
   projectHeader?: ReactNode;
   designSystemPicker?: ReactNode;
   config?: AppConfig;
@@ -725,6 +728,7 @@ export function ChatPane({
   onOpenPetSettings,
   projectMetadata,
   onProjectMetadataChange,
+  showImportedFolderArtifacts = true,
   activeWorkspaceContext,
   workspaceContexts = [],
   currentSkillId = null,
@@ -748,6 +752,8 @@ export function ChatPane({
   onShowToast,
   onBack,
   backLabel,
+  onCollapseChat,
+  collapseChatLabel = 'Hide chat',
   projectHeader,
   designSystemPicker,
   config,
@@ -1063,7 +1069,8 @@ export function ChatPane({
         : [],
     [projectFiles, projectMetadata?.entryFile, projectMetadata?.importedFrom],
   );
-  const showImportedFolderArtifacts = projectMetadata?.importedFrom === 'folder';
+  const shouldShowImportedFolderArtifacts =
+    showImportedFolderArtifacts && projectMetadata?.importedFrom === 'folder';
   const composerDraftStorageKey = projectId && activeConversationId
     ? `od:chat-composer:draft:${projectId}:${activeConversationId}`
     : undefined;
@@ -1764,21 +1771,7 @@ export function ChatPane({
 
   return (
     <div className="pane">
-      <div className="chat-project-header">
-        {onBack ? (
-          <button
-            type="button"
-            className="chat-project-back"
-            onClick={onBack}
-            title={backLabel}
-            aria-label={backLabel}
-          >
-            <Icon name="arrow-left" size={16} />
-          </button>
-        ) : null}
-        {projectHeader ? (
-          <span className="chat-project-header-title">{projectHeader}</span>
-        ) : null}
+      <div className={`chat-project-header${onCollapseChat ? ' chat-project-header-collapsible' : ''}`}>
         <div
           className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
           ref={historyWrapRef}
@@ -1895,6 +1888,30 @@ export function ChatPane({
             </div>
           ) : null}
         </div>
+        {projectHeader ? (
+          <span className="chat-project-header-title">{projectHeader}</span>
+        ) : null}
+        {onCollapseChat ? (
+          <button
+            type="button"
+            className="chat-project-back chat-project-collapse"
+            onClick={onCollapseChat}
+            title={collapseChatLabel}
+            aria-label={collapseChatLabel}
+          >
+            <Icon name="chevron-right" size={16} />
+          </button>
+        ) : onBack ? (
+          <button
+            type="button"
+            className="chat-project-back"
+            onClick={onBack}
+            title={backLabel}
+            aria-label={backLabel}
+          >
+            <Icon name="arrow-left" size={16} />
+          </button>
+        ) : null}
       </div>
       {tab === 'chat' ? (
         <>
@@ -1928,7 +1945,7 @@ export function ChatPane({
               {loading ? <ChatConversationLoading t={t} /> : null}
               {messages.length === 0 && !loading ? (
                 <div className="chat-empty-wrap">
-                  {showImportedFolderArtifacts ? (
+                  {shouldShowImportedFolderArtifacts ? (
                     <ImportedFolderArtifacts
                       projectId={projectId}
                       files={importedFolderArtifacts}

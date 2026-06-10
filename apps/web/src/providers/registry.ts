@@ -83,6 +83,11 @@ export type WebDeploymentInfo = ProjectDeploymentsResponse['deployments'][number
 export type WebDeployProjectFileResponse = DeployProjectFileResponse;
 export type WebCloudflarePagesDeploySelection = CloudflarePagesDeploySelection;
 export type WebCloudflarePagesZonesResponse = CloudflarePagesZonesResponse;
+type RenameProjectFolderResult = {
+  folder: ProjectFolder;
+  oldName: string;
+  newName: string;
+};
 
 export function isDeployProviderId(value: unknown): value is WebDeployProviderId {
   return typeof value === 'string' && (DEPLOY_PROVIDER_IDS as readonly string[]).includes(value);
@@ -1447,6 +1452,24 @@ export async function deleteProjectFolder(
     return resp.ok;
   } catch {
     return false;
+  }
+}
+
+export async function renameProjectFolder(
+  projectId: string,
+  from: string,
+  to: string,
+): Promise<RenameProjectFolderResult | null> {
+  try {
+    const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/folders/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to }),
+    });
+    if (!resp.ok) return null;
+    return (await resp.json()) as RenameProjectFolderResult;
+  } catch {
+    return null;
   }
 }
 

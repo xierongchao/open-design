@@ -13,8 +13,7 @@ import type { ProjectFile } from '../../src/types';
 // table truncates the name with the existing `text-overflow: ellipsis`
 // instead of growing the cell. The JSX fix adds `title={f.name}` so the
 // browser surfaces the full filename on hover even when the visible
-// text is truncated. (`<DfPreview>` already renders the full name with
-// `word-break: break-word` for users who open the preview pane.)
+// text is truncated.
 //
 // jsdom does not measure layout, so the truncation itself can't be
 // asserted directly. These specs encode the contract: the rendered DOM
@@ -86,7 +85,7 @@ describe('DesignFilesPanel long filename truncation (#3260)', () => {
     expect(nameSpan).toBeTruthy();
     // The tooltip contract: hovering a truncated row reveals the full
     // filename. Without this users see "...g-helmet.jpeg" with no way
-    // to read the leading characters until they open the preview pane.
+    // to read the leading characters.
     expect(nameSpan?.getAttribute('title')).toBe(LONG_NAME);
   });
 

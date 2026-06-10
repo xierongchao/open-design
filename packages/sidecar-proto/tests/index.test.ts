@@ -167,6 +167,7 @@ describe("open-design sidecar contract", () => {
           deck: true,
           defaultFilename: "Seed Deck.pdf",
           html: "<!doctype html><section class=\"slide\">One</section>",
+          sourceUrl: "http://127.0.0.1:7456/api/projects/proj/raw/deck/index.html",
           title: "Seed Deck",
         },
         type: SIDECAR_MESSAGES.EXPORT_PDF,
@@ -177,6 +178,7 @@ describe("open-design sidecar contract", () => {
         deck: true,
         defaultFilename: "Seed Deck.pdf",
         html: "<!doctype html><section class=\"slide\">One</section>",
+        sourceUrl: "http://127.0.0.1:7456/api/projects/proj/raw/deck/index.html",
         title: "Seed Deck",
       },
       type: "export-pdf",
@@ -190,6 +192,12 @@ describe("open-design sidecar contract", () => {
     expect(() =>
       normalizeDesktopSidecarMessage({
         input: { deck: "yes", defaultFilename: "x.pdf", html: "<p>x</p>", title: "x" },
+        type: SIDECAR_MESSAGES.EXPORT_PDF,
+      }),
+    ).toThrow();
+    expect(() =>
+      normalizeDesktopSidecarMessage({
+        input: { deck: true, defaultFilename: "x.pdf", html: "<p>x</p>", sourceUrl: "", title: "x" },
         type: SIDECAR_MESSAGES.EXPORT_PDF,
       }),
     ).toThrow();

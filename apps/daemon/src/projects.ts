@@ -224,6 +224,62 @@ export async function deleteProjectFolder(projectsRoot, projectId, name, metadat
   await rm(target, { recursive: true, force: true });
 }
 
+export async function renameProjectFolder(projectsRoot, projectId, fromName, toName, metadata?) {
+  const dir = resolveProjectDir(projectsRoot, projectId, metadata);
+  const oldName = validateProjectPath(fromName);
+  const newName = sanitizePath(toName);
+  const source = await resolveSafeReal(dir, oldName);
+  const sourceStat = await stat(source);
+  if (!sourceStat.isDirectory()) {
+    const err = new Error('source is not a folder');
+    err.code = 'ENOTDIR';
+    throw err;
+  }
+
+  if (oldName === newName) {
+    return {
+      folder: {
+        name: oldName.split('/').pop() ?? oldName,
+        path: oldName,
+        type: 'dir',
+        size: 0,
+        mtime: sourceStat.mtimeMs,
+      },
+      oldName,
+      newName: oldName,
+    };
+  }
+
+  const target = await resolveSafeReal(dir, newName);
+  const targetPath = source === target ? resolveSafe(dir, newName) : target;
+
+  if (source !== target) {
+    try {
+      await stat(target);
+      const err = new Error('target folder already exists');
+      err.code = 'EEXIST';
+      throw err;
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') throw err;
+    }
+  }
+
+  await mkdir(path.dirname(targetPath), { recursive: true });
+  await rename(source, targetPath);
+  const st = await stat(targetPath);
+  return {
+    folder: {
+      name: newName.split('/').pop() ?? newName,
+      path: newName,
+      type: 'dir',
+      size: 0,
+      mtime: st.mtimeMs,
+    },
+    oldName,
+    newName,
+  };
+}
+
 // Best-effort entry-file detector — looks for index.html at the root,
 // then any *.html file. Returns null if nothing obvious is found, in
 // which case the project simply opens to the file panel with no

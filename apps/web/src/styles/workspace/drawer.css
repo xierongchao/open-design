@@ -1676,13 +1676,26 @@
 }
 
 .ws-tabs-actions { display: inline-flex; gap: 4px; align-items: center; }
+.ws-project-back,
 .ws-focus-expand {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
+  height: 28px;
   padding: 0;
   line-height: 0;
   box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  flex: 0 0 auto;
+}
+.ws-project-back:hover,
+.ws-focus-expand:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 .ws-focus-toggle {
   display: inline-flex;

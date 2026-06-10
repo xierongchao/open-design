@@ -1964,7 +1964,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { upload } = ctx.uploads;
   const { fs } = ctx.node;
   const { getProject } = ctx.projectStore;
-  const { listFiles, listProjectFolders, createProjectFolder, deleteProjectFolder, searchProjectFiles, readProjectFile, resolveProjectDir, resolveProjectFilePath, parseByteRange, renameProjectFile, deleteProjectFile, writeProjectFile, sanitizeName, ensureProject } = ctx.projectFiles;
+  const { listFiles, listProjectFolders, createProjectFolder, deleteProjectFolder, renameProjectFolder, searchProjectFiles, readProjectFile, resolveProjectDir, resolveProjectFilePath, parseByteRange, renameProjectFile, deleteProjectFile, writeProjectFile, sanitizeName, ensureProject } = ctx.projectFiles;
   const { buildDocumentPreview } = ctx.documents;
   const { validateArtifactManifestInput } = ctx.artifacts;
   const { projectPreviewScopes } = ctx;
@@ -2186,6 +2186,38 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       res.json(body);
     } catch (err: any) {
       sendApiError(res, 400, 'BAD_REQUEST', String(err?.message || err));
+    }
+  });
+
+  app.post('/api/projects/:id/folders/rename', async (req, res) => {
+    try {
+      const { from, to } = req.body || {};
+      if (typeof from !== 'string' || typeof to !== 'string') {
+        return sendApiError(res, 400, 'BAD_REQUEST', 'from and to required');
+      }
+      const project = getProject(db, req.params.id);
+      if (!project) {
+        return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
+      }
+      const result = await renameProjectFolder(
+        PROJECTS_DIR,
+        req.params.id,
+        from,
+        to,
+        project.metadata,
+      );
+      /** @type {import('@open-design/contracts').RenameProjectFolderResponse} */
+      const body = result;
+      res.json(body);
+    } catch (err: any) {
+      if (err?.code === 'EEXIST') {
+        return sendApiError(res, 409, 'CONFLICT', String(err?.message || err));
+      }
+      const message = String(err?.message || err);
+      if (err?.code === 'ENOENT' || message.includes('ENOENT') || message.includes('no such file or directory')) {
+        return sendApiError(res, 404, 'FOLDER_NOT_FOUND', message);
+      }
+      sendApiError(res, 400, 'BAD_REQUEST', message);
     }
   });
 

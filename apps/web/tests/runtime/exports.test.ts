@@ -7,6 +7,7 @@ import {
   buildDesignManifestContent,
   downloadImageDataUrl,
   buildSandboxedPreviewDocument,
+  captureHostIframeSnapshot,
   exportAsImage,
   exportAsMd,
   exportAsPdf,
@@ -485,9 +486,26 @@ describe('sandboxed preview Blob exports', () => {
     expect(capturedBlob).toBeDefined();
     const wrapper = await capturedBlob!.text();
     expect(wrapper).toContain('sandbox="allow-scripts allow-modals"');
+    expect(wrapper).toContain('data-od-print-frame');
+    expect(wrapper).toContain('@media print');
+    expect(wrapper).toContain('window.__odPrintReady');
+    expect(wrapper).toContain("frame.style.height=h+'px'");
+    expect(wrapper).toContain('document.body.style.overflow');
     expect(wrapper).not.toContain('allow-same-origin');
     expect(wrapper).toContain('&lt;script&gt;window.parent.document.body.innerHTML=&quot;owned&quot;&lt;/script&gt;');
     expect(wrapper).not.toContain('<script>window.parent.document.body.innerHTML="owned"</script>');
+  });
+
+  it('absolutizes root-relative base hrefs inside PDF Blob wrappers', async () => {
+    await exportAsPdf('<link rel="stylesheet" href="css/shared.css"><main>Styled</main>', 'Styled PDF', {
+      baseHref: '/api/projects/proj/raw/',
+    });
+
+    expect(capturedBlob).toBeDefined();
+    const wrapper = await capturedBlob!.text();
+    const expectedBase = 'http://localhost/api/projects/proj/raw/';
+    expect(wrapper).toContain(`&lt;base href=&quot;${expectedBase}&quot;&gt;`);
+    expect(wrapper).not.toContain('&lt;base href=&quot;/api/projects/proj/raw/&quot;&gt;');
   });
 
   it('preserves deck print handling inside sandboxed PDF exports', async () => {
@@ -575,6 +593,8 @@ describe('sandboxed preview Blob exports', () => {
     // Verify the readiness handshake is present — the sandboxed iframe posts
     // 'OD_PRINT_READY' to the parent once fonts and images are loaded.
     expect(htmlArg).toContain('OD_PRINT_READY');
+    expect(htmlArg).toContain('width:size.width,height:size.height');
+    expect(htmlArg).toContain("frame.style.height=h+'px'");
     // Verify the parent-wrapper cache script is present so the handshake is
     // never missed even if 'OD_PRINT_READY' fires before the listener attaches.
     expect(htmlArg).toContain('__odPrintReady');
@@ -599,6 +619,26 @@ describe('sandboxed preview Blob exports', () => {
     expect(printPdfMock).toHaveBeenCalledTimes(1);
     expect(printPdfMock.mock.calls[0]![2]).toEqual({ deck: true });
     expect(printPdfMock.mock.calls[0]![0]).toContain('data-deck-print=&quot;injected&quot;');
+  });
+
+  it('absolutizes root-relative base hrefs before sending desktop PDF bridge HTML', async () => {
+    const printPdfMock = vi.fn().mockResolvedValue({ ok: true });
+    const restoreHost = installMockOpenDesignHost({
+      host: { pdf: { print: printPdfMock } },
+    });
+
+    try {
+      await exportAsPdf('<link rel="stylesheet" href="css/shared.css"><main>Styled</main>', 'Desktop Styled', {
+        baseHref: '/api/projects/proj/raw/',
+      });
+    } finally {
+      restoreHost();
+    }
+
+    const htmlArg = printPdfMock.mock.calls[0]![0];
+    const expectedBase = 'http://localhost/api/projects/proj/raw/';
+    expect(htmlArg).toContain(`&lt;base href=&quot;${expectedBase}&quot;&gt;`);
+    expect(htmlArg).not.toContain('&lt;base href=&quot;/api/projects/proj/raw/&quot;&gt;');
   });
 
   it('injects image-waiting logic into the print-ready handshake for the desktop bridge', async () => {
@@ -830,6 +870,85 @@ describe('requestPreviewSnapshot', () => {
     const result = await promise;
     expect(result).toBeNull();
     vi.useRealTimers();
+  });
+});
+
+describe('captureHostIframeSnapshot', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('clips the desktop host capture to the iframe viewport rectangle', async () => {
+    const capturePage = vi.fn(async () => ({
+      ok: true as const,
+      dataUrl: 'data:image/png;base64,clip',
+      w: 320,
+      h: 180,
+    }));
+    const restoreHost = installMockOpenDesignHost({
+      host: { capture: { page: capturePage } },
+    });
+    const iframe = {
+      getBoundingClientRect: () => ({
+        bottom: 241.4,
+        height: 180.6,
+        left: 12.4,
+        right: 333,
+        top: 60.8,
+        width: 320.6,
+        x: 12.4,
+        y: 60.8,
+        toJSON: () => ({}),
+      }),
+    } as unknown as HTMLIFrameElement;
+
+    try {
+      await expect(captureHostIframeSnapshot(iframe)).resolves.toEqual({
+        dataUrl: 'data:image/png;base64,clip',
+        w: 320,
+        h: 180,
+      });
+    } finally {
+      restoreHost();
+    }
+
+    expect(capturePage).toHaveBeenCalledWith({
+      clip: { height: 181, width: 321, x: 12, y: 61 },
+    });
+  });
+
+  it('does not fall back to a full-page host capture for hidden iframes', async () => {
+    const capturePage = vi.fn(async () => ({
+      ok: true as const,
+      dataUrl: 'data:image/png;base64,full-page',
+      w: 1440,
+      h: 900,
+    }));
+    const restoreHost = installMockOpenDesignHost({
+      host: { capture: { page: capturePage } },
+    });
+    const iframe = {
+      getBoundingClientRect: () => ({
+        bottom: 100,
+        height: 0,
+        left: 100,
+        right: 100,
+        top: 100,
+        width: 0,
+        x: 100,
+        y: 100,
+        toJSON: () => ({}),
+      }),
+    } as unknown as HTMLIFrameElement;
+
+    try {
+      await expect(captureHostIframeSnapshot(iframe)).resolves.toBeNull();
+    } finally {
+      restoreHost();
+    }
+
+    expect(capturePage).not.toHaveBeenCalled();
   });
 });
 

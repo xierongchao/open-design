@@ -77,7 +77,7 @@ export async function exportPdfFromHtml(input: DesktopExportPdfInput): Promise<D
   });
 
   try {
-    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildPrintableDocument(input))}`);
+    await loadDesktopPdfDocument(window, input);
     await waitForPrintableContent(window);
     const pageSize = input.deck ? DECK_PAGE_SIZE : await inferPageSize(window);
     const pdf = await window.webContents.printToPDF(printToPdfOptions(pageSize));
@@ -88,6 +88,20 @@ export async function exportPdfFromHtml(input: DesktopExportPdfInput): Promise<D
   } finally {
     if (!window.isDestroyed()) window.destroy();
   }
+}
+
+export async function loadDesktopPdfDocument(window: BrowserWindow, input: DesktopExportPdfInput): Promise<void> {
+  if (input.sourceUrl) {
+    try {
+      await window.loadURL(input.sourceUrl);
+      await applyPrintableDocumentChrome(window, input);
+      return;
+    } catch {
+      // Keep the legacy HTML-string path as a compatibility fallback if the
+      // daemon raw URL is unavailable or the app is paired with an older host.
+    }
+  }
+  await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildPrintableDocument(input))}`);
 }
 
 /**
@@ -245,6 +259,11 @@ function buildPrintableDocument(input: DesktopExportPdfInput): string {
   const source = injectBaseHref(input.html, input.baseHref);
   const withTitle = injectTitle(source, input.title);
   return input.deck ? injectPrintStylesheet(withTitle, DECK_PRINT_CSS) : withTitle;
+}
+
+async function applyPrintableDocumentChrome(window: BrowserWindow, input: DesktopExportPdfInput): Promise<void> {
+  await window.webContents.executeJavaScript(`document.title = ${JSON.stringify(input.title || "artifact")}; true;`);
+  if (input.deck) await window.webContents.insertCSS(DECK_PRINT_CSS);
 }
 
 function injectBaseHref(doc: string, baseHref: string | undefined): string {

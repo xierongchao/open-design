@@ -231,6 +231,7 @@ export type DesktopExportPdfInput = {
   deck: boolean;
   defaultFilename: string;
   html: string;
+  sourceUrl?: string;
   title: string;
 };
 
@@ -629,12 +630,13 @@ function normalizeBoolean(value: unknown, label: string): boolean {
 
 function normalizeDesktopExportPdfInput(input: unknown): DesktopExportPdfInput {
   const value = assertObject(input, "desktop PDF export input");
-  assertKnownKeys(value, ["baseHref", "deck", "defaultFilename", "html", "title"], "desktop PDF export input");
+  assertKnownKeys(value, ["baseHref", "deck", "defaultFilename", "html", "sourceUrl", "title"], "desktop PDF export input");
   return {
     ...(value.baseHref == null ? {} : { baseHref: normalizeNonEmptyString(value.baseHref, "desktop PDF export baseHref") }),
     deck: normalizeBoolean(value.deck, "desktop PDF export deck"),
     defaultFilename: normalizeNonEmptyString(value.defaultFilename, "desktop PDF export defaultFilename"),
     html: normalizeNonEmptyString(value.html, "desktop PDF export html"),
+    ...(value.sourceUrl == null ? {} : { sourceUrl: normalizeNonEmptyString(value.sourceUrl, "desktop PDF export sourceUrl") }),
     title: normalizeNonEmptyString(value.title, "desktop PDF export title"),
   };
 }

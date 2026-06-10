@@ -159,4 +159,21 @@ describe('ChatPane imported folder artifacts', () => {
     expect(within(artifactGrid).getByText('site/index.html')).toBeTruthy();
     expect(screen.queryByTestId('chat-design-artifacts-more')).toBeNull();
   });
+
+  it('can keep the empty chat focused on conversation controls instead of imported file previews', () => {
+    const metadata: ProjectMetadata = {
+      kind: 'prototype',
+      importedFrom: 'folder',
+      entryFile: 'site/index.html',
+    };
+
+    renderPane({
+      projectMetadata: metadata,
+      projectFiles: [file('site/index.html', 'html', 20)],
+      showImportedFolderArtifacts: false,
+    });
+
+    expect(screen.queryByTestId('chat-design-artifacts')).toBeNull();
+    expect(screen.getByText('chat.startTitle')).toBeTruthy();
+  });
 });

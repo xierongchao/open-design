@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectFile } from '../../src/types';
 
 const {
@@ -89,6 +89,10 @@ async function waitForSaveButton() {
 }
 
 describe('FileViewer image export', () => {
+  beforeEach(() => {
+    captureHostIframeSnapshotMock.mockResolvedValue(null);
+  });
+
   afterEach(() => {
     cleanup();
     vi.resetAllMocks();
@@ -266,6 +270,30 @@ describe('FileViewer image export', () => {
     });
     expect(requestPreviewSnapshotMock).not.toHaveBeenCalledWith(srcDocFrame, 1500);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('hides host chrome while taking the desktop compositor snapshot', async () => {
+    const imageBlob = new Blob(['png'], { type: 'image/png' });
+    captureHostIframeSnapshotMock.mockImplementationOnce(async () => {
+      expect(document.documentElement.classList.contains('od-export-capture-active')).toBe(true);
+      return {
+        dataUrl: 'data:image/png;base64,host',
+        w: 1200,
+        h: 800,
+      };
+    });
+    imageDataUrlToBlobMock.mockResolvedValueOnce(imageBlob);
+
+    renderHtmlPreview();
+    openImageExportDialog();
+
+    await waitFor(() => {
+      expect(imageDataUrlToBlobMock).toHaveBeenCalledWith('data:image/png;base64,host', 'png');
+    });
+    expect(requestPreviewSnapshotMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(document.documentElement.classList.contains('od-export-capture-active')).toBe(false);
+    });
   });
 
   it('uses the prepared PNG data URL for fallback downloads', async () => {

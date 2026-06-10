@@ -523,10 +523,12 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       if (typeof fileName !== 'string' || fileName.length === 0) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'fileName required');
       }
+      const project = getProject(db, req.params.id);
       const input = await buildDesktopPdfExportInput({
         daemonUrl: daemonUrlRef.current,
         deck: deck === true,
         fileName,
+        metadata: project?.metadata,
         projectId: req.params.id,
         projectsRoot: PROJECTS_DIR,
         title: typeof title === 'string' ? title : undefined,

@@ -1,4 +1,4 @@
-export const MANUAL_EDIT_DISCOVERY_SELECTOR = 'main, nav, section, article, header, footer, div, h1, h2, h3, p, a, button, img, strong, span, table, thead, tbody, tr, th, td';
+export const MANUAL_EDIT_DISCOVERY_SELECTOR = 'main, nav, section, article, aside, header, footer, div, h1, h2, h3, h4, h5, h6, p, a, button, img, strong, em, i, small, span, ul, ol, li, dl, dt, dd, blockquote, pre, code, label, form, input, select, textarea, table, thead, tbody, tfoot, tr, th, td, figure, figcaption, details, summary';
 export const MANUAL_EDIT_SOURCE_PATH_ATTR = 'data-od-source-path';
 export const MANUAL_EDIT_HOST_NODE_SELECTOR = [
   '[data-od-sandbox-shim]',

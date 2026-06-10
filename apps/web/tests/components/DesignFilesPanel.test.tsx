@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComponentProps } from 'react';
 
 import { DesignFilesPanel, type DesignFilesNavState } from '../../src/components/DesignFilesPanel';
@@ -19,6 +19,10 @@ vi.stubGlobal('localStorage', {
   setItem: (key: string, value: string) => { lsStore.set(key, value); },
   removeItem: (key: string) => { lsStore.delete(key); },
   clear: () => { lsStore.clear(); },
+});
+
+beforeEach(() => {
+  lsStore.clear();
 });
 
 function extForKind(kind: ProjectFileKind): string {
@@ -86,10 +90,34 @@ function renderPanel(
   return { ...result, onDeleteFiles, onOpenFile, onClearUploadError };
 }
 
-function sectionLabels(): string[] {
-  return Array.from(document.querySelectorAll<HTMLElement>('.df-section-label')).map(
-    (el) => el.textContent ?? '',
-  );
+function createDataTransfer(projectFiles: string[] = []) {
+  const store = new Map<string, string>();
+  if (projectFiles.length > 0) {
+    store.set('application/x-open-design-project-files', JSON.stringify(projectFiles));
+  }
+  return {
+    types: projectFiles.length > 0 ? ['application/x-open-design-project-files'] : [],
+    effectAllowed: 'move',
+    dropEffect: 'move',
+    setData: (type: string, value: string) => {
+      store.set(type, value);
+    },
+    getData: (type: string) => store.get(type) ?? '',
+  };
+}
+
+function dispatchDragWithY(
+  target: HTMLElement,
+  type: 'dragover' | 'drop',
+  dataTransfer: ReturnType<typeof createDataTransfer>,
+  clientY: number,
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    dataTransfer: { value: dataTransfer },
+    clientY: { value: clientY },
+  });
+  fireEvent(target, event);
 }
 
 describe('DesignFilesPanel sections', () => {
@@ -120,59 +148,57 @@ describe('DesignFilesPanel sections', () => {
     expect(screen.getByTestId('design-files-upload-trigger')).toBeTruthy();
   });
 
-  it('groups files into semantic sections by category', () => {
+  it('renders project files in a table with kind metadata instead of section groups', () => {
     renderPanel([
       file({ name: 'page.html', kind: 'html', mime: 'text/html' }),
       file({ name: 'chart.png', kind: 'image', mime: 'image/png' }),
     ]);
 
-    const labels = sectionLabels();
-    expect(labels.some((text) => text.includes('Pages'))).toBe(true);
-    expect(labels.some((text) => text.includes('Images'))).toBe(true);
+    const header = document.querySelector('.df-file-table-header')?.textContent ?? '';
+    expect(header).toContain('Name');
+    expect(header).toContain('Kind');
+    expect(header).toContain('Size');
+    expect(header).toContain('Modified');
+    expect(document.querySelector('.df-section-label')).toBeNull();
     expect(screen.getByTestId('design-file-row-page.html')).toBeTruthy();
     expect(screen.getByTestId('design-file-row-chart.png')).toBeTruthy();
+    expect(screen.getByTestId('design-file-row-page.html').querySelector('.df-row-kind')?.textContent).toBe('HTML page');
+    expect(screen.getByTestId('design-file-row-chart.png').querySelector('.df-row-kind')?.textContent).toBe('Image');
   });
 
-  it('splits stylesheets into their own section with a Stylesheet subtitle', () => {
+  it('shows stylesheets as their own table kind without creating a separate section', () => {
     renderPanel([
       file({ name: 'styles.css', kind: 'code', mime: 'text/css' }),
       file({ name: 'app.ts', kind: 'code', mime: 'text/typescript' }),
     ]);
 
-    const labels = sectionLabels();
-    expect(labels.some((text) => text.includes('Stylesheets'))).toBe(true);
-    expect(labels.some((text) => text.includes('Scripts'))).toBe(true);
+    expect(document.querySelector('.df-section-label')).toBeNull();
 
     const cssRow = screen.getByTestId('design-file-row-styles.css');
     expect(cssRow.querySelector('.df-row-sub')?.textContent).toBe('Stylesheet');
+    expect(cssRow.querySelector('.df-row-kind')?.textContent).toBe('Stylesheet');
     const tsRow = screen.getByTestId('design-file-row-app.ts');
     expect(tsRow.querySelector('.df-row-sub')?.textContent).toBe('Script');
+    expect(tsRow.querySelector('.df-row-kind')?.textContent).toBe('Script');
   });
 
-  it('shows the type as the row subtitle instead of file size', () => {
+  it('shows type and size in separate table columns', () => {
     renderPanel([file({ name: 'chart.png', kind: 'image', size: 4096 })]);
 
     const row = screen.getByTestId('design-file-row-chart.png');
     expect(row.querySelector('.df-row-sub')?.textContent).toBe('Image');
-    expect(row.textContent).not.toContain('KB');
+    expect(row.querySelector('.df-row-kind')?.textContent).toBe('Image');
+    expect(row.querySelector('.df-row-size')?.textContent).toContain('KB');
   });
 
-  it('shows the upload hint in the footer while idle', () => {
+  it('renders the file tree and table without the old preview footer', () => {
     renderPanel([file({ name: 'page.html', kind: 'html' })]);
 
-    expect(document.querySelector('.df-drop-hint')).toBeTruthy();
-    expect(document.querySelector('.df-useful-info')).toBeNull();
-  });
-
-  it('types out the first useful-info tip in the footer while the agent runs', async () => {
-    renderPanel([file({ name: 'page.html', kind: 'html' })], { running: true });
-
-    expect(document.querySelector('.df-drop-hint')).toBeNull();
-    expect(document.querySelector('.df-useful-info-label')?.textContent).toBe('Useful info');
-    // The tip types in character by character, so wait for the first word.
-    await waitFor(() =>
-      expect(document.querySelector('.df-useful-info-tip')?.textContent).toContain('Double-click'),
-    );
+    expect(document.querySelector('.df-browser')).toBeTruthy();
+    expect(document.querySelector('.df-tree-pane')).toBeTruthy();
+    expect(document.querySelector('.df-file-table-panel')).toBeTruthy();
+    expect(document.querySelector('.df-useful-info-label')).toBeNull();
+    expect(document.querySelector('[data-testid="design-file-preview"]')).toBeNull();
   });
 });
 
@@ -227,15 +253,15 @@ describe('DesignFilesPanel selection', () => {
     expect(onOpenFile).not.toHaveBeenCalled();
   });
 
-  it('uses non-control row targets to preview and open', () => {
+  it('uses non-control row targets to focus and open without rendering a preview panel', () => {
     const files = generateFiles(1);
     const { container, onOpenFile } = renderPanel(files);
     const row = container.querySelector('.df-file-row')!;
 
     fireEvent.click(row.querySelector('.df-row-icon')!);
-    expect(container.querySelector('[data-testid="design-file-preview"]')?.textContent).toContain(
-      'file-1.html',
-    );
+    expect(row.classList.contains('active')).toBe(true);
+    expect(container.querySelector('[data-testid="design-file-preview"]')).toBeNull();
+    expect(onOpenFile).not.toHaveBeenCalled();
 
     fireEvent.doubleClick(row.querySelector('.df-row-name-btn')!);
     expect(onOpenFile).toHaveBeenCalledWith('file-1.html');
@@ -246,52 +272,99 @@ describe('DesignFilesPanel selection', () => {
   });
 });
 
-describe('DesignFilesPanel preview', () => {
+describe('DesignFilesPanel folders', () => {
   afterEach(() => cleanup());
 
-  it('shows the file extension in the preview stats', () => {
-    const { container } = renderPanel([file({ name: 'chart.png', kind: 'image', size: 4096 })]);
-    fireEvent.click(container.querySelector('.df-file-row .df-row-icon')!);
+  it('creates a nested folder in the current directory', async () => {
+    const onCreateFolder = vi.fn(async (path: string) => folder(path));
+    renderPanel([
+      file({ name: 'assets/logo.png', kind: 'image' }),
+    ], { onCreateFolder });
 
-    const stats = container.querySelector('.df-preview-stats')?.textContent ?? '';
-    expect(stats).toContain('PNG');
+    fireEvent.click(screen.getByTestId('design-folder-row-assets').querySelector('.df-row-name-btn')!);
+    fireEvent.click(screen.getByRole('button', { name: 'New folder' }));
+    fireEvent.change(screen.getByPlaceholderText('Folder name'), {
+      target: { value: 'icons' },
+    });
+    fireEvent.submit(screen.getByTestId('design-folder-create-row'));
+
+    expect(onCreateFolder).toHaveBeenCalledWith('assets/icons');
   });
 
-  it('renders sketch files with the static sketch preview instead of a broken image', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      version: 1,
-      items: [
-        {
-          kind: 'rect',
-          x: 20,
-          y: 16,
-          w: 120,
-          h: 72,
-          color: '#1c1b1a',
-          size: 2,
-        },
-      ],
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('moves the dragged file into a folder', () => {
+    const onMoveFiles = vi.fn();
+    const { container } = renderPanel([
+      file({ name: 'index.html', kind: 'html' }),
+      file({ name: 'assets/logo.png', kind: 'image' }),
+    ], { onMoveFiles });
 
-    const sketchFile = file({
-      name: 'board.sketch.json',
-      path: 'board.sketch.json',
-      kind: 'sketch',
-      mime: 'application/json; charset=utf-8',
+    const fileRow = screen.getByTestId('design-file-row-index.html');
+    const folderRow = screen.getByTestId('design-folder-row-assets');
+    fireEvent.dragStart(fileRow, {
+      dataTransfer: createDataTransfer(),
     });
-    const { container } = renderPanel([sketchFile]);
+    fireEvent.drop(folderRow, {
+      dataTransfer: createDataTransfer(['index.html']),
+    });
 
-    fireEvent.click(container.querySelector('.df-file-row .df-row-name-btn')!);
+    expect(onMoveFiles).toHaveBeenCalledWith(['index.html'], 'assets');
+    expect(container.querySelector('[data-testid="design-file-preview"]')).toBeNull();
+  });
+
+  it('moves the dragged folder into another folder', async () => {
+    const onRenameFolder = vi.fn(async (_from: string, to: string) => folder(to));
+    renderPanel([
+      file({ name: 'images/photo.png', kind: 'image' }),
+      file({ name: 'documents/readme.txt', kind: 'text' }),
+    ], { onRenameFolder });
+
+    const imagesRow = screen.getByTestId('design-folder-row-images');
+    const documentsRow = screen.getByTestId('design-folder-row-documents');
+    const dataTransfer = createDataTransfer();
+
+    fireEvent.dragStart(imagesRow, { dataTransfer });
+    fireEvent.drop(documentsRow, { dataTransfer });
 
     await waitFor(() => {
-      expect(container.querySelector('[data-testid="sketch-preview-svg"]')).toBeTruthy();
+      expect(onRenameFolder).toHaveBeenCalledWith('images', 'documents/images');
     });
-    expect(container.querySelector('.df-preview-thumb img')).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith('/api/projects/test-project/raw/board.sketch.json', { cache: 'no-store' });
+  });
+
+  it('reorders sibling folders without moving them on disk', async () => {
+    const onRenameFolder = vi.fn(async (_from: string, to: string) => folder(to));
+    renderPanel([
+      file({ name: 'a/page.html', kind: 'html' }),
+      file({ name: 'b/page.html', kind: 'html' }),
+      file({ name: 'c/page.html', kind: 'html' }),
+    ], { onRenameFolder });
+
+    const cRow = screen.getByTestId('design-folder-row-c');
+    const aRow = screen.getByTestId('design-folder-row-a');
+    Object.defineProperty(aRow, 'getBoundingClientRect', {
+      value: () => ({
+        top: 100,
+        bottom: 130,
+        left: 0,
+        right: 240,
+        width: 240,
+        height: 30,
+        x: 0,
+        y: 100,
+        toJSON: () => ({}),
+      }),
+    });
+    const dataTransfer = createDataTransfer();
+
+    fireEvent.dragStart(cRow, { dataTransfer });
+    dispatchDragWithY(aRow, 'dragover', dataTransfer, 102);
+    dispatchDragWithY(aRow, 'drop', dataTransfer, 102);
+
+    await waitFor(() => {
+      const names = Array.from(document.querySelectorAll('.df-dir-row .df-tree-name'))
+        .map((node) => node.textContent);
+      expect(names).toEqual(['c', 'a', 'b']);
+    });
+    expect(onRenameFolder).not.toHaveBeenCalled();
   });
 });
 
@@ -300,7 +373,7 @@ describe('DesignFilesPanel directory navigation', () => {
     cleanup();
   });
 
-  it('collapses nested files into a single folder row at root with correct descendant count', () => {
+  it('collapses nested files into a single folder row at root without inline counts', () => {
     renderPanel([
       file({ name: 'assets/logo.png', kind: 'image' }),
       file({ name: 'assets/icons/star.svg', kind: 'image' }),
@@ -309,7 +382,8 @@ describe('DesignFilesPanel directory navigation', () => {
     const dirRows = document.querySelectorAll('.df-dir-row');
     expect(dirRows.length).toBe(1);
     expect(dirRows[0]!.textContent).toContain('assets');
-    expect(dirRows[0]!.textContent).toContain('2');
+    expect(dirRows[0]!.querySelector('.df-tree-count')).toBeNull();
+    expect(document.querySelector('.df-tree-root')?.querySelector('.df-tree-count')).toBeNull();
   });
 
   it('pins folders into a Folders section', () => {
@@ -318,7 +392,55 @@ describe('DesignFilesPanel directory navigation', () => {
       file({ name: 'top.html', kind: 'html' }),
     ]);
 
-    expect(sectionLabels().some((text) => text.includes('Folders'))).toBe(true);
+    expect(document.querySelector('.df-tree-head')?.textContent).toContain('Folders');
+    expect(document.querySelector('.df-tree-head-count')).toBeNull();
+  });
+
+  it('uses a disclosure control on the root folder row', () => {
+    renderPanel([
+      file({ name: 'assets/logo.png', kind: 'image' }),
+      file({ name: 'top.html', kind: 'html' }),
+    ]);
+
+    const rootToggle = document.querySelector<HTMLButtonElement>('.df-tree-root .df-tree-toggle')!;
+    expect(rootToggle).toBeTruthy();
+    expect(rootToggle.getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(rootToggle);
+    expect(screen.queryByTestId('design-folder-row-assets')).toBeNull();
+
+    fireEvent.click(rootToggle);
+    expect(screen.getByTestId('design-folder-row-assets')).toBeTruthy();
+  });
+
+  it('keeps folder destructive actions in the right-click menu', async () => {
+    const onDeleteFolder = vi.fn(async () => true);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderPanel([
+      file({ name: 'assets/logo.png', kind: 'image' }),
+    ], { onDeleteFolder });
+
+    const folderRow = screen.getByTestId('design-folder-row-assets');
+    expect(folderRow.querySelector('.df-dir-delete')).toBeNull();
+
+    fireEvent.contextMenu(folderRow);
+    fireEvent.click(screen.getByTestId('design-folder-delete-assets'));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(onDeleteFolder).toHaveBeenCalledWith('assets');
+  });
+
+  it('renames folders from the right-click menu', async () => {
+    const onRenameFolder = vi.fn(async (_from: string, to: string) => folder(to));
+    vi.spyOn(window, 'prompt').mockReturnValue('pages');
+    renderPanel([
+      file({ name: 'assets/logo.png', kind: 'image' }),
+    ], { onRenameFolder });
+
+    fireEvent.contextMenu(screen.getByTestId('design-folder-row-assets'));
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    expect(onRenameFolder).toHaveBeenCalledWith('assets', 'pages');
   });
 
   it('clicking a folder row navigates into it and shows only basenames and nested dirs', () => {
@@ -336,9 +458,7 @@ describe('DesignFilesPanel directory navigation', () => {
     expect(fileRow.querySelector('.df-row-name')?.textContent).toBe('logo.png');
     expect(fileRow.querySelector('.df-row-name')?.textContent).not.toContain('assets/');
 
-    const dirRows = document.querySelectorAll('.df-dir-row');
-    expect(dirRows.length).toBe(1);
-    expect(dirRows[0]!.textContent).toContain('icons');
+    expect(screen.getByTestId('design-folder-row-assets/icons')).toBeTruthy();
   });
 
   it('always renders the root breadcrumb on the default-root view', () => {
@@ -374,17 +494,17 @@ describe('DesignFilesPanel directory navigation', () => {
 
     expect(document.querySelector('.df-breadcrumb-current')?.textContent).not.toBe('assets');
     expect(screen.getByTestId('design-file-row-top.html')).toBeTruthy();
-    expect(document.querySelectorAll('.df-dir-row').length).toBe(1);
+    expect(screen.getByTestId('design-folder-row-assets')).toBeTruthy();
   });
 
-  it('includes subdirectory files in the flat root-level list', () => {
+  it('keeps subdirectory files out of the root file table', () => {
     renderPanel([
       file({ name: 'assets/logo.png', kind: 'image' }),
       file({ name: 'top.html', kind: 'html' }),
     ]);
 
-    expect(document.querySelectorAll('.df-dir-row').length).toBe(1);
-    expect(screen.getByTestId('design-file-row-assets/logo.png')).toBeTruthy();
+    expect(screen.getByTestId('design-folder-row-assets')).toBeTruthy();
+    expect(screen.queryByTestId('design-file-row-assets/logo.png')).toBeNull();
     expect(screen.getByTestId('design-file-row-top.html')).toBeTruthy();
   });
 
@@ -431,8 +551,8 @@ describe('DesignFilesPanel directory navigation', () => {
   it('navigates up one level via the parent breadcrumb', () => {
     renderPanel([file({ name: 'assets/icons/star.svg', kind: 'image' })]);
 
-    fireEvent.click(document.querySelector('.df-dir-row .df-row-name-btn')!);
-    fireEvent.click(document.querySelector('.df-dir-row .df-row-name-btn')!);
+    fireEvent.click(screen.getByTestId('design-folder-row-assets').querySelector('.df-row-name-btn')!);
+    fireEvent.click(screen.getByTestId('design-folder-row-assets/icons').querySelector('.df-row-name-btn')!);
     expect(document.querySelector('.df-breadcrumb-current')?.textContent).toBe('icons');
 
     const crumbs = Array.from(document.querySelectorAll('.df-breadcrumb-btn'));
@@ -531,10 +651,10 @@ describe('DesignFilesPanel persisted (empty) folders', () => {
     renderPanel([], { folders: [folder('assets'), folder('assets/icons')] });
     // Zero files, but the persisted folder still renders the tree (not the
     // empty state), so 'assets' is navigable at the root.
-    const rootDirs = [...document.querySelectorAll('.df-dir-row .df-row-name')].map((e) => e.textContent);
+    const rootDirs = [...document.querySelectorAll('.df-dir-row .df-tree-name')].map((e) => e.textContent);
     expect(rootDirs).toContain('assets');
     fireEvent.click(document.querySelector('.df-dir-row .df-row-name-btn')!);
-    const nestedDirs = [...document.querySelectorAll('.df-dir-row .df-row-name')].map((e) => e.textContent);
+    const nestedDirs = [...document.querySelectorAll('.df-dir-row .df-tree-name')].map((e) => e.textContent);
     expect(nestedDirs).toContain('icons');
   });
 });

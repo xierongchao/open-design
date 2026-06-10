@@ -815,27 +815,6 @@
 .viewer.is-tab-present .viewer-body {
   inset: 0;
 }
-.viewer .present-exit-btn {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 50;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  color: var(--text-muted);
-}
-.viewer .present-exit-btn:hover {
-  background: var(--bg-subtle);
-  color: var(--text);
-}
 .live-artifact-preview-frame-host {
   width: 100%;
   height: 100%;
@@ -1225,13 +1204,13 @@ a.avatar-item:visited {
 
 /* -------- Split / panes -------------------------------------------- */
 .split {
-  --project-chat-panel-width: 460px;
-  --project-workspace-panel-track: minmax(400px, 1fr);
+  --project-chat-panel-width: 760px;
+  --project-workspace-panel-track: minmax(320px, 1fr);
   display: grid;
   grid-template-columns:
-    var(--project-chat-panel-width)
+    var(--project-workspace-panel-track)
     8px
-    var(--project-workspace-panel-track);
+    var(--project-chat-panel-width);
   min-height: 0;
   min-width: 0;
   max-width: 100%;
@@ -1257,6 +1236,22 @@ a.avatar-item:visited {
 }
 .split.split-focus {
   grid-template-columns: minmax(0, 1fr);
+}
+.split:not(.split-focus) > .workspace {
+  grid-column: 1;
+  grid-row: 1;
+}
+.split:not(.split-focus) > .split-resize-handle,
+.split:not(.split-focus) > .split-edit-divider {
+  grid-column: 2;
+  grid-row: 1;
+}
+.split:not(.split-focus) > .split-chat-slot {
+  grid-column: 3;
+  grid-row: 1;
+}
+.split.split-focus > .workspace {
+  grid-column: 1;
 }
 .split-chat-slot {
   position: relative;

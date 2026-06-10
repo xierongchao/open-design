@@ -16,7 +16,7 @@
 import { describe, expect, test } from 'vitest';
 
 import {
-  inferPageSize,
+  loadDesktopPdfDocument,
   pdfFilenameFromDocument,
   savePrintReadyDocumentAsPdf,
   waitForPrintableContent,
@@ -195,96 +195,6 @@ describe('savePrintReadyDocumentAsPdf', () => {
   });
 });
 
-// Issue #4067 — the desktop "Export PDF" of a sandboxed-preview artifact sized
-// the page to the wrapper viewport, clipping (or blanking, when the content sat
-// below the fold) taller artifacts. inferPageSize() now prefers the content
-// size the in-iframe handshake reports through window.__odPrintSize, since the
-// wrapper cannot measure the cross-origin sandboxed iframe itself.
-//
-// inferPageSize() returns a measurement expression that runs in the print
-// window via webContents.executeJavaScript(). These tests evaluate that real
-// expression against stub browser globals — the actual prefer/fallback logic,
-// not a string match — so the consumer branch (the part most likely to regress)
-// is pinned independently of the in-browser end-to-end repro.
-describe('inferPageSize', () => {
-  type BrowserGlobals = { __odPrintSize: unknown };
-  type StubDocument = {
-    documentElement: Record<string, number>;
-    body: Record<string, number> | null;
-  };
-
-  function windowMeasuring(printSize: unknown, browserDocument: StubDocument) {
-    return {
-      webContents: {
-        async executeJavaScript(script: string, _userGesture?: boolean) {
-          const browserWindow: BrowserGlobals = { __odPrintSize: printSize };
-          const evaluate = new Function('window', 'document', `return ${script};`);
-          return evaluate(browserWindow, browserDocument) as unknown;
-        },
-      },
-    };
-  }
-
-  // A wrapper-viewport-sized document: what direct measurement would yield for
-  // the sandboxed-preview path. If the fix regressed, the reported size would be
-  // ignored and the page would collapse to this 900px-tall viewport.
-  const wrapperViewportDocument: StubDocument = {
-    documentElement: { scrollWidth: 1440, clientWidth: 1440, scrollHeight: 900, clientHeight: 900 },
-    body: { scrollWidth: 1440, scrollHeight: 900 },
-  };
-
-  test('prefers the reported artifact content size over the wrapper viewport', async () => {
-    // 756x2600 is the artifact's true content size (taller than the 900px
-    // viewport); 96 CSS px per inch.
-    const window = windowMeasuring({ width: 756, height: 2600 }, wrapperViewportDocument);
-
-    const size = await inferPageSize(window as Parameters<typeof inferPageSize>[0]);
-
-    expect(size.width).toBeCloseTo(756 / 96);
-    expect(size.height).toBeCloseTo(2600 / 96);
-  });
-
-  test('falls back to direct measurement when no size was reported (daemon path)', async () => {
-    const directDocument: StubDocument = {
-      documentElement: { scrollWidth: 1200, clientWidth: 1000, scrollHeight: 3000, clientHeight: 900 },
-      body: { scrollWidth: 1200, scrollHeight: 3000 },
-    };
-    const window = windowMeasuring(null, directDocument);
-
-    const size = await inferPageSize(window as Parameters<typeof inferPageSize>[0]);
-
-    // width floors at 1440; height takes the 3000px content scroll height.
-    expect(size.width).toBeCloseTo(1440 / 96);
-    expect(size.height).toBeCloseTo(3000 / 96);
-  });
-
-  test('ignores a malformed reported size and falls back to direct measurement', async () => {
-    // A non-positive width must not poison the page size — the guard rejects it
-    // and direct measurement of the wrapper viewport is used instead.
-    const window = windowMeasuring({ width: 0, height: 2600 }, wrapperViewportDocument);
-
-    const size = await inferPageSize(window as Parameters<typeof inferPageSize>[0]);
-
-    expect(size.width).toBeCloseTo(1440 / 96);
-    expect(size.height).toBeCloseTo(900 / 96);
-  });
-
-  test('rejects a non-finite reported dimension so the finite half cannot leak through (#4067 follow-up)', async () => {
-    // `Infinity > 0` is true, so the original `typeof === 'number' && > 0` guard
-    // let `{ width: 756, height: Infinity }` slip past: inferPageSize() kept the
-    // 756px reported width and only dropped the non-finite height back to 900px,
-    // sizing the page to a Frankenstein 756x900 that can still clip. A non-finite
-    // dimension must reject the *whole* reported size so direct measurement of
-    // the wrapper viewport (1440 wide) is used instead.
-    const window = windowMeasuring({ width: 756, height: Infinity }, wrapperViewportDocument);
-
-    const size = await inferPageSize(window as Parameters<typeof inferPageSize>[0]);
-
-    expect(size.width).toBeCloseTo(1440 / 96);
-    expect(size.height).toBeCloseTo(900 / 96);
-  });
-});
-
 describe('pdfFilenameFromDocument', () => {
   test('derives the filename from the document <title>', () => {
     expect(
@@ -303,6 +213,77 @@ describe('pdfFilenameFromDocument', () => {
       'artifact.pdf',
     );
     expect(pdfFilenameFromDocument('<title>   </title>')).toBe('artifact.pdf');
+  });
+});
+
+describe('loadDesktopPdfDocument', () => {
+  test('loads the daemon raw URL and injects print chrome when sourceUrl is available', async () => {
+    const loadedUrls: string[] = [];
+    const scripts: string[] = [];
+    const css: string[] = [];
+    const window = {
+      async loadURL(url: string) {
+        loadedUrls.push(url);
+      },
+      webContents: {
+        async executeJavaScript(script: string) {
+          scripts.push(script);
+          return true;
+        },
+        async insertCSS(value: string) {
+          css.push(value);
+          return 'css-key';
+        },
+      },
+    };
+
+    await loadDesktopPdfDocument(window as unknown as Parameters<typeof loadDesktopPdfDocument>[0], {
+      baseHref: 'http://127.0.0.1:7456/api/projects/proj/raw/deck/',
+      deck: true,
+      defaultFilename: 'Styled.pdf',
+      html: '<!doctype html><section class="slide">Fallback</section>',
+      sourceUrl: 'http://127.0.0.1:7456/api/projects/proj/raw/deck/index.html',
+      title: 'Styled',
+    });
+
+    expect(loadedUrls).toEqual(['http://127.0.0.1:7456/api/projects/proj/raw/deck/index.html']);
+    expect(scripts).toEqual(['document.title = "Styled"; true;']);
+    expect(css).toHaveLength(1);
+    expect(css[0]).toContain('@media print');
+    expect(css[0]).toContain('.slide');
+  });
+
+  test('falls back to the printable HTML data URL if sourceUrl loading fails', async () => {
+    const loadedUrls: string[] = [];
+    const window = {
+      async loadURL(url: string) {
+        loadedUrls.push(url);
+        if (loadedUrls.length === 1) throw new Error('raw URL unavailable');
+      },
+      webContents: {
+        async executeJavaScript() {
+          return true;
+        },
+        async insertCSS() {
+          return 'css-key';
+        },
+      },
+    };
+
+    await loadDesktopPdfDocument(window as unknown as Parameters<typeof loadDesktopPdfDocument>[0], {
+      baseHref: 'http://127.0.0.1:7456/api/projects/proj/raw/deck/',
+      deck: false,
+      defaultFilename: 'Fallback.pdf',
+      html: '<!doctype html><main>Fallback</main>',
+      sourceUrl: 'http://127.0.0.1:7456/api/projects/proj/raw/deck/index.html',
+      title: 'Fallback',
+    });
+
+    expect(loadedUrls[0]).toBe('http://127.0.0.1:7456/api/projects/proj/raw/deck/index.html');
+    expect(loadedUrls[1]).toMatch(/^data:text\/html;charset=utf-8,/);
+    expect(decodeURIComponent(loadedUrls[1]!.replace(/^data:text\/html;charset=utf-8,/, ''))).toContain(
+      '<main>Fallback</main>',
+    );
   });
 });
 

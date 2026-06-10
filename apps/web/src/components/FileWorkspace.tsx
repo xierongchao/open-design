@@ -27,6 +27,7 @@ import {
   projectRawUrl,
   createProjectFolder,
   deleteProjectFolder,
+  renameProjectFolder,
   renameProjectFile,
   updateDesignSystemDraft,
   type UploadProjectFilesResult,
@@ -140,8 +141,6 @@ interface Props {
   ) => Promise<{ message?: string; url?: string } | void> | { message?: string; url?: string } | void;
   activePluginActionPaths?: Set<string>;
   hiddenPluginActionPaths?: Set<string>;
-  preferredPreviewFile?: string | null;
-  autoPreviewDesignArtifacts?: boolean;
   focusMode?: boolean;
   onFocusModeChange?: (next: boolean) => void;
   designSystemProject?: DesignSystemSummary | null;
@@ -196,6 +195,8 @@ interface Props {
   onLaunchTerminalAuth?: () => void;
   // Conversation id for the AMR promotion-card telemetry payload.
   conversationId?: string | null;
+  onBack?: () => void;
+  backLabel?: string;
   // Project-level actions (settings, handoff, avatar menu) rendered at the
   // right end of the Design Files tab row. The former standalone chrome header
   // row was removed; these moved here alongside the FileViewer present/Share
@@ -395,8 +396,6 @@ export function FileWorkspace({
   onPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
-  preferredPreviewFile = null,
-  autoPreviewDesignArtifacts = false,
   focusMode = false,
   onFocusModeChange,
   designSystemProject = null,
@@ -427,6 +426,8 @@ export function FileWorkspace({
   onEditModeChange,
   messages = [],
   conversationId,
+  onBack,
+  backLabel,
   headerActions,
   questionForm = null,
   questionFormPreview = null,
@@ -1322,6 +1323,160 @@ export function FileWorkspace({
     return renamed;
   }
 
+  async function handleCreateFolder(path: string): Promise<ProjectFolder | null> {
+    const folder = await createProjectFolder(projectId, path);
+    await refreshProjectFolders();
+    return folder;
+  }
+
+  async function handleDeleteFolder(folderPath: string): Promise<boolean> {
+    const ok = await deleteProjectFolder(projectId, folderPath);
+    if (!ok) return false;
+
+    await onRefreshFiles();
+    await refreshProjectFolders();
+
+    const prefix = `${folderPath}/`;
+    const nextTabs = persistedTabs.filter((name) => !name.startsWith(prefix));
+    const activeWasDeleted = typeof tabsState.active === 'string' && tabsState.active.startsWith(prefix);
+    const nextActive = activeWasDeleted ? DESIGN_FILES_TAB : tabsState.active;
+    onTabsStateChange(workspaceTabsState(nextTabs, nextActive));
+    if (typeof activeTab === 'string' && activeTab.startsWith(prefix)) {
+      setActiveTab(DESIGN_FILES_TAB);
+    }
+    setSketches((curr) => {
+      let changed = false;
+      const next = { ...curr };
+      for (const name of Object.keys(next)) {
+        if (name.startsWith(prefix)) {
+          delete next[name];
+          changed = true;
+        }
+      }
+      return changed ? next : curr;
+    });
+
+    return true;
+  }
+
+  async function handleRenameFolder(fromPath: string, toPath: string): Promise<ProjectFolder | null> {
+    const result = await renameProjectFolder(projectId, fromPath, toPath);
+    if (!result) return null;
+
+    const oldPrefix = `${fromPath}/`;
+    const newPrefix = `${result.folder.path}/`;
+    const renamed = visibleFiles
+      .filter((file) => file.name.startsWith(oldPrefix))
+      .map((file) => ({
+        oldName: file.name,
+        newName: `${newPrefix}${file.name.slice(oldPrefix.length)}`,
+      }));
+
+    try {
+      if (renamed.length > 0) {
+        await rewriteMovedProjectTextReferences(projectId, visibleFiles, renamed);
+      }
+    } finally {
+      await onRefreshFiles();
+      await refreshProjectFolders();
+
+      const renamePath = (name: string) =>
+        name.startsWith(oldPrefix) ? `${newPrefix}${name.slice(oldPrefix.length)}` : name;
+      const nextTabs = persistedTabs.map(renamePath);
+      const nextActive =
+        tabsState.active && tabsState.active.startsWith(oldPrefix)
+          ? renamePath(tabsState.active)
+          : tabsState.active;
+      onTabsStateChange(workspaceTabsState(nextTabs, nextActive));
+      if (activeTab && activeTab.startsWith(oldPrefix)) {
+        setActiveTab(renamePath(activeTab));
+      }
+
+      setSketches((curr) => {
+        let changed = false;
+        const next = { ...curr };
+        for (const name of Object.keys(curr)) {
+          if (!name.startsWith(oldPrefix)) continue;
+          const entry = next[name];
+          if (!entry) continue;
+          delete next[name];
+          next[renamePath(name)] = entry;
+          changed = true;
+        }
+        return changed ? next : curr;
+      });
+    }
+
+    return result.folder;
+  }
+
+  async function handleMoveFiles(names: string[], targetDir: string): Promise<void> {
+    const moves = [...new Set(names)]
+      .map((oldName) => {
+        const basename = basenameForWorkspacePath(oldName);
+        const nextName = targetDir ? `${targetDir}/${basename}` : basename;
+        return { oldName, newName: nextName };
+      })
+      .filter(({ oldName, newName }) => oldName !== newName);
+
+    if (moves.length === 0) return;
+
+    for (const { oldName, newName } of moves) {
+      const hasPendingSketchConflict = Object.entries(sketches).some(
+        ([name, sketch]) => !sketch.persisted && !sameFileName(name, oldName) && sameFileName(name, newName),
+      );
+      if (hasPendingSketchConflict) {
+        throw new Error(
+          `A pending sketch named "${newName}" is already open. Save or close it before moving files.`,
+        );
+      }
+
+      const hasFileConflict = visibleFiles.some(
+        (file) => !sameFileName(file.name, oldName) && sameFileName(file.name, newName),
+      );
+      if (hasFileConflict) {
+        throw new Error(`A file named "${newName}" already exists.`);
+      }
+    }
+
+    const renamed: Array<{ oldName: string; newName: string }> = [];
+    try {
+      for (const { oldName, newName } of moves) {
+        const result = await renameProjectFile(projectId, oldName, newName);
+        renamed.push({ oldName, newName: result.file.name });
+      }
+      if (renamed.length > 0) {
+        await rewriteMovedProjectTextReferences(projectId, visibleFiles, renamed);
+      }
+    } finally {
+      if (renamed.length > 0) {
+        await onRefreshFiles();
+        await refreshProjectFolders();
+
+        const renameMap = new Map(renamed.map(({ oldName, newName }) => [oldName, newName]));
+        const nextTabs = persistedTabs.map((name) => renameMap.get(name) ?? name);
+        const nextActive = tabsState.active ? renameMap.get(tabsState.active) ?? tabsState.active : tabsState.active;
+        onTabsStateChange(workspaceTabsState(nextTabs, nextActive));
+        if (activeTab && renameMap.has(activeTab)) {
+          setActiveTab(renameMap.get(activeTab)!);
+        }
+
+        setSketches((curr) => {
+          let changed = false;
+          const next = { ...curr };
+          for (const { oldName, newName } of renamed) {
+            const entry = next[oldName];
+            if (!entry) continue;
+            delete next[oldName];
+            next[newName] = entry;
+            changed = true;
+          }
+          return changed ? next : curr;
+        });
+      }
+    }
+  }
+
   function startNewSketch() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const base = `sketch-${stamp}.sketch.json`;
@@ -1796,19 +1951,18 @@ export function FileWorkspace({
       data-testid="file-workspace"
     >
       <div className="ws-tabs-shell">
-        {onFocusModeChange && focusMode ? (
+        {onBack ? (
           <button
             type="button"
-            className="icon-only ws-focus-expand od-tooltip"
-            data-testid="workspace-focus-toggle"
-            aria-pressed={focusMode}
-            title={t('workspace.showChat')}
-            data-tooltip={t('workspace.showChat')}
+            className="icon-only ws-project-back od-tooltip"
+            data-testid="workspace-project-back"
+            title={backLabel ?? 'Back'}
+            data-tooltip={backLabel ?? 'Back'}
             data-tooltip-placement="bottom"
-            aria-label={t('workspace.showChat')}
-            onClick={() => onFocusModeChange(false)}
+            aria-label={backLabel ?? 'Back'}
+            onClick={onBack}
           >
-            <Icon name="chevron-right" size={15} />
+            <Icon name="arrow-left" size={15} />
           </button>
         ) : null}
         <div
@@ -2021,6 +2175,21 @@ export function FileWorkspace({
             <div className="ws-tabs-project-actions">{headerActions}</div>
           ) : null}
         </div>
+        {onFocusModeChange && focusMode ? (
+          <button
+            type="button"
+            className="icon-only ws-focus-expand od-tooltip"
+            data-testid="workspace-focus-toggle"
+            aria-pressed={focusMode}
+            title={t('workspace.showChat')}
+            data-tooltip={t('workspace.showChat')}
+            data-tooltip-placement="bottom"
+            aria-label={t('workspace.showChat')}
+            onClick={() => onFocusModeChange(false)}
+          >
+            <Icon name="comment" size={15} />
+          </button>
+        ) : null}
       </div>
       {launcherOpen ? (
         <TabLauncherMenu
@@ -2158,6 +2327,10 @@ export function FileWorkspace({
               });
               return handleDeleteMany(names);
             }}
+            onCreateFolder={handleCreateFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onRenameFolder={handleRenameFolder}
+            onMoveFiles={handleMoveFiles}
             onUpload={() => {
               trackFileManagerClick(analytics.track, {
                 page_name: 'file_manager',
@@ -2185,8 +2358,6 @@ export function FileWorkspace({
             }}
             uploadError={uploadError}
             onClearUploadError={() => setUploadError(null)}
-            preferredPreviewFile={preferredPreviewFile}
-            autoPreviewDesignArtifacts={autoPreviewDesignArtifacts}
             onPluginFolderAgentAction={onPluginFolderAgentAction}
             activePluginActionPaths={activePluginActionPaths}
             hiddenPluginActionPaths={hiddenPluginActionPaths}
@@ -4388,8 +4559,207 @@ function isSketchName(name: string): boolean {
   return isSketchJsonFileName(name);
 }
 
+const HTML_URL_ATTRIBUTE_PATTERN = /(\b(?:href|src|poster|data|action)\s*=\s*)(["'])(.*?)\2/giu;
+const HTML_SRCSET_ATTRIBUTE_PATTERN = /(\bsrcset\s*=\s*)(["'])(.*?)\2/giu;
+const HTML_STYLE_ATTRIBUTE_PATTERN = /(\bstyle\s*=\s*)(["'])(.*?)\2/giu;
+const HTML_STYLE_TAG_PATTERN = /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/giu;
+const CSS_URL_PATTERN = /url\(\s*(?:(["'])(.*?)\1|([^'")]*))\s*\)/giu;
+const STYLESHEET_PATH_PATTERN = /\.(?:css|scss|sass|less)$/iu;
+
+interface ReferenceRewriteContext {
+  oldOwnerName: string;
+  newOwnerName: string;
+  moveMap: Map<string, string>;
+}
+
+async function rewriteMovedProjectTextReferences(
+  projectId: string,
+  files: ProjectFile[],
+  renamed: Array<{ oldName: string; newName: string }>,
+): Promise<void> {
+  const moveMap = new Map(renamed.map(({ oldName, newName }) => [oldName, newName] as const));
+  const candidates = textReferenceRewriteCandidates(files, moveMap);
+  for (const candidate of candidates) {
+    const text = await fetchProjectFileText(projectId, candidate.newName, { cache: 'no-store' });
+    if (text == null) continue;
+    const next = rewriteProjectTextReferences(text, {
+      oldOwnerName: candidate.oldName,
+      newOwnerName: candidate.newName,
+      moveMap,
+    });
+    if (next === text) continue;
+    const saved = await writeProjectTextFile(projectId, candidate.newName, next);
+    if (!saved) {
+      throw new Error(`Moved files, but could not update references in "${candidate.newName}".`);
+    }
+  }
+}
+
+function textReferenceRewriteCandidates(
+  files: ProjectFile[],
+  moveMap: Map<string, string>,
+): Array<{ oldName: string; newName: string }> {
+  const byNewName = new Map<string, { oldName: string; newName: string }>();
+  for (const file of files) {
+    const newName = moveMap.get(file.name) ?? file.name;
+    if (!isHtmlProjectPath(newName) && !isStylesheetProjectPath(newName)) continue;
+    byNewName.set(newName, { oldName: file.name, newName });
+  }
+  return [...byNewName.values()];
+}
+
+function rewriteProjectTextReferences(text: string, context: ReferenceRewriteContext): string {
+  if (isHtmlProjectPath(context.newOwnerName)) {
+    return rewriteHtmlProjectReferences(text, context);
+  }
+  if (isStylesheetProjectPath(context.newOwnerName)) {
+    return rewriteCssProjectReferences(text, context);
+  }
+  return text;
+}
+
+function rewriteHtmlProjectReferences(html: string, context: ReferenceRewriteContext): string {
+  return html
+    .replace(HTML_URL_ATTRIBUTE_PATTERN, (match, prefix: string, quote: string, value: string) => {
+      const rewritten = rewriteSingleProjectReference(value, context);
+      return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
+    })
+    .replace(HTML_SRCSET_ATTRIBUTE_PATTERN, (match, prefix: string, quote: string, value: string) => {
+      const rewritten = rewriteSrcsetProjectReferences(value, context);
+      return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
+    })
+    .replace(HTML_STYLE_ATTRIBUTE_PATTERN, (match, prefix: string, quote: string, value: string) => {
+      const rewritten = rewriteCssProjectReferences(value, context);
+      return rewritten === value ? match : `${prefix}${quote}${rewritten}${quote}`;
+    })
+    .replace(HTML_STYLE_TAG_PATTERN, (_match, open: string, css: string, close: string) => {
+      return `${open}${rewriteCssProjectReferences(css, context)}${close}`;
+    });
+}
+
+function rewriteCssProjectReferences(css: string, context: ReferenceRewriteContext): string {
+  return css.replace(CSS_URL_PATTERN, (match, quote: string | undefined, quotedValue: string | undefined, bareValue: string | undefined) => {
+    const value = quotedValue ?? bareValue ?? '';
+    const rewritten = rewriteSingleProjectReference(value, context);
+    if (rewritten === value) return match;
+    return quote ? `url(${quote}${rewritten}${quote})` : `url(${rewritten})`;
+  });
+}
+
+function rewriteSrcsetProjectReferences(value: string, context: ReferenceRewriteContext): string {
+  if (/^\s*data:/iu.test(value)) return value;
+  return value.split(',').map((candidate) => {
+    const leading = candidate.match(/^\s*/u)?.[0] ?? '';
+    const trailing = candidate.match(/\s*$/u)?.[0] ?? '';
+    const body = candidate.trim();
+    if (!body) return candidate;
+    const [url = '', ...descriptors] = body.split(/\s+/u);
+    const rewrittenUrl = rewriteSingleProjectReference(url, context);
+    if (rewrittenUrl === url) return candidate;
+    return `${leading}${[rewrittenUrl, ...descriptors].join(' ')}${trailing}`;
+  }).join(',');
+}
+
+function rewriteSingleProjectReference(value: string, context: ReferenceRewriteContext): string {
+  const parts = splitProjectReference(value);
+  if (!parts) return value;
+
+  const oldTarget = resolveWorkspaceReference(context.oldOwnerName, parts.path);
+  if (!oldTarget) return value;
+  const movedTarget = context.moveMap.get(oldTarget) ?? context.moveMap.get(decodeWorkspacePath(oldTarget));
+  const ownerMoved = context.oldOwnerName !== context.newOwnerName;
+  if (!ownerMoved && !movedTarget) return value;
+
+  const nextTarget = movedTarget ?? oldTarget;
+  return `${relativeWorkspaceReference(context.newOwnerName, nextTarget)}${parts.suffix}`;
+}
+
+function splitProjectReference(value: string): { path: string; suffix: string } | null {
+  const trimmed = value.trim();
+  if (
+    !trimmed ||
+    trimmed.startsWith('#') ||
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('//') ||
+    /^[a-z][a-z0-9+.-]*:/iu.test(trimmed) ||
+    trimmed.includes('{{') ||
+    trimmed.includes('${') ||
+    trimmed.includes('<%')
+  ) {
+    return null;
+  }
+
+  const queryIndex = trimmed.indexOf('?');
+  const hashIndex = trimmed.indexOf('#');
+  const suffixIndex =
+    queryIndex === -1 ? hashIndex : hashIndex === -1 ? queryIndex : Math.min(queryIndex, hashIndex);
+  const path = suffixIndex === -1 ? trimmed : trimmed.slice(0, suffixIndex);
+  if (!path) return null;
+  return {
+    path,
+    suffix: suffixIndex === -1 ? '' : trimmed.slice(suffixIndex),
+  };
+}
+
+function resolveWorkspaceReference(ownerName: string, referencePath: string): string | null {
+  const ownerDir = dirnameForWorkspacePath(ownerName);
+  return normalizeWorkspacePath(ownerDir ? `${ownerDir}/${referencePath}` : referencePath);
+}
+
+function relativeWorkspaceReference(ownerName: string, targetName: string): string {
+  const fromParts = dirnameForWorkspacePath(ownerName).split('/').filter(Boolean);
+  const targetParts = targetName.split('/').filter(Boolean);
+  let shared = 0;
+  while (shared < fromParts.length && shared < targetParts.length && fromParts[shared] === targetParts[shared]) {
+    shared += 1;
+  }
+  const up = fromParts.slice(shared).map(() => '..');
+  const down = targetParts.slice(shared);
+  return [...up, ...down].join('/') || basenameForWorkspacePath(targetName);
+}
+
+function normalizeWorkspacePath(path: string): string | null {
+  const parts: string[] = [];
+  for (const part of path.replace(/\\/gu, '/').split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (parts.length === 0) return null;
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join('/');
+}
+
+function decodeWorkspacePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+function dirnameForWorkspacePath(name: string): string {
+  const slash = name.lastIndexOf('/');
+  return slash >= 0 ? name.slice(0, slash) : '';
+}
+
+function isHtmlProjectPath(name: string): boolean {
+  return /\.html?$/iu.test(name);
+}
+
+function isStylesheetProjectPath(name: string): boolean {
+  return STYLESHEET_PATH_PATTERN.test(name);
+}
+
 function sameFileName(a: string, b: string): boolean {
   return a === b || a.toLocaleLowerCase() === b.toLocaleLowerCase();
+}
+
+function basenameForWorkspacePath(name: string): string {
+  const slash = name.lastIndexOf('/');
+  return slash >= 0 ? name.slice(slash + 1) : name;
 }
 
 function isLiveArtifactImplementationPath(name: string): boolean {

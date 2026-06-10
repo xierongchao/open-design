@@ -29,6 +29,9 @@
   justify-content: center;
   flex: 0 0 auto;
 }
+.chat-project-collapse {
+  margin-inline-start: 2px;
+}
 .chat-project-back:hover {
   background: var(--bg-subtle);
   color: var(--text);
@@ -103,8 +106,8 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  margin-inline-start: 2px;
-  padding-inline-start: 6px;
+  margin-inline-start: 0;
+  padding-inline-start: 0;
 }
 .chat-session-trigger {
   width: 28px;

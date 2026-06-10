@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
+import { detectOpenDesignHostClientType } from '@open-design/host';
 import { EditableCodeViewer } from './EditableCodeViewer';
 import {
   buildSocialSharePayload,
@@ -221,6 +222,42 @@ function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
   if (viewport === 'mobile') return 'smartphone-line';
   return 'computer-line';
+}
+
+const PREVIEW_IFRAME_SANDBOX = 'allow-scripts allow-downloads';
+const PREVIEW_IFRAME_POPUP_SANDBOX = 'allow-scripts allow-popups allow-downloads';
+
+type DesktopPreviewWindow = Window & typeof globalThis & {
+  openDesignDesktop?: unknown;
+};
+
+function isDesktopPreviewHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  const hostWindow = window as DesktopPreviewWindow;
+  return detectOpenDesignHostClientType() === 'desktop' || hostWindow.openDesignDesktop != null;
+}
+
+const EXPORT_CAPTURE_ROOT_CLASS = 'od-export-capture-active';
+
+async function withExportCaptureIsolation<T>(capture: () => Promise<T>): Promise<T> {
+  if (typeof document === 'undefined') return capture();
+  const root = document.documentElement;
+  const hadClass = root.classList.contains(EXPORT_CAPTURE_ROOT_CLASS);
+  root.classList.add(EXPORT_CAPTURE_ROOT_CLASS);
+  try {
+    await waitForAnimationFrame();
+    await waitForAnimationFrame();
+    return await capture();
+  } finally {
+    if (!hadClass) root.classList.remove(EXPORT_CAPTURE_ROOT_CLASS);
+  }
+}
+
+function previewIframeSandbox(base = PREVIEW_IFRAME_SANDBOX): string {
+  // Electron fails to paint opaque-origin sandbox iframes in some preview
+  // paths. Keep the tighter web sandbox, and only add same-origin access for
+  // the desktop host where the compositor regression appears.
+  return isDesktopPreviewHost() ? `${base} allow-same-origin` : base;
 }
 
 function waitForAnimationFrame(): Promise<void> {
@@ -816,48 +853,50 @@ export function LiveArtifactViewer({
       {((node: ReactNode) => (
         chromeActionsHost ? createPortal(node, chromeActionsHost) : node
       ))(
-        <div className="present-wrap chrome-present-wrap" ref={presentWrapRef}>
+        <>
           <button
-            className="chrome-action chrome-action-secondary chrome-action-icon present-trigger od-tooltip"
-            aria-haspopup="menu"
-            aria-expanded={presentMenuOpen}
-            aria-label={t('fileViewer.present')}
-            data-tooltip={t('fileViewer.present')}
+            type="button"
+            className="chrome-action chrome-action-secondary chrome-action-icon od-tooltip"
+            aria-label={t('fileViewer.presentInTab')}
+            data-tooltip={t('fileViewer.presentInTab')}
             data-tooltip-placement="bottom"
-            title={t('fileViewer.present')}
-            onClick={() => setPresentMenuOpen((v) => !v)}
+            title={t('fileViewer.presentInTab')}
+            onClick={presentInThisTab}
           >
-            <RemixIcon name="slideshow-3-line" size={15} />
+            <RemixIcon name="fullscreen-line" size={15} />
           </button>
-          {presentMenuOpen ? (
-            <div className="present-menu" role="menu">
-              <button role="menuitem" onClick={presentInThisTab}>
-                <span className="present-icon"><RemixIcon name="eye-line" size={14} /></span>{' '}
-                {t('fileViewer.presentInTab')}
-              </button>
-              <button role="menuitem" onClick={presentFullscreen}>
-                <span className="present-icon"><RemixIcon name="play-line" size={14} /></span>{' '}
-                {t('fileViewer.presentFullscreen')}
-              </button>
-              <button role="menuitem" onClick={presentNewTab}>
-                <span className="present-icon"><RemixIcon name="share-forward-line" size={14} /></span>{' '}
-                {t('fileViewer.presentNewTab')}
-              </button>
-            </div>
-          ) : null}
-        </div>
+          <div className="present-wrap chrome-present-wrap" ref={presentWrapRef}>
+            <button
+              className="chrome-action chrome-action-secondary chrome-action-icon present-trigger od-tooltip"
+              aria-haspopup="menu"
+              aria-expanded={presentMenuOpen}
+              aria-label={t('fileViewer.present')}
+              data-tooltip={t('fileViewer.present')}
+              data-tooltip-placement="bottom"
+              title={t('fileViewer.present')}
+              onClick={() => setPresentMenuOpen((v) => !v)}
+            >
+              <RemixIcon name="slideshow-3-line" size={15} />
+            </button>
+            {presentMenuOpen ? (
+              <div className="present-menu" role="menu">
+                <button role="menuitem" onClick={presentInThisTab}>
+                  <span className="present-icon"><RemixIcon name="eye-line" size={14} /></span>{' '}
+                  {t('fileViewer.presentInTab')}
+                </button>
+                <button role="menuitem" onClick={presentFullscreen}>
+                  <span className="present-icon"><RemixIcon name="play-line" size={14} /></span>{' '}
+                  {t('fileViewer.presentFullscreen')}
+                </button>
+                <button role="menuitem" onClick={presentNewTab}>
+                  <span className="present-icon"><RemixIcon name="share-forward-line" size={14} /></span>{' '}
+                  {t('fileViewer.presentNewTab')}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </>
       )}
-      {inTabPresent ? (
-        <button
-          type="button"
-          className="present-exit-btn"
-          onClick={() => setInTabPresent(false)}
-          title={t('common.exitFullscreen')}
-          aria-label={t('common.exitFullscreen')}
-        >
-          <Icon name="close" size={14} />
-        </button>
-      ) : null}
       <div className="viewer-toolbar">
         <div className="viewer-toolbar-left">
             <button
@@ -1006,7 +1045,7 @@ export function LiveArtifactViewer({
                   ref={iframeRef}
                   data-testid="live-artifact-preview-frame"
                   title={liveArtifact.title}
-                  sandbox="allow-scripts allow-popups allow-downloads"
+                  sandbox={previewIframeSandbox(PREVIEW_IFRAME_POPUP_SANDBOX)}
                   src={previewUrl}
                 />
               </PreviewDrawOverlay>
@@ -3776,7 +3815,7 @@ function ReactComponentViewer({
             <iframe
               data-testid="react-component-preview-frame"
               title={file.name}
-              sandbox="allow-scripts allow-downloads"
+              sandbox={previewIframeSandbox()}
               srcDoc={srcDoc}
               style={{ width: '100%', height: '100%', border: 0 }}
             />
@@ -4055,6 +4094,8 @@ function HtmlViewer({
   const [mode, setMode] = useState<'preview' | 'source'>('preview');
   const [source, setSource] = useState<string | null>(liveHtml ?? null);
   const [inlinedSource, setInlinedSource] = useState<string | null>(null);
+  const [codeDirty, setCodeDirty] = useState(false);
+  const codeSavedSourceRef = useRef<string | null>(null);
   const [zoom, setZoom] = useState(100);
   const zoomRef = useRef(100);
   const fileViewportKey = previewViewportStateKey(projectId, file);
@@ -4334,6 +4375,7 @@ function HtmlViewer({
   const manualEditUndoneRef = useRef(manualEditUndone);
   manualEditHistoryRef.current = manualEditHistory;
   manualEditUndoneRef.current = manualEditUndone;
+  const manualEditHistoryCacheRef = useRef<Map<string, { history: ManualEditHistoryEntry[]; undone: ManualEditHistoryEntry[] }>>(new Map());
   const manualEditFlushAfterSaveRef = useRef(false);
   const manualEditPendingStyleRef = useRef<ManualEditPendingStyleSave | null>(null);
   const manualEditStyleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -5139,6 +5181,14 @@ function HtmlViewer({
   }, [inspectMode, boardMode, file.name, isOurPreviewIframeSource]);
 
   useEffect(() => {
+    // Save current file's history to cache before switching
+    const prevKey = sourceFileKeyRef.current;
+    if (prevKey) {
+      manualEditHistoryCacheRef.current.set(prevKey, {
+        history: manualEditHistoryRef.current,
+        undone: manualEditUndoneRef.current,
+      });
+    }
     setActiveCommentTarget(null);
     setHoveredCommentTarget(null);
     setLiveCommentTargets(new Map());
@@ -5157,8 +5207,11 @@ function HtmlViewer({
     setManualEditPanelPosition(null);
     selectedManualEditTargetIdRef.current = null;
     setManualEditDraft(emptyManualEditDraft());
-    setManualEditHistory([]);
-    setManualEditUndone([]);
+    // Restore cached history for the new file, or clear if none
+    const newKey = `${projectId}\0${file.name}\0${liveHtml === undefined ? 'raw' : 'live'}`;
+    const cached = manualEditHistoryCacheRef.current.get(newKey);
+    setManualEditHistory(cached?.history ?? []);
+    setManualEditUndone(cached?.undone ?? []);
     setManualEditError(null);
     manualEditFlushAfterSaveRef.current = false;
     manualEditPendingStyleRef.current = null;
@@ -6817,7 +6870,26 @@ function HtmlViewer({
 
   function selectMode(nextMode: 'preview' | 'source') {
     if (nextMode === 'source') setDrawOverlayOpen(false);
+    if (nextMode !== mode && mode === 'source' && codeDirty) {
+      const proceed = window.confirm(t('fileViewer.codeUnsavedConfirm'));
+      if (!proceed) return;
+      setCodeDirty(false);
+      codeSavedSourceRef.current = source;
+    }
     setMode(nextMode);
+  }
+
+  async function handleCodeSave() {
+    const currentSource = sourceRef.current;
+    if (currentSource == null) return;
+    const saved = await writeProjectTextFile(projectId, file.name, currentSource, {
+      artifactManifest: file.artifactManifest,
+    });
+    if (saved) {
+      codeSavedSourceRef.current = currentSource;
+      setCodeDirty(false);
+      await onFileSaved?.();
+    }
   }
 
   function activateBoard(nextTool?: BoardTool) {
@@ -7208,8 +7280,10 @@ function HtmlViewer({
     // images) and is never tainted, so it cannot produce the black/blank frames
     // the in-iframe SVG-foreignObject bridge does. Works for both srcDoc and
     // URL-load previews. Falls through to the bridge on pure web (no host).
-    const visibleIframe = iframeRef.current ?? srcDocPreviewIframeRef.current;
-    const hostSnapshot = await captureHostIframeSnapshot(visibleIframe);
+    const visibleIframe = (
+      useUrlLoadPreview ? urlPreviewIframeRef.current : srcDocPreviewIframeRef.current
+    ) ?? iframeRef.current;
+    const hostSnapshot = await withExportCaptureIsolation(() => captureHostIframeSnapshot(visibleIframe));
     if (hostSnapshot) return hostSnapshot;
 
     if (!useUrlLoadPreview) {
@@ -7295,6 +7369,7 @@ function HtmlViewer({
     try {
       let dataUrl = imageExportSnapshotDataUrlRef.current;
       if (!dataUrl) {
+        await waitForAnimationFrame();
         const snap = await captureExportImageSnapshot();
         if (!snap) throw new Error('Snapshot capture returned null');
         dataUrl = snap.dataUrl;
@@ -7906,7 +7981,7 @@ function HtmlViewer({
                   selectMode(id);
                 }}
               >
-                {label}
+                {label}{id === 'source' && codeDirty ? <span className="viewer-tab-dirty" /> : null}
               </button>
             ))}
           </div>
@@ -8083,39 +8158,55 @@ function HtmlViewer({
         chromeActionsHost ? createPortal(filePrimaryActions, chromeActionsHost) : filePrimaryActions
       ))(<>
           {showPresent ? (
-            <div className="present-wrap chrome-present-wrap">
+            <>
               <button
-                className="chrome-action chrome-action-secondary chrome-action-icon present-trigger od-tooltip"
-                aria-haspopup="menu"
-                aria-expanded={presentMenuOpen}
-                aria-label={t('fileViewer.present')}
-                data-tooltip={t('fileViewer.present')}
+                type="button"
+                className="chrome-action chrome-action-secondary chrome-action-icon od-tooltip"
+                aria-label={t('fileViewer.presentInTab')}
+                data-tooltip={t('fileViewer.presentInTab')}
                 data-tooltip-placement="bottom"
-                title={t('fileViewer.present')}
+                title={t('fileViewer.presentInTab')}
                 onClick={() => {
-                  fireArtifactHeaderClick('present_dropdown');
-                  setPresentMenuOpen((v) => !v);
+                  firePresentPopoverClick('in_this_tab');
+                  presentInThisTab();
                 }}
               >
-                <RemixIcon name="slideshow-3-line" size={15} />
+                <RemixIcon name="fullscreen-line" size={15} />
               </button>
-              {presentMenuOpen ? (
-                <div className="present-menu" role="menu">
-                  <button role="menuitem" onClick={() => { firePresentPopoverClick('in_this_tab'); presentInThisTab(); }}>
-                    <span className="present-icon"><RemixIcon name="eye-line" size={14} /></span>{' '}
-                    {t('fileViewer.presentInTab')}
-                  </button>
-                  <button role="menuitem" onClick={() => { firePresentPopoverClick('fullscreen'); presentFullscreen(); }}>
-                    <span className="present-icon"><RemixIcon name="play-line" size={14} /></span>{' '}
-                    {t('fileViewer.presentFullscreen')}
-                  </button>
-                  <button role="menuitem" onClick={() => { firePresentPopoverClick('new_tab'); presentNewTab(); }}>
-                    <span className="present-icon"><RemixIcon name="share-forward-line" size={14} /></span>{' '}
-                    {t('fileViewer.presentNewTab')}
-                  </button>
-                </div>
-              ) : null}
-            </div>
+              <div className="present-wrap chrome-present-wrap">
+                <button
+                  className="chrome-action chrome-action-secondary chrome-action-icon present-trigger od-tooltip"
+                  aria-haspopup="menu"
+                  aria-expanded={presentMenuOpen}
+                  aria-label={t('fileViewer.present')}
+                  data-tooltip={t('fileViewer.present')}
+                  data-tooltip-placement="bottom"
+                  title={t('fileViewer.present')}
+                  onClick={() => {
+                    fireArtifactHeaderClick('present_dropdown');
+                    setPresentMenuOpen((v) => !v);
+                  }}
+                >
+                  <RemixIcon name="slideshow-3-line" size={15} />
+                </button>
+                {presentMenuOpen ? (
+                  <div className="present-menu" role="menu">
+                    <button role="menuitem" onClick={() => { firePresentPopoverClick('in_this_tab'); presentInThisTab(); }}>
+                      <span className="present-icon"><RemixIcon name="eye-line" size={14} /></span>{' '}
+                      {t('fileViewer.presentInTab')}
+                    </button>
+                    <button role="menuitem" onClick={() => { firePresentPopoverClick('fullscreen'); presentFullscreen(); }}>
+                      <span className="present-icon"><RemixIcon name="play-line" size={14} /></span>{' '}
+                      {t('fileViewer.presentFullscreen')}
+                    </button>
+                    <button role="menuitem" onClick={() => { firePresentPopoverClick('new_tab'); presentNewTab(); }}>
+                      <span className="present-icon"><RemixIcon name="share-forward-line" size={14} /></span>{' '}
+                      {t('fileViewer.presentNewTab')}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </>
           ) : null}
           {canShare || canDownload ? (
             <div className="chrome-file-action-menus" ref={shareRef}>
@@ -8280,7 +8371,10 @@ function HtmlViewer({
                       setDownloadMenuOpen(false);
                       fireShareExport('pdf', () => exportProjectAsPdf({
                         deck: effectiveDeck,
-                        fallbackPdf: () => exportAsPdf(source ?? '', exportTitle, { deck: effectiveDeck }),
+                        fallbackPdf: () => exportAsPdf(source ?? '', exportTitle, {
+                          baseHref: projectRawUrl(projectId, baseDirFor(file.name)),
+                          deck: effectiveDeck,
+                        }),
                         filePath: file.name,
                         projectId,
                         title: exportTitle,
@@ -8452,7 +8546,7 @@ function HtmlViewer({
                           aria-hidden={useUrlLoadPreview ? undefined : true}
                           tabIndex={useUrlLoadPreview ? 0 : -1}
                           title={file.name}
-                          sandbox="allow-scripts allow-downloads"
+                          sandbox={previewIframeSandbox()}
                           src={urlTransportSrc}
                           onLoad={() => {
                             const frame = urlPreviewIframeRef.current;
@@ -8477,7 +8571,7 @@ function HtmlViewer({
                           aria-hidden={useUrlLoadPreview ? undefined : true}
                           tabIndex={useUrlLoadPreview ? 0 : -1}
                           title={file.name}
-                          sandbox="allow-scripts allow-downloads"
+                          sandbox={previewIframeSandbox()}
                           src={urlTransportSrc}
                           onLoad={() => {
                             const frame = urlPreviewIframeRef.current;
@@ -8503,7 +8597,7 @@ function HtmlViewer({
                         aria-hidden={useUrlLoadPreview ? true : undefined}
                         tabIndex={useUrlLoadPreview ? -1 : 0}
                         title={file.name}
-                        sandbox="allow-scripts allow-downloads"
+                        sandbox={previewIframeSandbox()}
                         srcDoc={srcDocTransportContent}
                         onLoad={() => {
                           const frame = srcDocPreviewIframeRef.current;
@@ -8738,7 +8832,7 @@ function HtmlViewer({
             ) : null}
           </div>
         ) : source !== null ? (
-          <EditableCodeViewer text={source} onChange={setSource} />
+          <EditableCodeViewer text={source} onChange={setSource} onSave={handleCodeSave} onDirtyChange={setCodeDirty} />
         ) : (
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         )}
@@ -8747,26 +8841,19 @@ function HtmlViewer({
         <div
           className="present-overlay"
           role="dialog"
-          aria-label={t('fileViewer.exitPresentation')}
+          aria-label={t('fileViewer.present')}
         >
-          <button
-            className="present-exit"
-            onClick={() => setInTabPresent(false)}
-            aria-label={t('fileViewer.exitPresentation')}
-          >
-            <Icon name="close" size={13} /> {t('fileViewer.exitPresentation')}
-          </button>
           {useUrlLoadPreview ? (
             <iframe
               title="present"
-              sandbox="allow-scripts allow-downloads"
+              sandbox={previewIframeSandbox()}
               data-od-render-mode="url-load"
               src={activePreviewSrcUrl}
             />
           ) : (
             <iframe
               title="present"
-              sandbox="allow-scripts allow-downloads"
+              sandbox={previewIframeSandbox()}
               data-od-render-mode="srcdoc"
               srcDoc={srcDoc}
             />
