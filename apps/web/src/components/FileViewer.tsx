@@ -438,6 +438,8 @@ interface Props {
   onOpenFileReplacing?: (openName: string, closeName: string) => void;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
+  editPortalId?: string;
+  onEditSelectionChange?: (active: boolean) => void;
   // Bumped nonce asking this viewer to open its Share/Export menu (chat-side
   // "Share" next-step action). Only HTML artifacts expose a Share menu.
   shareRequest?: { nonce: number } | null;
@@ -445,6 +447,7 @@ interface Props {
   // send for this file just started processing).
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   onEditModeChange?: (active: boolean) => void;
+  defaultEditMode?: boolean;
 }
 
 export function FileViewer({
@@ -466,9 +469,12 @@ export function FileViewer({
   onOpenFileReplacing,
   commentPortalId,
   onCommentModeChange,
+  editPortalId,
+  onEditSelectionChange,
   shareRequest,
   slideNavRequest,
   onEditModeChange,
+  defaultEditMode = false,
 }: Props) {
   const rendererMatch = artifactRendererRegistry.resolve({
     file,
@@ -510,9 +516,12 @@ export function FileViewer({
         onFileSaved={onFileSaved}
         commentPortalId={commentPortalId}
         onCommentModeChange={onCommentModeChange}
+        editPortalId={editPortalId}
+        onEditSelectionChange={onEditSelectionChange}
         shareRequest={shareRequest}
         slideNavRequest={slideNavRequest}
         onEditModeChange={onEditModeChange}
+        defaultEditMode={defaultEditMode}
       />
     );
   }
@@ -3932,9 +3941,12 @@ function HtmlViewer({
   onFileSaved,
   commentPortalId,
   onCommentModeChange,
+  editPortalId,
+  onEditSelectionChange,
   shareRequest,
   slideNavRequest,
   onEditModeChange,
+  defaultEditMode = false,
 }: {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -3953,9 +3965,12 @@ function HtmlViewer({
   onFileSaved?: () => Promise<void> | void;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
+  editPortalId?: string;
+  onEditSelectionChange?: (active: boolean) => void;
   shareRequest?: { nonce: number } | null;
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   onEditModeChange?: (active: boolean) => void;
+  defaultEditMode?: boolean;
 }) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
@@ -4176,11 +4191,12 @@ function HtmlViewer({
   const MAX_MANUAL_EDIT_HISTORY = 500;
   // for hint managing hint box state
   const [openHintBox, setOpenHintBox] = useState(true);
-  const [manualEditMode, setManualEditModeRaw] = useState(false);
-  const [manualEditSrcDocActive, setManualEditSrcDocActive] = useState(false);
+  const [manualEditMode, setManualEditModeRaw] = useState(defaultEditMode);
+  const [manualEditSrcDocActive, setManualEditSrcDocActive] = useState(defaultEditMode);
   const [manualEditFrozenSource, setManualEditFrozenSource] = useState<string | null>(null);
   const [manualEditViewportWidth, setManualEditViewportWidth] = useState<number | null>(null);
   const [commentPortalHost, setCommentPortalHost] = useState<HTMLElement | null>(null);
+  const [manualEditPortalHost, setManualEditPortalHost] = useState<HTMLElement | null>(null);
   const [previewBodyRef, previewBodySize] = usePreviewCanvasSize<HTMLDivElement>();
   const manualEditCanvasRef = useRef<HTMLDivElement | null>(null);
   const [manualEditViewportTransform, setManualEditViewportTransform] = useState<ManualEditViewportTransform>({ x: 0, y: 0 });
@@ -4254,9 +4270,14 @@ function HtmlViewer({
     });
   }, []);
   useEffect(() => {
-    setManualEditSrcDocActive(false);
+    setManualEditSrcDocActive(defaultEditMode);
     setManualEditFrozenSource(null);
-  }, [projectId, file.name]);
+  }, [defaultEditMode, projectId, file.name]);
+  useEffect(() => {
+    if (!defaultEditMode || !manualEditMode || manualEditViewportWidth !== null) return;
+    const width = previewBodyRef.current?.clientWidth ?? 0;
+    if (width > 0) setManualEditViewportWidth(width);
+  }, [defaultEditMode, manualEditMode, manualEditViewportWidth, previewBodySize?.width]);
   useEffect(() => {
     onCommentModeChange?.(commentPanelOpen);
   }, [commentPanelOpen, onCommentModeChange]);
@@ -4269,6 +4290,26 @@ function HtmlViewer({
   useEffect(() => () => {
     onEditModeChange?.(false);
   }, [onEditModeChange]);
+  useEffect(() => {
+    if (!manualEditMode || !editPortalId) {
+      setManualEditPortalHost(null);
+      return;
+    }
+    let cancelled = false;
+    let raf = 0;
+    const findHost = () => {
+      if (cancelled) return;
+      const host = document.getElementById(editPortalId);
+      setManualEditPortalHost(host);
+      if (!host) raf = window.requestAnimationFrame(findHost);
+    };
+    findHost();
+    return () => {
+      cancelled = true;
+      if (raf) window.cancelAnimationFrame(raf);
+      setManualEditPortalHost(null);
+    };
+  }, [editPortalId, manualEditMode]);
   useEffect(() => {
     if (!commentPanelOpen || !commentPortalId) {
       setCommentPortalHost(null);
@@ -4359,6 +4400,12 @@ function HtmlViewer({
   const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([]);
   const [selectedManualEditTarget, setSelectedManualEditTarget] = useState<ManualEditTarget | null>(null);
   const [selectedManualEditTargets, setSelectedManualEditTargets] = useState<ManualEditTarget[]>([]);
+  useEffect(() => {
+    onEditSelectionChange?.(manualEditMode && Boolean(selectedManualEditTarget));
+  }, [manualEditMode, onEditSelectionChange, selectedManualEditTarget]);
+  useEffect(() => () => {
+    onEditSelectionChange?.(false);
+  }, [onEditSelectionChange]);
   const [manualEditHoverTarget, setManualEditHoverTarget] = useState<ManualEditTarget | null>(null);
   const [manualEditPageStylesOpen, setManualEditPageStylesOpen] = useState(false);
   const [manualEditPanelPosition, setManualEditPanelPosition] = useState<{ left: number; top: number } | null>(null);
@@ -7709,7 +7756,7 @@ function HtmlViewer({
     manualEditMode && !selectedManualEditTarget && manualEditPageStylesOpen;
   const manualEditPanelActive =
     manualEditMode && (!!selectedManualEditTarget || manualEditPageCardActive);
-  const manualEditPanel = manualEditPanelActive ? (
+  const manualEditPanelNode = manualEditPanelActive ? (
     <ManualEditPanel
       targets={manualEditTargets}
       selectedTarget={selectedManualEditTarget}
@@ -7769,6 +7816,12 @@ function HtmlViewer({
       }}
     />
   ) : null;
+  const manualEditPanel = manualEditPanelNode && manualEditPortalHost
+    ? createPortal(manualEditPanelNode, manualEditPortalHost)
+    : editPortalId
+      ? null
+      : manualEditPanelNode;
+  const manualEditPanelDockedInCanvas = manualEditPanelActive && !editPortalId;
   const manualEditUndoLimitNotification = manualEditUndoLimitToast ? (
     <Toast
       message={t('manualEdit.undoLimitReached')}
@@ -8082,7 +8135,7 @@ function HtmlViewer({
                 <RemixIcon name="mark-pen-line" size={15} />
               </button>
               <span className="viewer-toolbar-tool-divider" aria-hidden />
-              <button
+              {/* <button
                 className={`viewer-action viewer-action-icon od-tooltip${manualEditMode ? ' active' : ''}`}
                 type="button"
                 data-testid="manual-edit-mode-toggle"
@@ -8094,7 +8147,7 @@ function HtmlViewer({
                 onClick={activateManualEditTool}
               >
                 <RemixIcon name="edit-line" size={15} />
-              </button>
+              </button> */}
               <span className="viewer-toolbar-tool-divider" aria-hidden />
               <button
                 type="button"
@@ -8498,7 +8551,7 @@ function HtmlViewer({
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         ) : mode === 'preview' ? (
           <div
-            className={`${manualEditMode ? `manual-edit-workspace${manualEditPanelActive ? ' pp-dock-active' : ''}` : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
+            className={`${manualEditMode ? `manual-edit-workspace${manualEditPanelDockedInCanvas ? ' pp-dock-active' : ''}` : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
             data-testid={manualEditMode ? undefined : 'comment-preview-layout'}
             style={previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions)}
             onMouseLeave={manualEditMode ? clearManualEditHover : undefined}

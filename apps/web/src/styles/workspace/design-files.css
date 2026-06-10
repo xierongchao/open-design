@@ -1084,10 +1084,7 @@
   min-height: 0;
 }
 
-.df-inline-preview .viewer-toolbar {
-  overflow-x: auto;
-  overflow-y: hidden;
-}
+
 
 .df-file-table-head {
   flex: 0 0 auto;

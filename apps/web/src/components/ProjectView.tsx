@@ -868,11 +868,26 @@ export function ProjectView({
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
   const [workspaceFocused, setWorkspaceFocused] = useState(false);
+  const [workspaceSideTab, setWorkspaceSideTab] = useState<'chat' | 'edit'>('chat');
+  const [editPanelAvailable, setEditPanelAvailable] = useState(false);
+  const [editSelectionActive, setEditSelectionActive] = useState(false);
   const handleEditModeChange = useCallback((active: boolean) => {
-    setWorkspaceFocused(active);
+    setEditPanelAvailable(active);
+    if (!active) {
+      setEditSelectionActive(false);
+      setWorkspaceSideTab('chat');
+    }
+  }, []);
+  const handleEditSelectionChange = useCallback((active: boolean) => {
+    setEditSelectionActive(active);
+    if (active) {
+      setEditPanelAvailable(true);
+      setWorkspaceSideTab('edit');
+    }
   }, []);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
   const commentInspectorPortalId = useId();
+  const editInspectorPortalId = useId();
   const leftInspectorActive = commentInspectorActive;
   // Per-session override for the BYOK chat's generate_image tool. Seeded once
   // from the New Project → Media model pick (project.metadata.imageModel) — but
@@ -5370,8 +5385,16 @@ export function ProjectView({
               className="comment-left-host"
               aria-label="Comments"
             />
-          ) : activeConversationId || conversationLoadError ? (
-            <ChatPane
+          ) : (
+            <div className="workspace-side-panel-shell">
+              <div className="workspace-side-panel-content">
+                <div
+                  className="workspace-side-panel-view workspace-side-chat-view"
+                  data-testid="workspace-side-chat-view"
+                  hidden={workspaceSideTab !== 'chat'}
+                >
+                  {activeConversationId || conversationLoadError ? (
+                    <ChatPane
               // The conversation id is part of the key so switching conversations
               // resets internal scroll/draft state inside ChatPane and ChatComposer.
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}
@@ -5522,10 +5545,63 @@ export function ProjectView({
                   onChange={handleChangeDesignSystemId}
                 />
               )}
-            />
-          ) : (
-            <div className="pane" data-testid="chat-pane-loading">
-              <CenteredLoader />
+                    />
+                  ) : (
+                    <div className="pane" data-testid="chat-pane-loading">
+                      <CenteredLoader />
+                    </div>
+                  )}
+                </div>
+                <div
+                  className="workspace-side-panel-view workspace-side-edit-view"
+                  data-testid="workspace-side-edit-view"
+                  hidden={workspaceSideTab !== 'edit'}
+                >
+                  <div
+                    id={editInspectorPortalId}
+                    className="workspace-edit-panel-host"
+                    aria-label={t('fileViewer.edit')}
+                  />
+                  {!editSelectionActive ? (
+                    <div className="workspace-edit-panel-empty">
+                      <Icon name="edit" size={18} />
+                      <span>{t('chat.inspect.editHint')}</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              {editPanelAvailable ? (
+                <div
+                  className="workspace-side-tab-rail"
+                  role="tablist"
+                  aria-label={`${t('chat.tabChat')} / ${t('fileViewer.edit')}`}
+                >
+                  <button
+                    type="button"
+                    className="workspace-side-tab"
+                    role="tab"
+                    data-testid="workspace-side-tab-chat"
+                    aria-label={t('chat.tabChat')}
+                    aria-selected={workspaceSideTab === 'chat'}
+                    title={t('chat.tabChat')}
+                    onClick={() => setWorkspaceSideTab('chat')}
+                  >
+                    <Icon name="comment" size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    className="workspace-side-tab"
+                    role="tab"
+                    data-testid="workspace-side-tab-edit"
+                    aria-label={t('fileViewer.edit')}
+                    aria-selected={workspaceSideTab === 'edit'}
+                    title={t('fileViewer.edit')}
+                    onClick={() => setWorkspaceSideTab('edit')}
+                  >
+                    <Icon name="edit" size={17} />
+                  </button>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -5599,6 +5675,8 @@ export function ProjectView({
           githubConnected={githubConnected}
           commentPortalId={commentInspectorPortalId}
           onCommentModeChange={setCommentInspectorActive}
+          editPortalId={editInspectorPortalId}
+          onEditSelectionChange={handleEditSelectionChange}
           chatConfig={config}
           chatAgentsById={agentsById}
           chatLocale={locale}

@@ -892,7 +892,7 @@
 .app .split-chat-slot {
   justify-content: center;
   align-items: stretch;
-  padding: 18px 20px;
+  padding: 5px;
   background: color-mix(in srgb, var(--bg-subtle) 48%, var(--bg-panel));
 }
 .app .split-chat-slot > .pane {
@@ -901,6 +901,15 @@
   border-radius: 12px;
   box-shadow: 0 12px 34px color-mix(in srgb, var(--text) 8%, transparent);
   background: var(--bg-panel);
+}
+.app .workspace-side-panel-shell {
+  width: min(100%, 900px);
+  background: var(--bg-panel);
+}
+.app .workspace-side-chat-view > .pane {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 .app .split-resize-handle {
   width: 8px;
@@ -1017,7 +1026,7 @@
 }
 .app .chat-log {
   gap: 14px;
-  padding: 18px 18px 20px;
+  padding: 0px;
   background: var(--bg-panel);
 }
 /* Cancel the 14px flex gap so the idle spacer adds no trailing space. */
@@ -1335,7 +1344,7 @@
   justify-content: flex-start;
   gap: 10px;
   min-height: 0;
-  padding: 16px 12px 6px;
+  padding: 16px 12px 6px 5px;
 }
 .app .chat-empty {
   align-items: flex-start;

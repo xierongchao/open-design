@@ -163,6 +163,8 @@ interface Props {
   githubConnected?: boolean;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
+  editPortalId?: string;
+  onEditSelectionChange?: (active: boolean) => void;
   // Side Chat (`chat:<conversationId>` tab) wiring. Threaded from ProjectView
   // so a secondary ChatPane can render an already-open conversation tab without
   // FileWorkspace owning any chat state. All optional: a workspace mounted
@@ -409,6 +411,8 @@ export function FileWorkspace({
   githubConnected,
   commentPortalId,
   onCommentModeChange,
+  editPortalId,
+  onEditSelectionChange,
   chatConfig,
   chatAgentsById,
   chatLocale,
@@ -449,9 +453,7 @@ export function FileWorkspace({
   // answered preview.
   const showQuestionsTab = Boolean(questionForm || questionFormPreview || questionsGenerating);
   const analytics = useAnalytics();
-  const [editModeActive, setEditModeActive] = useState(false);
   const handleEditModeChange = useCallback((active: boolean) => {
-    setEditModeActive(active);
     onEditModeChange?.(active);
   }, [onEditModeChange]);
   // P1 page_view page_name=file_manager — once per project the user lands
@@ -2014,7 +2016,6 @@ export function FileWorkspace({
       className={[
         'workspace',
         designSystemProject ? 'has-design-system-tab' : '',
-        editModeActive ? 'workspace-edit-active' : '',
       ].filter(Boolean).join(' ')}
       data-testid="file-workspace"
     >
@@ -2426,6 +2427,8 @@ export function FileWorkspace({
                   onOpenFileReplacing={(openName) => openDesignFilesPreview(openName)}
                   commentPortalId={commentPortalId}
                   onCommentModeChange={onCommentModeChange}
+                  editPortalId={editPortalId}
+                  onEditSelectionChange={onEditSelectionChange}
                   shareRequest={
                     shareRequest && shareRequest.name === designFilesPreviewFile.name
                       ? { nonce: shareRequest.nonce }
@@ -2437,6 +2440,7 @@ export function FileWorkspace({
                     slideNavDeliverableNonce,
                   )}
                   onEditModeChange={handleEditModeChange}
+                  defaultEditMode
                 />
               ) : null
             }
@@ -2565,6 +2569,8 @@ export function FileWorkspace({
             onOpenFileReplacing={openFileReplacing}
             commentPortalId={commentPortalId}
             onCommentModeChange={onCommentModeChange}
+            editPortalId={editPortalId}
+            onEditSelectionChange={onEditSelectionChange}
             shareRequest={
               shareRequest && shareRequest.name === activeFile.name
                 ? { nonce: shareRequest.nonce }

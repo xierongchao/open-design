@@ -135,6 +135,49 @@ describe('FileViewer manual edit regressions', () => {
     expect(screen.getByTestId('manual-edit-hover-open')).toBeTruthy();
   });
 
+  it('ports the selected element inspector to the right Edit panel and reports the selection', async () => {
+    const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } }),
+    ));
+    const editHost = document.createElement('div');
+    editHost.id = 'edit-inspector-host';
+    document.body.append(editHost);
+    const onEditSelectionChange = vi.fn();
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml={source}
+        editPortalId={editHost.id}
+        onEditSelectionChange={onEditSelectionChange}
+      />,
+    );
+
+    clickManualTool('manual-edit-mode-toggle');
+    const activeFrame = await waitFor(() => {
+      const frame = document.querySelector<HTMLIFrameElement>(
+        'iframe[data-od-active="true"][data-od-render-mode="srcdoc"]',
+      );
+      if (!frame?.contentWindow) throw new Error('Active edit frame not ready');
+      return frame;
+    });
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'od-edit-select', target: heroTarget() },
+        source: activeFrame.contentWindow,
+      }));
+    });
+
+    await waitFor(() => {
+      expect(onEditSelectionChange).toHaveBeenLastCalledWith(true);
+      expect(editHost.querySelector('.pp-dock')).not.toBeNull();
+    });
+    expect(document.querySelector('.manual-edit-workspace')?.classList.contains('pp-dock-active')).toBe(false);
+  });
+
   it('opens the compact page-styles card when the empty canvas is clicked', async () => {
     const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
     vi.stubGlobal('fetch', vi.fn(async () =>

@@ -101,9 +101,11 @@ vi.mock('../../src/components/AvatarMenu', () => ({
 }));
 
 vi.mock('../../src/components/FileWorkspace', () => ({
-  FileWorkspace: ({ tabsState, onTabsStateChange }: {
+  FileWorkspace: ({ tabsState, onTabsStateChange, onEditModeChange, onEditSelectionChange }: {
     tabsState: { tabs: string[]; active: string | null };
     onTabsStateChange: (state: { tabs: string[]; active: string | null }) => void;
+    onEditModeChange?: (active: boolean) => void;
+    onEditSelectionChange?: (active: boolean) => void;
   }) => (
     <div data-testid="file-workspace">
       <output data-testid="workspace-active-tab">{tabsState.active ?? ''}</output>
@@ -113,6 +115,20 @@ vi.mock('../../src/components/FileWorkspace', () => ({
         onClick={() => onTabsStateChange({ tabs: [], active: null })}
       >
         close all tabs
+      </button>
+      <button
+        type="button"
+        data-testid="activate-html-edit-mode"
+        onClick={() => onEditModeChange?.(true)}
+      >
+        activate html edit mode
+      </button>
+      <button
+        type="button"
+        data-testid="select-html-element"
+        onClick={() => onEditSelectionChange?.(true)}
+      >
+        select html element
       </button>
     </div>
   ),
@@ -341,5 +357,37 @@ describe('ProjectView tab URL hydration', () => {
 
     await waitFor(() => expect(screen.getByTestId('workspace-active-tab').textContent).toBe(''));
     expect(mockedCacheTabsLocally).not.toHaveBeenCalled();
+  });
+
+  it('keeps chat mounted behind right-side Chat and Edit tabs while HTML edit mode is active', async () => {
+    renderProjectView();
+
+    await waitFor(() => expect(screen.getByTestId('chat-pane')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('activate-html-edit-mode'));
+
+    expect(screen.getByTestId('workspace-side-tab-chat').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('workspace-side-tab-edit').getAttribute('aria-selected')).toBe('false');
+    expect(screen.getByTestId('workspace-side-chat-view').hasAttribute('hidden')).toBe(false);
+
+    fireEvent.click(screen.getByTestId('workspace-side-tab-edit'));
+
+    expect(screen.getByTestId('workspace-side-tab-edit').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('workspace-side-chat-view').hasAttribute('hidden')).toBe(true);
+    expect(screen.getByTestId('workspace-side-edit-view').hasAttribute('hidden')).toBe(false);
+    expect(screen.getByTestId('chat-pane')).toBeTruthy();
+  });
+
+  it('automatically opens the Edit tab when an HTML element is selected', async () => {
+    renderProjectView();
+
+    await waitFor(() => expect(screen.getByTestId('chat-pane')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('activate-html-edit-mode'));
+    expect(screen.getByTestId('workspace-side-tab-chat').getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByTestId('select-html-element'));
+
+    expect(screen.getByTestId('workspace-side-tab-edit').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('workspace-side-edit-view').hasAttribute('hidden')).toBe(false);
+    expect(screen.getByTestId('chat-pane')).toBeTruthy();
   });
 });

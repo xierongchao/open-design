@@ -143,8 +143,8 @@ export const MAX_BRIDGE_COORDINATE = 1_000_000;
 export const PREVIEW_VIEWPORT_PRESETS: PreviewViewportPreset[] = [
   {
     id: 'desktop',
-    width: null,
-    height: null,
+    width: 1920,
+    height: 1080,
     labelKey: 'fileViewer.viewportDesktop',
     titleKey: 'fileViewer.viewportDesktopTitle',
   },
