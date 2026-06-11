@@ -202,6 +202,8 @@ export type ManualEditBridgeMessage =
   | ManualEditTextCommitMessage
   | ManualEditViewportWheelMessage
   | ManualEditViewportPanMessage
+  | { type: 'od-edit-space-held' }
+  | { type: 'od-edit-space-released' }
   | { type: 'od-edit-undo' }
   | { type: 'od-edit-redo' };
 

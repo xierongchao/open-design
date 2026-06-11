@@ -337,7 +337,24 @@ function AppInner() {
   const { t } = useI18n();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
   const clientType = useMemo(() => detectClientType(), []);
+  const [desktopFullscreen, setDesktopFullscreen] = useState(false);
   useModalWindowDragGuard();
+  // Listen for macOS native fullscreen state forwarded by the desktop
+  // Electron host bridge. The desktop preload exposes
+  // shell.onFullscreenChange() which receives the BrowserWindow
+  // enter-full-screen / leave-full-screen events.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const host = (window as unknown as Record<string, unknown>).__od__;
+    if (!host || typeof host !== 'object') return;
+    const shell = 'shell' in host ? (host as Record<string, unknown>).shell : undefined;
+    if (!shell || typeof shell !== 'object' || !('onFullscreenChange' in shell)) return;
+    const listen = (shell as Record<string, unknown>).onFullscreenChange as
+      | ((cb: (isFullscreen: boolean) => void) => () => void)
+      | undefined;
+    if (typeof listen !== 'function') return;
+    return listen(setDesktopFullscreen);
+  }, []);
   // Observability marker. `apps/web/src/observability/white-screen.ts`
   // keys its "app actually mounted" success condition on this attribute
   // because the dynamic-import loading shell (`<div class="od-loading-shell">
@@ -2207,6 +2224,7 @@ function AppInner() {
       <div
         className={`workspace-shell workspace-shell--${clientType}`}
         data-client-type={clientType}
+        data-od-fullscreen={desktopFullscreen ? '1' : undefined}
       >
         <WorkspaceTabsBar
           route={route}

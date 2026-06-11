@@ -405,13 +405,16 @@ export function previewViewportStyle(
   previewScale = 1,
   canvasSize?: PreviewCanvasSize,
   options?: PreviewScaleOptions,
+  overrideSize?: { width: number; height: number },
 ): CSSProperties & Record<string, string | number> {
   const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport) ?? PREVIEW_VIEWPORT_PRESETS[0]!;
   if (!preset.width) return {};
   const effectiveScale = effectivePreviewScale(viewport, previewScale, canvasSize, options);
+  const width = overrideSize?.width ?? preset.width;
+  const height = overrideSize?.height ?? preset.height;
   return {
-    '--preview-viewport-width': `${preset.width}px`,
-    '--preview-viewport-height': `${preset.height}px`,
+    '--preview-viewport-width': `${width}px`,
+    '--preview-viewport-height': `${height}px`,
     '--preview-scale': effectiveScale,
     '--preview-user-scale': previewScale,
   };
@@ -548,11 +551,12 @@ export function manualEditPreviewShellStyle(
   previewScale: number,
   viewportTransform: ManualEditViewportTransform = { x: 0, y: 0 },
   canvasSize?: PreviewCanvasSize,
+  overrideSize?: { width: number; height: number },
 ): CSSProperties & Record<string, string | number> {
   if (viewport === 'desktop') {
     const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
-    const contentWidth = preset?.width ?? 1920;
-    const contentHeight = preset?.height ?? 1080;
+    const contentWidth = overrideSize?.width ?? preset?.width ?? 1920;
+    const contentHeight = overrideSize?.height ?? preset?.height ?? 1080;
     // When canvasSize is available, compute auto-fit zoom and centering.
     // Otherwise fall back to raw user zoom + pan (legacy behavior).
     const autoFit = canvasSize?.width && canvasSize.height
@@ -584,7 +588,7 @@ export function manualEditPreviewShellStyle(
       willChange: 'transform',
     };
   }
-  const transform = `translate(${viewportTransform.x}px, ${viewportTransform.y}px) scale(${previewScale})`;
+  const transform = `scale(${previewScale})`;
   return {
     width: 'var(--preview-viewport-width)',
     height: 'var(--preview-viewport-height)',

@@ -213,8 +213,12 @@ export function buildManualEditBridge(enabled: boolean): string {
     if (!enabled) return;
     window.parent.postMessage({ type: 'od-edit-targets', targets: allTargets() }, '*');
   }
+  var spaceHeld = false;
   function isMiddleButtonPan(ev){
     return Number(ev.button) === 1 || ((Number(ev.buttons) || 0) & 4) === 4;
+  }
+  function isSpacePan(ev){
+    return spaceHeld && Number(ev.button) === 0;
   }
   function postViewportPan(phase, ev){
     window.parent.postMessage({
@@ -666,6 +670,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   }
   document.addEventListener('click', function(ev){
     if (!enabled) return;
+    if (spaceHeld) return;
     if (wasDrag) { wasDrag = false; return; }
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
     ev.preventDefault();
@@ -702,7 +707,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   }, true);
   document.addEventListener('pointerdown', function(ev){
     if (!enabled) return;
-    if (isMiddleButtonPan(ev)) return;
+    if (isMiddleButtonPan(ev) || spaceHeld) return;
     if (ev.target && ev.target.getAttribute && ev.target.getAttribute('data-od-resize-handle')) return;
     var el = closestTarget(ev);
     if (!el) return;
@@ -791,7 +796,7 @@ export function buildManualEditBridge(enabled: boolean): string {
   }, true);
   document.addEventListener('pointerdown', function(ev){
     if (!enabled) return;
-    if (!isMiddleButtonPan(ev)) return;
+    if (!isMiddleButtonPan(ev) && !isSpacePan(ev)) return;
     setViewportPanActive(true);
     ev.preventDefault();
     ev.stopPropagation();
@@ -810,16 +815,34 @@ export function buildManualEditBridge(enabled: boolean): string {
   function finishViewportPan(ev){
     if (!viewportPanActive) return;
     setViewportPanActive(false);
-    ev.preventDefault();
-    ev.stopPropagation();
+    if (ev) { ev.preventDefault(); ev.stopPropagation(); }
     try {
-      var releaseTarget = ev.target && ev.target.releasePointerCapture ? ev.target : document.documentElement;
-      if (releaseTarget && releaseTarget.releasePointerCapture && ev.pointerId !== undefined) releaseTarget.releasePointerCapture(ev.pointerId);
+      var releaseTarget = ev && ev.target && ev.target.releasePointerCapture ? ev.target : document.documentElement;
+      if (releaseTarget && releaseTarget.releasePointerCapture && ev && ev.pointerId !== undefined) releaseTarget.releasePointerCapture(ev.pointerId);
     } catch (e) {}
-    postViewportPan('end', ev);
+    if (ev) postViewportPan('end', ev);
   }
   document.addEventListener('pointerup', finishViewportPan, true);
   document.addEventListener('pointercancel', finishViewportPan, true);
+  document.addEventListener('keydown', function(ev){
+    if (!enabled) return;
+    if (ev.key === ' ' && !ev.repeat) {
+      var tag = ev.target && ev.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      ev.preventDefault();
+      spaceHeld = true;
+      document.documentElement.style.cursor = 'grab';
+      window.parent.postMessage({ type: 'od-edit-space-held' }, '*');
+    }
+  }, true);
+  document.addEventListener('keyup', function(ev){
+    if (ev.key === ' ') {
+      spaceHeld = false;
+      document.documentElement.style.cursor = '';
+      window.parent.postMessage({ type: 'od-edit-space-released' }, '*');
+      if (viewportPanActive) finishViewportPan(null);
+    }
+  }, true);
   document.addEventListener('pointerover', function(ev){
     if (!enabled) return;
     if (viewportPanActive) return;

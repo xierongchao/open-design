@@ -5390,6 +5390,40 @@ export function ProjectView({
             />
           ) : (
             <div className="workspace-side-panel-shell">
+              {editPanelAvailable ? (
+                <div
+                  className="workspace-side-tab-rail"
+                  role="tablist"
+                  aria-label={`${t('chat.tabChat')} / ${t('fileViewer.edit')}`}
+                >
+                  <button
+                    type="button"
+                    className="workspace-side-tab"
+                    role="tab"
+                    data-testid="workspace-side-tab-chat"
+                    aria-label={t('chat.tabChat')}
+                    aria-selected={workspaceSideTab === 'chat'}
+                    title={t('chat.tabChat')}
+                    onClick={() => setWorkspaceSideTab('chat')}
+                  >
+                    <Icon name="comment" size={14} />
+                    <span>{t('chat.tabChat')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="workspace-side-tab"
+                    role="tab"
+                    data-testid="workspace-side-tab-edit"
+                    aria-label={t('fileViewer.edit')}
+                    aria-selected={workspaceSideTab === 'edit'}
+                    title={t('fileViewer.edit')}
+                    onClick={() => setWorkspaceSideTab('edit')}
+                  >
+                    <Icon name="edit" size={14} />
+                    <span>{t('fileViewer.edit')}</span>
+                  </button>
+                </div>
+              ) : null}
               <div className="workspace-side-panel-content">
                 <div
                   className="workspace-side-panel-view workspace-side-chat-view"
@@ -5573,38 +5607,6 @@ export function ProjectView({
                   ) : null}
                 </div>
               </div>
-              {editPanelAvailable ? (
-                <div
-                  className="workspace-side-tab-rail"
-                  role="tablist"
-                  aria-label={`${t('chat.tabChat')} / ${t('fileViewer.edit')}`}
-                >
-                  <button
-                    type="button"
-                    className="workspace-side-tab"
-                    role="tab"
-                    data-testid="workspace-side-tab-chat"
-                    aria-label={t('chat.tabChat')}
-                    aria-selected={workspaceSideTab === 'chat'}
-                    title={t('chat.tabChat')}
-                    onClick={() => setWorkspaceSideTab('chat')}
-                  >
-                    <Icon name="comment" size={17} />
-                  </button>
-                  <button
-                    type="button"
-                    className="workspace-side-tab"
-                    role="tab"
-                    data-testid="workspace-side-tab-edit"
-                    aria-label={t('fileViewer.edit')}
-                    aria-selected={workspaceSideTab === 'edit'}
-                    title={t('fileViewer.edit')}
-                    onClick={() => setWorkspaceSideTab('edit')}
-                  >
-                    <Icon name="edit" size={17} />
-                  </button>
-                </div>
-              ) : null}
             </div>
           )}
         </div>

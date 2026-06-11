@@ -4142,6 +4142,11 @@ function HtmlViewer({
   useEffect(() => {
     setPreviewViewportState(htmlPreviewViewportState.get(fileViewportKey) ?? 'desktop');
   }, [fileViewportKey]);
+  // Reset custom viewport size when the preset changes so the canvas
+  // dimensions snap back to the new preset defaults.
+  useEffect(() => {
+    setCustomViewportSize(null);
+  }, [previewViewport]);
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateSaveError, setTemplateSaveError] = useState<string | null>(null);
   const [deployment, setDeployment] = useState<WebDeploymentInfo | null>(null);
@@ -4209,6 +4214,52 @@ function HtmlViewer({
     startY: number;
   } | null>(null);
   const [manualEditPanning, setManualEditPanning] = useState(false);
+  // Spacebar held → treat left-button drag as pan (Figma-style)
+  const manualEditSpaceHeldRef = useRef(false);
+  const [manualEditSpaceHeld, setManualEditSpaceHeld] = useState(false);
+  useEffect(() => {
+    if (!manualEditMode) {
+      manualEditSpaceHeldRef.current = false;
+      setManualEditSpaceHeld(false);
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === ' ' && !e.repeat) {
+        // Don't capture space when typing in an input/textarea
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        e.preventDefault();
+        manualEditSpaceHeldRef.current = true;
+        setManualEditSpaceHeld(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ') {
+        manualEditSpaceHeldRef.current = false;
+        setManualEditSpaceHeld(false);
+        // If currently panning via space+drag, finish the pan when space released
+        if (manualEditPanRef.current) {
+          finishManualEditViewportPan();
+        }
+      }
+    };
+    const onBlur = () => {
+      manualEditSpaceHeldRef.current = false;
+      setManualEditSpaceHeld(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [manualEditMode]);
+  // Custom viewport dimensions set through the PageInspector canvas size
+  // controls. When set, these override the preset values (e.g. 1920x1080
+  // for desktop) in the preview-viewport CSS variables and auto-fit math.
+  const [customViewportSize, setCustomViewportSize] = useState<{ width: number; height: number } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const urlPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const srcDocPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -4266,6 +4317,11 @@ function HtmlViewer({
       return value;
     });
   }, []);
+  // Keep manualEditSrcDocActive in sync with manualEditMode so the edit bridge
+  // script is injected/removed from the srcDoc when the user toggles via the toolbar.
+  useEffect(() => {
+    setManualEditSrcDocActive(manualEditMode);
+  }, [manualEditMode]);
   useEffect(() => {
     setManualEditSrcDocActive(defaultEditMode);
     setManualEditFrozenSource(null);
@@ -4401,6 +4457,12 @@ function HtmlViewer({
   }, [onEditSelectionChange]);
   const [manualEditHoverTarget, setManualEditHoverTarget] = useState<ManualEditTarget | null>(null);
   const [manualEditPageStylesOpen, setManualEditPageStylesOpen] = useState(false);
+  // Auto-open page styles when entering edit mode so the inspector panel
+  // always shows useful content (background, font, canvas dimensions) even
+  // before the user selects an element.
+  useEffect(() => {
+    if (manualEditMode) setManualEditPageStylesOpen(true);
+  }, [manualEditMode]);
   const [manualEditPanelPosition, setManualEditPanelPosition] = useState<{ left: number; top: number } | null>(null);
   const selectedManualEditTargetIdRef = useRef<string | null>(null);
   const [manualEditDraft, setManualEditDraft] = useState<ManualEditDraft>(() => emptyManualEditDraft());
@@ -5616,6 +5678,17 @@ function HtmlViewer({
         handleManualEditViewportPan(data);
         return;
       }
+      if (data.type === 'od-edit-space-held') {
+        manualEditSpaceHeldRef.current = true;
+        setManualEditSpaceHeld(true);
+        return;
+      }
+      if (data.type === 'od-edit-space-released') {
+        manualEditSpaceHeldRef.current = false;
+        setManualEditSpaceHeld(false);
+        if (manualEditPanRef.current) finishManualEditViewportPan();
+        return;
+      }
       if (data.type === 'od-edit-undo') {
         if (manualEditHistoryRef.current.length > 0 && !manualEditSavingRef.current) {
           void undoManualEdit();
@@ -5908,12 +5981,22 @@ function HtmlViewer({
           x: anchor.x - baseFit.translateX - (anchor.x - baseFit.translateX - pan.x) * ratio,
           y: anchor.y - baseFit.translateY - (anchor.y - baseFit.translateY - pan.y) * ratio,
         });
-      } else {
+      } else if (previewViewport === 'desktop') {
+        // Non-auto-fit desktop: translate is on the inner shell.
         const contentX = (anchor.x - pan.x) / oldUserScale;
         const contentY = (anchor.y - pan.y) / oldUserScale;
         setManualEditViewportTransformValue({
           x: anchor.x - contentX * nextUserScale,
           y: anchor.y - contentY * nextUserScale,
+        });
+      } else {
+        // Non-desktop (mobile/tablet): translate is on the canvas div.
+        // getBoundingClientRect already includes the translate offset in anchor,
+        // so the zoom adjustment uses a ratio-based formula.
+        const ratio = 1 - nextUserScale / oldUserScale;
+        setManualEditViewportTransformValue({
+          x: pan.x + anchor.x * ratio,
+          y: pan.y + anchor.y * ratio,
         });
       }
     }
@@ -5969,9 +6052,11 @@ function HtmlViewer({
     if (!pan) return;
     const point = manualEditPanPoint(data, preferScreenCoordinates);
     if (!point) return;
+    // Multiply delta by speed factor so panning feels responsive at all zoom levels.
+    const panSpeed = 1.5;
     setManualEditViewportTransformValue({
-      x: pan.startX + point.x - pan.startClientX,
-      y: pan.startY + point.y - pan.startClientY,
+      x: pan.startX + (point.x - pan.startClientX) * panSpeed,
+      y: pan.startY + (point.y - pan.startClientY) * panSpeed,
     });
   }
 
@@ -6020,7 +6105,9 @@ function HtmlViewer({
   }
 
   function isManualEditPanPointerEvent(event: ReactPointerEvent<HTMLDivElement>) {
-    return event.button === 1 || (event.buttons & 4) === 4;
+    // Middle mouse button OR (spacebar held + left mouse button)
+    return event.button === 1 || (event.buttons & 4) === 4
+      || (manualEditSpaceHeldRef.current && event.button === 0);
   }
 
   function handleManualEditCanvasPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -6039,7 +6126,15 @@ function HtmlViewer({
     if (!manualEditMode || !manualEditPanRef.current) return;
     event.preventDefault();
     event.stopPropagation();
-    if ((event.buttons & 4) !== 4) {
+    // Detect button release: middle button no longer held, or space+left no longer held
+    const middleButtonHeld = (event.buttons & 4) === 4;
+    const leftButtonHeld = (event.buttons & 1) === 1;
+    if (!middleButtonHeld && !leftButtonHeld) {
+      finishManualEditViewportPan();
+      return;
+    }
+    // If left button drag but space no longer held → stop panning
+    if (!middleButtonHeld && leftButtonHeld && !manualEditSpaceHeldRef.current) {
       finishManualEditViewportPan();
       return;
     }
@@ -6112,6 +6207,9 @@ function HtmlViewer({
     setManualEditDraft(emptyManualEditDraft(sourceRef.current ?? ''));
     setManualEditError(null);
     postSelectedManualEditTargetsToIframe([]);
+    // Reopen page styles so the inspector shows global settings instead
+    // of going blank when the user deselects (ESC or click empty canvas).
+    setManualEditPageStylesOpen(true);
   }
 
   // The inspector is scoped to one element (or the page). Closing it should
@@ -6318,6 +6416,23 @@ function HtmlViewer({
     if (!manualEditMode) return;
     function onKeyDown(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
+      // Delete/Backspace: remove selected elements (skip when typing in inputs)
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !mod) {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable) return;
+        const targets = selectedManualEditTargetsRef.current;
+        if (targets.length > 0 && !manualEditSavingRef.current) {
+          e.preventDefault();
+          (async () => {
+            for (const target of targets) {
+              await applyManualEdit(
+                { id: target.id, kind: 'remove-element' },
+                t('manualEdit.deleteElement'),
+              );
+            }
+          })();
+        }
+      }
       if (!mod) return;
       if (e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -7780,6 +7895,15 @@ function HtmlViewer({
     manualEditMode && !selectedManualEditTarget && manualEditPageStylesOpen;
   const manualEditPanelActive =
     manualEditMode && (!!selectedManualEditTarget || manualEditPageCardActive);
+  // The effective viewport dimensions shown in the PageInspector canvas
+  // size inputs. Derived from the current preset unless the user has set
+  // a custom size, and initialized from the preset on first entry.
+  const currentViewportPreset = PREVIEW_VIEWPORT_PRESETS.find((p) => p.id === previewViewport);
+  const manualEditViewportSize = customViewportSize ?? (
+    currentViewportPreset?.width && currentViewportPreset.height
+      ? { width: currentViewportPreset.width, height: currentViewportPreset.height }
+      : { width: 1920, height: 1080 }
+  );
   const manualEditPanelNode = manualEditPanelActive ? (
     <ManualEditPanel
       targets={manualEditTargets}
@@ -7792,6 +7916,8 @@ function HtmlViewer({
       canRedo={manualEditUndone.length > 0}
       busy={manualEditSaving}
       pageStylesEnabled={manualEditPageStylesEnabled}
+      viewportSize={manualEditViewportSize}
+      onViewportSizeChange={setCustomViewportSize}
       onSelectTarget={(target) => {
         void selectManualEditTarget(target);
       }}
@@ -8250,39 +8376,18 @@ function HtmlViewer({
               >
                 <RemixIcon name="fullscreen-line" size={15} />
               </button>
-              <div className="present-wrap chrome-present-wrap">
-                <button
-                  className="chrome-action chrome-action-secondary chrome-action-icon present-trigger od-tooltip"
-                  aria-haspopup="menu"
-                  aria-expanded={presentMenuOpen}
-                  aria-label={t('fileViewer.present')}
-                  data-tooltip={t('fileViewer.present')}
-                  data-tooltip-placement="bottom"
-                  title={t('fileViewer.present')}
-                  onClick={() => {
-                    fireArtifactHeaderClick('present_dropdown');
-                    setPresentMenuOpen((v) => !v);
-                  }}
-                >
-                  <RemixIcon name="slideshow-3-line" size={15} />
-                </button>
-                {presentMenuOpen ? (
-                  <div className="present-menu" role="menu">
-                    <button role="menuitem" onClick={() => { firePresentPopoverClick('in_this_tab'); presentInThisTab(); }}>
-                      <span className="present-icon"><RemixIcon name="eye-line" size={14} /></span>{' '}
-                      {t('fileViewer.presentInTab')}
-                    </button>
-                    <button role="menuitem" onClick={() => { firePresentPopoverClick('fullscreen'); presentFullscreen(); }}>
-                      <span className="present-icon"><RemixIcon name="play-line" size={14} /></span>{' '}
-                      {t('fileViewer.presentFullscreen')}
-                    </button>
-                    <button role="menuitem" onClick={() => { firePresentPopoverClick('new_tab'); presentNewTab(); }}>
-                      <span className="present-icon"><RemixIcon name="share-forward-line" size={14} /></span>{' '}
-                      {t('fileViewer.presentNewTab')}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+              <button
+                className={`chrome-action chrome-action-secondary chrome-action-icon present-trigger od-tooltip${!manualEditMode ? ' is-active' : ''}`}
+                aria-label={t('fileViewer.interactiveMode')}
+                data-tooltip={t('fileViewer.interactiveMode')}
+                data-tooltip-placement="bottom"
+                title={t('fileViewer.interactiveMode')}
+                onClick={() => {
+                  setManualEditMode((v) => !v);
+                }}
+              >
+                <RemixIcon name="slideshow-3-line" size={15} />
+              </button>
             </>
           ) : null}
           {canShare || canDownload ? (
@@ -8577,8 +8682,16 @@ function HtmlViewer({
           <div
             className={`${manualEditMode ? `manual-edit-workspace${manualEditPanelDockedInCanvas ? ' pp-dock-active' : ''}` : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
             data-testid={manualEditMode ? undefined : 'comment-preview-layout'}
-            style={previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions)}
+            style={{
+              ...previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions, customViewportSize ?? undefined),
+              ...(manualEditMode && manualEditSpaceHeld ? { cursor: manualEditPanning ? 'grabbing' : 'grab' } : {}),
+            }}
             onMouseLeave={manualEditMode ? clearManualEditHover : undefined}
+            onWheel={manualEditMode ? handleManualEditCanvasWheel : undefined}
+            onPointerDown={manualEditMode ? handleManualEditCanvasPointerDown : undefined}
+            onPointerMove={manualEditMode ? handleManualEditCanvasPointerMove : undefined}
+            onPointerUp={manualEditMode ? handleManualEditCanvasPointerUp : undefined}
+            onPointerCancel={manualEditMode ? handleManualEditCanvasPointerUp : undefined}
           >
             {manualEditPanel}
             {manualEditUndoLimitNotification}
@@ -8588,17 +8701,37 @@ function HtmlViewer({
               ref={manualEditMode ? manualEditCanvasRef : undefined}
               data-testid={manualEditMode ? 'manual-edit-canvas' : 'comment-preview-canvas'}
               data-pan-active={manualEditMode && manualEditPanning ? 'true' : undefined}
+              style={manualEditMode ? {
+                ...(previewViewport !== 'desktop' ? {
+                  transform: `translate(${manualEditViewportTransform.x}px, ${manualEditViewportTransform.y}px)`,
+                  transformOrigin: '0 0',
+                  willChange: 'transform' as const,
+                } : {}),
+                ...(manualEditSpaceHeld ? { cursor: manualEditPanning ? 'grabbing' : 'grab' } : {}),
+              } : undefined}
               onWheel={manualEditMode ? handleManualEditCanvasWheel : undefined}
               onPointerDown={manualEditMode ? handleManualEditCanvasPointerDown : undefined}
               onPointerMove={manualEditMode ? handleManualEditCanvasPointerMove : undefined}
               onPointerUp={manualEditMode ? handleManualEditCanvasPointerUp : undefined}
               onPointerCancel={manualEditMode ? handleManualEditCanvasPointerUp : undefined}
             >
+              {/* Transparent overlay that blocks pointer events from reaching the
+                  iframe when the user is in space+drag pan mode. Without this, the
+                  edit bridge inside the iframe would also start element drag. */}
+              {manualEditMode && manualEditSpaceHeld ? (
+                <div
+                  style={{ position: 'absolute', inset: 0, zIndex: 10 }}
+                  onPointerDown={handleManualEditCanvasPointerDown}
+                  onPointerMove={handleManualEditCanvasPointerMove}
+                  onPointerUp={handleManualEditCanvasPointerUp}
+                  onPointerCancel={handleManualEditCanvasPointerUp}
+                />
+              ) : null}
               <div className={manualEditMode ? undefined : 'comment-frame-clip'} style={manualEditMode ? { height: '100%' } : undefined}>
                 <div
                   style={
                     manualEditMode
-                      ? manualEditPreviewShellStyle(previewViewport, previewScale, manualEditViewportTransform, previewBodySize)
+                      ? manualEditPreviewShellStyle(previewViewport, previewScale, manualEditViewportTransform, previewBodySize, customViewportSize ?? undefined)
                       : previewScaleShellStyle(previewViewport, previewScale)
                   }
                 >

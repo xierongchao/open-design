@@ -35,6 +35,8 @@ type SharedPanelProps = {
   canRedo: boolean;
   busy?: boolean;
   pageStylesEnabled?: boolean;
+  viewportSize?: { width: number; height: number } | null;
+  onViewportSizeChange?: (size: { width: number; height: number } | null) => void;
   onSelectTarget: (target: ManualEditTarget) => void;
   onDraftChange: (draft: ManualEditDraft) => void;
   onStyleChange?: (id: string, styles: Partial<ManualEditStyles>, label: string) => void;
@@ -61,12 +63,12 @@ export function ManualEditPanel(props: SharedPanelProps & {
     onDraftChange, onStyleChange, onInvalidStyle, onError,
     onCancelDraft, onSaveDraft, onExit, onApplyPatch, onPickImage,
     pageStylesEnabled = true,
+    viewportSize, onViewportSizeChange,
     floatingStyle, floatingClassName, onFloatingPositionChange,
     targets,
   } = props;
 
   const t = useT();
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const effectiveSelectedTargets = selectedTargets?.length
     ? selectedTargets
@@ -220,6 +222,8 @@ export function ManualEditPanel(props: SharedPanelProps & {
         ) : pageStylesEnabled ? (
           <PageInspector
             enabled={pageStylesEnabled}
+            viewportSize={viewportSize ?? null}
+            onViewportSizeChange={onViewportSizeChange}
             onStyleChange={(styles) => {
               const normalized = normalizeManualEditStyles(styles, { layoutEnabled: true });
               if (!normalized.ok) {
@@ -284,48 +288,7 @@ export function ManualEditPanel(props: SharedPanelProps & {
       {/* ── Footer ── */}
       <div className="pp-footer">
         <div className="manual-edit-footer-actions">
-          <div className="manual-edit-footer-left">
-            {targetForInspector ? (
-              confirmDelete ? (
-                <div className="manual-edit-delete-confirm">
-                  <span>{canUndo ? t('manualEdit.deleteElementConfirm') : t('manualEdit.deleteElement')}</span>
-                  <button
-                    type="button"
-                    className="manual-edit-footer-btn danger"
-                    disabled={busy}
-                    onClick={() => {
-                      setConfirmDelete(false);
-                      onApplyPatch(
-                        { id: targetForInspector.id, kind: 'remove-element' },
-                        t('manualEdit.deleteElement'),
-                      );
-                    }}
-                  >
-                    {t('manualEdit.deleteElement')}
-                  </button>
-                  <button
-                    type="button"
-                    className="manual-edit-footer-btn subtle"
-                    disabled={busy}
-                    onClick={() => setConfirmDelete(false)}
-                  >
-                    {t('common.cancel')}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="manual-edit-delete-btn"
-                  aria-label={t('manualEdit.deleteElement')}
-                  title={t('manualEdit.deleteElement')}
-                  disabled={busy}
-                  onClick={() => setConfirmDelete(true)}
-                >
-                  <Icon name="trash" size={15} />
-                </button>
-              )
-            ) : null}
-          </div>
+          <div className="manual-edit-footer-left" />
           <div className="manual-edit-footer-right">
           </div>
         </div>
@@ -1369,6 +1332,19 @@ function ScrubInput({ value, onChange, placeholder, spacingSide }: {
     ownerDoc.addEventListener('pointercancel', onUp);
   }, [numeric, display]);
 
+  // Arrow key step (Up/Down, Shift for larger step)
+  const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!numeric) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const direction = e.key === 'ArrowUp' ? 1 : -1;
+    const shiftMultiplier = 5;
+    const multiplier = e.shiftKey ? shiftMultiplier : 1;
+    const current = Number(display);
+    const next = Math.max(0, current + direction * multiplier);
+    onChangeRef.current(`${next}px`);
+  }, [numeric, display]);
+
   return (
     <div className="pp-gap-field" data-spacing-side={spacingSide}>
       <span
@@ -1386,6 +1362,7 @@ function ScrubInput({ value, onChange, placeholder, spacingSide }: {
           const val = raw && isNumericInput(raw) ? `${raw}px` : raw;
           onChange(val);
         }}
+        onKeyDown={onKeyDown}
       />
     </div>
   );
@@ -1666,14 +1643,29 @@ function looksGeneratedIdentifier(value: string): boolean {
 function PageInspector({
   enabled,
   onStyleChange,
+  viewportSize,
+  onViewportSizeChange,
 }: {
   enabled: boolean;
   onStyleChange: (styles: Partial<ManualEditStyles>) => void;
+  viewportSize: { width: number; height: number } | null;
+  onViewportSizeChange?: (size: { width: number; height: number } | null) => void;
 }) {
   const t = useT();
   const [bg, setBg] = useState('');
   const [font, setFont] = useState('');
   const [size, setSize] = useState('');
+  // Canvas size inputs are initialized from the viewport size and track
+  // user edits locally. On each change we push the numeric value back to
+  // the host so it can update --preview-viewport-width/height.
+  const [canvasWidth, setCanvasWidth] = useState(() => viewportSize ? String(viewportSize.width) : '');
+  const [canvasHeight, setCanvasHeight] = useState(() => viewportSize ? String(viewportSize.height) : '');
+  useEffect(() => {
+    if (viewportSize) {
+      setCanvasWidth(String(viewportSize.width));
+      setCanvasHeight(String(viewportSize.height));
+    }
+  }, [viewportSize]);
   const update = (next: { bg?: string; font?: string; size?: string }) => {
     if ('bg' in next) {
       const value = next.bg ?? '';
@@ -1691,6 +1683,24 @@ function PageInspector({
       onStyleChange({ fontSize: value });
     }
   };
+  const handleCanvasWidth = (raw: string) => {
+    setCanvasWidth(raw);
+    const num = parseInt(raw, 10);
+    if (Number.isFinite(num) && num > 0 && onViewportSizeChange) {
+      const currentHeight = parseInt(canvasHeight, 10);
+      const h = Number.isFinite(currentHeight) && currentHeight > 0 ? currentHeight : (viewportSize?.height ?? 1080);
+      onViewportSizeChange({ width: num, height: h });
+    }
+  };
+  const handleCanvasHeight = (raw: string) => {
+    setCanvasHeight(raw);
+    const num = parseInt(raw, 10);
+    if (Number.isFinite(num) && num > 0 && onViewportSizeChange) {
+      const currentWidth = parseInt(canvasWidth, 10);
+      const w = Number.isFinite(currentWidth) && currentWidth > 0 ? currentWidth : (viewportSize?.width ?? 1920);
+      onViewportSizeChange({ width: w, height: num });
+    }
+  };
 
   return (
     <div className="pp-section">
@@ -1700,6 +1710,10 @@ function PageInspector({
             <ColorRow label={t('manualEdit.background')} value={bg} onChange={(value) => update({ bg: value })} />
             <FontRow value={font} onChange={(value) => update({ font: value })} />
             <UnitRow label={t('manualEdit.fontSize')} value={size} onChange={(value) => update({ size: value })} unit="px" autoUnit />
+            <div className="pp-field-pair">
+              <UnitRow label={t('manualEdit.canvasWidth')} value={canvasWidth} onChange={handleCanvasWidth} unit="px" autoUnit min={1} />
+              <UnitRow label={t('manualEdit.canvasHeight')} value={canvasHeight} onChange={handleCanvasHeight} unit="px" autoUnit min={1} />
+            </div>
           </>
         ) : (
           <p className="cc-section-hint">Page styles are available only for full HTML documents.</p>
@@ -1909,6 +1923,20 @@ function UnitRow({ label, value, onChange, unit, autoUnit, disabled, min, max }:
     ownerDoc.addEventListener('pointercancel', onUp);
   }, [canStep, display, step, autoUnit, value, min, max]);
 
+  // Arrow key step (Up/Down, Shift for larger step)
+  const onInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!canStep) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const direction = e.key === 'ArrowUp' ? 1 : -1;
+    const shiftMultiplier = 5;
+    const multiplier = e.shiftKey ? shiftMultiplier : 1;
+    const current = Number(display);
+    const next = formatSteppedNumber(current + direction * step * multiplier, display, step);
+    const clamped = clampValue(Number(next));
+    onChange(valueFromDisplay(String(clamped)));
+  }, [canStep, display, step, min, max]);
+
   // Show unit suffix for %
   const showUnit = unit === '%';
 
@@ -1921,7 +1949,7 @@ function UnitRow({ label, value, onChange, unit, autoUnit, disabled, min, max }:
         onPointerDown={onLabelPointerDown}
       >{label}</span>
       <span className="cc-value">
-        <input value={display} placeholder="" disabled={disabled} onChange={(e) => onChange(valueFromDisplay(e.currentTarget.value))} onBlur={(e) => handle(e.currentTarget.value)} />
+        <input value={display} placeholder="" disabled={disabled} onChange={(e) => onChange(valueFromDisplay(e.currentTarget.value))} onBlur={(e) => handle(e.currentTarget.value)} onKeyDown={onInputKeyDown} />
         {showUnit ? <em className="cc-unit">{unit}</em> : null}
       </span>
     </label>

@@ -824,6 +824,7 @@
   transform: translateX(-50%) translateY(-4px);
   padding: 5px 9px;
   font-size: 12px;
+  height: fit-content;
   line-height: 1;
   white-space: nowrap;
   color: var(--bg-panel);

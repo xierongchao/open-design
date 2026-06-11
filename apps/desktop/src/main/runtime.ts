@@ -1998,9 +1998,11 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     });
     window.on("enter-full-screen", () => {
       enteringFullscreen = false;
+      window.webContents.send("od:fullscreen-state", true);
     });
     window.on("leave-full-screen", () => {
       enteringFullscreen = false;
+      window.webContents.send("od:fullscreen-state", false);
     });
     window.on("close", (event) => {
       if (stopped) return;

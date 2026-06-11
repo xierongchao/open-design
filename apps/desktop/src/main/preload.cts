@@ -189,6 +189,8 @@ const project = {
       .catch((error: unknown) => pickWorkingDirFailure(reasonFromError(error))),
 };
 
+const FULLSCREEN_STATE_EVENT = 'od:fullscreen-state';
+
 const shell = {
   openExternal: async (url: string): Promise<OpenDesignHostActionResult> => {
     try {
@@ -216,6 +218,15 @@ const shell = {
     } catch (error) {
       return actionFailure(reasonFromError(error));
     }
+  },
+  onFullscreenChange: (callback: (isFullscreen: boolean) => void): (() => void) => {
+    const handler = (_event: unknown, isFullscreen: boolean): void => {
+      callback(isFullscreen);
+    };
+    ipcRenderer.on(FULLSCREEN_STATE_EVENT, handler);
+    return () => {
+      ipcRenderer.removeListener(FULLSCREEN_STATE_EVENT, handler);
+    };
   },
 };
 

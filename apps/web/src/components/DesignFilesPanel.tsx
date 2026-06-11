@@ -199,6 +199,7 @@ export function DesignFilesPanel({
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const resolvedActiveFile = activeFileName === undefined ? activeFile : activeFileName;
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchMode, setBatchMode] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [folderDraft, setFolderDraft] = useState('');
@@ -222,6 +223,12 @@ export function DesignFilesPanel({
   const [currentDir, setCurrentDir] = useState<string>(() => navState?.currentDir ?? '');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [rootExpanded, setRootExpanded] = useState(true);
+  const [treePaneWidth, setTreePaneWidth] = useState(() => readTreePaneWidth(projectId));
+  const [resizingTreePane, setResizingTreePane] = useState(false);
+  const treePaneResizeRef = useRef<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
 
   useEffect(() => {
     setFolderOrder(readFolderOrder(projectId));
@@ -815,6 +822,7 @@ export function DesignFilesPanel({
     testId?: string,
     onContextMenu?: (ev: ReactMouseEvent<HTMLDivElement>) => void,
     draggableFolder?: { path: string; label: string },
+    style?: CSSProperties,
   ) {
     const deletingThisFolder = folderAction?.kind === 'deleting' && folderAction.path === targetDir;
     const movingIntoThisFolder = folderAction?.kind === 'moving' && folderAction.path === targetDir;
@@ -831,6 +839,7 @@ export function DesignFilesPanel({
           draggingThisFolder ? 'is-folder-dragging' : '',
           deletingThisFolder || movingIntoThisFolder ? 'is-busy' : '',
         ].filter(Boolean).join(' ')}
+        style={style}
         data-testid={testId}
         draggable={Boolean(draggableFolder && onRenameFolder)}
         onClick={onClick}
@@ -952,6 +961,7 @@ export function DesignFilesPanel({
       undefined,
       undefined,
       undefined,
+      undefined,
     );
   }
 
@@ -992,22 +1002,21 @@ export function DesignFilesPanel({
           className="df-row-check"
           role="checkbox"
           aria-checked={isSelected}
-          tabIndex={0}
+          tabIndex={batchMode ? 0 : -1}
           onClick={(event) => {
             event.stopPropagation();
-            toggleSelect(file.name);
+            if (batchMode) toggleSelect(file.name);
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
               event.stopPropagation();
-              toggleSelect(file.name);
+              if (batchMode) toggleSelect(file.name);
             }
           }}
         >
           {isSelected ? '☑' : '☐'}
         </span>
-        <span className="df-tree-toggle-spacer" aria-hidden />
         <span
           className="df-tree-file-icon"
           data-kind={category}
@@ -1105,7 +1114,7 @@ export function DesignFilesPanel({
         currentDir === node.path ? 'active' : '',
       ].filter(Boolean).join(' '),
       <>
-        <span className="df-tree-indent" style={{ '--df-tree-depth': depth } as CSSProperties} aria-hidden />
+        <span className="df-tree-indent" aria-hidden />
         <button
           type="button"
           className="df-tree-toggle"
@@ -1163,6 +1172,7 @@ export function DesignFilesPanel({
         openFolderMenuFor(node.path, ev.currentTarget);
       },
       { path: node.path, label: node.name },
+      { '--df-tree-depth': depth } as CSSProperties,
     );
     return (
       <div key={`dir:${node.path}`} className="df-tree-node">
@@ -1360,49 +1370,36 @@ export function DesignFilesPanel({
     }
   }
 
-  const breadcrumbs = (
-    <nav className="df-breadcrumbs" aria-label={t('designFiles.crumbs')}>
-      {currentDir === '' ? (
-        <span className="df-breadcrumb-current">
-          {rootDirName ?? t('designFiles.crumbs')}
-        </span>
-      ) : (
-        <button
-          type="button"
-          className="df-breadcrumb-btn"
-          onClick={() => setCurrentDir('')}
-        >
-          {rootDirName ?? t('designFiles.crumbs')}
-        </button>
-      )}
-      {currentDir.split('/').filter(Boolean).map((segment, idx, parts) => {
-        const path = parts.slice(0, idx + 1).join('/');
-        const isLast = idx === parts.length - 1;
-        return (
-          <span key={path} className="df-breadcrumb-segment">
-            <span className="df-breadcrumb-sep" aria-hidden>/</span>
-            {isLast ? (
-              <span className="df-breadcrumb-current">{segment}</span>
-            ) : (
-              <button
-                type="button"
-                className="df-breadcrumb-btn"
-                onClick={() => setCurrentDir(path)}
-              >
-                {segment}
-              </button>
-            )}
-          </span>
-        );
-      })}
-    </nav>
-  );
-
   const visibleUploadError = uploadError ?? dropReadError;
   const hasSelection = selected.size > 0;
 
+  useEffect(() => {
+    if (!resizingTreePane) return;
+    function onPointerMove(event: PointerEvent) {
+      const ref = treePaneResizeRef.current;
+      if (!ref) return;
+      const delta = event.clientX - ref.startX;
+      const nextWidth = Math.max(200, Math.min(600, ref.startWidth + delta));
+      setTreePaneWidth(nextWidth);
+    }
+    function onPointerUp() {
+      setResizingTreePane(false);
+      treePaneResizeRef.current = null;
+    }
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [resizingTreePane]);
+
+  useEffect(() => {
+    writeTreePaneWidth(projectId, treePaneWidth);
+  }, [projectId, treePaneWidth]);
+
   return (
-    <div className={`df-panel no-preview ${hasSelection ? 'has-selection' : ''} ${draggedFolderPath ? 'is-folder-dragging' : ''}`}>
+    <div className={`df-panel no-preview ${batchMode ? 'df-panel--batch' : ''} ${hasSelection ? 'has-selection' : ''} ${draggedFolderPath ? 'is-folder-dragging' : ''}`}>
       {reloading ? (
         <div className="df-reloading-overlay" data-testid="design-files-reloading">
           <span className="loading-spinner">
@@ -1412,9 +1409,6 @@ export function DesignFilesPanel({
         </div>
       ) : null}
       <div className="df-main">
-        <div className="df-topbar">
-          <div className="df-topbar-left">{breadcrumbs}</div>
-        </div>
         <div className="df-body">
           {visibleUploadError ? (
             <div className="df-upload-banner" data-testid="upload-error-banner">
@@ -1485,11 +1479,26 @@ export function DesignFilesPanel({
               </div>
             </div>
           ) : null}
-          <div className="df-browser">
+          <div className="df-browser" style={{ '--df-tree-pane-width': `${treePaneWidth}px` } as CSSProperties}>
             <aside className="df-tree-pane" aria-label={t('designFiles.sectionFolders')}>
               <div className="df-tree-head">
                 <span>{t('designFiles.sectionFolders')}</span>
                 <div className="df-tree-create-menu-wrap">
+                  <button
+                    type="button"
+                    className={`df-tree-batch-toggle od-tooltip${batchMode ? ' is-active' : ''}`}
+                    aria-label={t('designFiles.batchSelect')}
+                    title={t('designFiles.batchSelect')}
+                    data-tooltip={t('designFiles.batchSelect')}
+                    data-tooltip-placement="bottom"
+                    onClick={() => {
+                      const next = !batchMode;
+                      setBatchMode(next);
+                      if (!next) clearSelection();
+                    }}
+                  >
+                    <Icon name="check" size={13} />
+                  </button>
                   <button
                     type="button"
                     className="df-tree-add od-tooltip"
@@ -1577,13 +1586,24 @@ export function DesignFilesPanel({
                         {renderCreateFolderRow()}
                       </div>
                     ) : null}
-                    {folderTree.map((node) => renderTreeNode(node))}
-                    {(filesByDirectory.get('') ?? []).map((file) => renderTreeFile(file, 0))}
+                    {folderTree.map((node) => renderTreeNode(node, 1))}
+                    {(filesByDirectory.get('') ?? []).map((file) => renderTreeFile(file, 1))}
                     {liveArtifacts.map(renderTreeLiveArtifact)}
                   </>
                 ) : null}
               </div>
             </aside>
+            <div
+              className={`df-tree-resize-handle${resizingTreePane ? ' is-resizing' : ''}`}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                treePaneResizeRef.current = {
+                  startX: event.clientX,
+                  startWidth: treePaneWidth,
+                };
+                setResizingTreePane(true);
+              }}
+            />
             <section
               className={`df-content-pane ${draggingFiles ? 'dragging' : ''}`}
               onDragEnter={(event) => {
@@ -2158,4 +2178,29 @@ function normalizeFolderPath(path: string): string {
 function dirnameForPath(path: string): string {
   const slash = path.lastIndexOf('/');
   return slash >= 0 ? path.slice(0, slash) : '';
+}
+
+const TREE_PANE_WIDTH_STORAGE_PREFIX = 'open-design:design-files-tree-pane-width:v1:';
+
+function readTreePaneWidth(projectId: string): number {
+  if (typeof window === 'undefined') return 280;
+  try {
+    const raw = window.localStorage.getItem(`${TREE_PANE_WIDTH_STORAGE_PREFIX}${projectId}`);
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    return Number.isFinite(parsed) ? Math.max(200, Math.min(600, parsed)) : 280;
+  } catch {
+    return 280;
+  }
+}
+
+function writeTreePaneWidth(projectId: string, width: number): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      `${TREE_PANE_WIDTH_STORAGE_PREFIX}${projectId}`,
+      String(Math.max(200, Math.min(600, Math.round(width)))),
+    );
+  } catch {
+    /* localStorage may be disabled */
+  }
 }
