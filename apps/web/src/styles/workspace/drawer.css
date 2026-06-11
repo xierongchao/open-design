@@ -1447,6 +1447,10 @@
   padding: 0;
   justify-content: center;
 }
+.app .ws-tabs-actions .chrome-action-icon.is-active{
+    background: var(--accent-tint);
+    color: var(--accent-strong);
+}
 .app .ws-tabs-actions .handoff-trigger {
   height: 28px;
   min-height: 28px;

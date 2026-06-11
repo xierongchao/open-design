@@ -1805,7 +1805,14 @@ export function ChatPane({
             <Icon name="comment" size={16} />
           </button>
           {showConvList ? (
-            <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
+            <div 
+              className="chat-history-menu" 
+              role="menu" 
+              data-testid="conversation-history-menu"
+              style={{
+                width: composerPortalRect ? `calc(${composerPortalRect.width}px - 20px)` : '300px',
+              }}  
+            >
               <div className="chat-history-menu-head">
                 <span className="chat-history-menu-title">
                   {t('chat.conversationsHeading')}

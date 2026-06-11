@@ -90,9 +90,6 @@ import {
   type SketchItem,
 } from './sketch-model';
 import { AnimatePresence } from 'motion/react';
-import { GenerationPreviewStage } from './GenerationPreviewStage';
-import { AmrGuidance } from './AmrGuidance';
-import { buildGenerationPreviewState } from '../runtime/generation-preview';
 import type { ChatMessage } from '../types';
 
 interface Props {
@@ -597,21 +594,6 @@ export function FileWorkspace({
       cancelled = true;
     };
   }, [projectId]);
-
-  const generationPreview = useMemo(
-    () =>
-      buildGenerationPreviewState({
-        designSystemProject: Boolean(designSystemProject),
-        messages,
-        streaming: Boolean(streaming),
-        activeTab,
-        projectFiles: visibleFiles,
-        liveArtifacts,
-        artifactHtml,
-        conversationError,
-      }),
-    [designSystemProject, messages, streaming, activeTab, visibleFiles, liveArtifacts, artifactHtml, conversationError],
-  );
 
   // Pull the persisted active tab in when the parent's hydration completes
   // (or on project switch). Fall back to the Design Files browser so a
@@ -1972,14 +1954,6 @@ export function FileWorkspace({
     visibleFiles.length === 0
     && liveArtifactEntries.length === 0
     && projectFolders.length === 0;
-  const showGenerationPreview = Boolean(generationPreview)
-    && activeTab !== DESIGN_SYSTEM_TAB
-    && (activeTab !== DESIGN_FILES_TAB || designFilesTabIsEmpty)
-    && !isBrowserTabId(activeTab)
-    && !isSideChatTabId(activeTab)
-    && !isTerminalTabId(activeTab)
-    && !activeLiveArtifact
-    && !activeFile;
 
   // The "+" launcher's create-new actions come from the registry. `openTab`
   // reuses the same tab-state path as opening a file so a new terminal:<id>
@@ -2353,40 +2327,6 @@ export function FileWorkspace({
             onUseDesignSystem={onUseDesignSystem}
             onConnectRepo={onConnectRepo}
             githubConnected={githubConnected}
-          />
-        ) : showGenerationPreview && generationPreview ? (
-          <GenerationPreviewStage
-            model={generationPreview}
-            onRetry={
-              generationPreview.retryTarget && onRetry
-                ? () => onRetry(generationPreview.retryTarget!)
-                : undefined
-            }
-            onAuthorizeAndRetry={
-              generationPreview.retryTarget && onAuthorizeAndRetry
-                ? () => onAuthorizeAndRetry(generationPreview.retryTarget!)
-                : undefined
-            }
-            onLaunchTerminalAuth={onLaunchTerminalAuth}
-            amrAuthorizeSourceDetail="generation_preview_authorize_retry"
-            amrRechargeSourceDetail="generation_preview_recharge"
-            amrGuidance={
-              generationPreview.promoteAmrSwitch
-                && generationPreview.errorCode
-                && generationPreview.retryTarget
-                && onAuthorizeAndRetry ? (
-                <AmrGuidance
-                  errorCode={generationPreview.errorCode}
-                  projectId={projectId}
-                  projectKind={projectKind}
-                  conversationId={conversationId ?? null}
-                  assistantMessageId={generationPreview.retryTarget.id}
-                  runId={generationPreview.retryTarget.runId ?? null}
-                  sourceDetail="generation_preview_switch_retry_card"
-                  onActivate={() => onAuthorizeAndRetry(generationPreview.retryTarget!)}
-                />
-              ) : undefined
-            }
           />
         ) : activeTab === DESIGN_FILES_TAB ? (
           <DesignFilesPanel

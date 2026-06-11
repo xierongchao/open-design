@@ -1357,14 +1357,16 @@ a.avatar-item:visited {
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
+  transition: color 120ms ease, background 120ms ease;
 }
 .workspace-side-tab:hover {
   color: var(--text);
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 .workspace-side-tab[aria-selected='true'] {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--accent-strong);
+  background: var(--accent-tint);
+  font-weight: 600;
 }
 .workspace-side-tab:focus-visible {
   outline: 2px solid var(--focus);

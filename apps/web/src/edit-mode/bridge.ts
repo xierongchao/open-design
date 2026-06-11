@@ -516,11 +516,20 @@ export function buildManualEditBridge(enabled: boolean): string {
       return;
     }
     if (ev.data.type === 'od-edit-selected-target') {
+      var _selEl = ev.data.id ? findById(ev.data.id) : null;
+      if (_selEl && _selEl.getAttribute('data-od-editing') === 'true') return;
       setSelectedTarget(ev.data.id || null);
       return;
     }
     if (ev.data.type === 'od-edit-selected-targets') {
-      setSelectedTargets(Array.isArray(ev.data.ids) ? ev.data.ids : []);
+      var _ids = Array.isArray(ev.data.ids) ? ev.data.ids : [];
+      var _filtered = [];
+      for (var _i = 0; _i < _ids.length; _i++) {
+        var _el = findById(_ids[_i]);
+        if (_el && _el.getAttribute('data-od-editing') === 'true') continue;
+        _filtered.push(_ids[_i]);
+      }
+      setSelectedTargets(_filtered);
       return;
     }
     if (ev.data.type === 'od-edit-hover-reset') {
@@ -914,23 +923,12 @@ export function buildManualEditBridgeStyle(): string {
 html[data-od-edit-mode] body * { cursor: pointer !important; }
 html[data-od-edit-mode][data-od-edit-panning] body * { cursor: grabbing !important; }
 html[data-od-edit-mode] [data-od-edit-hover] {
-  outline: 2px solid rgba(37, 99, 235, 0.5);
-  outline-offset: 0;
-}
-html[data-od-edit-mode] td[data-od-edit-hover],
-html[data-od-edit-mode] th[data-od-edit-hover] {
-  outline: none;
-  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.5);
+  outline: 1px solid rgba(37, 99, 235, 0.5);
+  outline-offset: -1px;
 }
 html[data-od-edit-mode] [data-od-edit-selected] {
-  outline: 2px solid #2563eb !important;
-  outline-offset: 0;
-  cursor: move;
-}
-html[data-od-edit-mode] td[data-od-edit-selected],
-html[data-od-edit-mode] th[data-od-edit-selected] {
-  outline: none !important;
-  box-shadow: inset 0 0 0 2px #2563eb;
+  outline: 1px solid #2563eb !important;
+  outline-offset: -1px;
   cursor: move;
 }
 html[data-od-edit-mode] [data-od-edit-dragging],
@@ -943,8 +941,8 @@ html[data-od-edit-mode] [data-od-reorder-target] {
   transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1), outline-offset 180ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 html[data-od-edit-mode] [data-od-editing="true"] {
-  outline: 2px solid #2563eb !important;
-  outline-offset: 2px;
+  outline: 1px solid #2563eb !important;
+  outline-offset: -1px;
   background: rgba(37, 99, 235, 0.06);
   cursor: text !important;
 }

@@ -212,6 +212,8 @@ import {
   resolveShareUrl,
   setMarkdownCodeBlockCopiedState,
   setPreviewViewportCached,
+  readCanvasSizeFromSource,
+  writeCanvasSizeToSource,
   setSlideStateCached,
   shareUrlForDeployment,
   deploymentTimestamp,
@@ -4259,7 +4261,9 @@ function HtmlViewer({
   // Custom viewport dimensions set through the PageInspector canvas size
   // controls. When set, these override the preset values (e.g. 1920x1080
   // for desktop) in the preview-viewport CSS variables and auto-fit math.
-  const [customViewportSize, setCustomViewportSize] = useState<{ width: number; height: number } | null>(null);
+  const [customViewportSize, setCustomViewportSize] = useState<{ width: number; height: number } | null>(
+    () => readCanvasSizeFromSource(liveHtml ?? ''),
+  );
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const urlPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const srcDocPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -4792,6 +4796,8 @@ function HtmlViewer({
       if (text == null) return;
       setSource(text);
       sourceRef.current = text;
+      const canvasSize = readCanvasSizeFromSource(text);
+      setCustomViewportSize(canvasSize);
     });
     return () => {
       cancelled = true;
@@ -4833,6 +4839,16 @@ function HtmlViewer({
   // postMessage instead, so the canvas never has to reload.
   useEffect(() => {
     if (manualEditMode && manualEditFrozenSource === null && livePreviewSource != null) {
+      setManualEditFrozenSource(livePreviewSource);
+    }
+  }, [manualEditMode, manualEditFrozenSource, livePreviewSource]);
+  // When an external source change arrives while in edit mode (e.g. AI agent
+  // rewrites the file via the daemon), unfreeze the preview so the srcDoc
+  // iframe rebuilds with the latest content instead of staying on the stale
+  // snapshot taken at edit-mode entry.
+  useEffect(() => {
+    if (!manualEditMode || manualEditFrozenSource == null || livePreviewSource == null) return;
+    if (livePreviewSource !== manualEditFrozenSource) {
       setManualEditFrozenSource(livePreviewSource);
     }
   }, [manualEditMode, manualEditFrozenSource, livePreviewSource]);
@@ -7917,7 +7933,20 @@ function HtmlViewer({
       busy={manualEditSaving}
       pageStylesEnabled={manualEditPageStylesEnabled}
       viewportSize={manualEditViewportSize}
-      onViewportSizeChange={setCustomViewportSize}
+      onViewportSizeChange={(size) => {
+        setCustomViewportSize(size);
+        if (!size) return;
+        const current = sourceRef.current;
+        if (current == null) return;
+        const updated = writeCanvasSizeToSource(current, size);
+        if (updated !== current) {
+          void writeProjectTextFileDetailed(projectId, file.name, updated, {
+            artifactManifest: file.artifactManifest,
+          });
+          setSource(updated);
+          sourceRef.current = updated;
+        }
+      }}
       onSelectTarget={(target) => {
         void selectManualEditTarget(target);
       }}

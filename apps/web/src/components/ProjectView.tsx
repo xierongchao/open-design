@@ -158,12 +158,11 @@ import { AvatarMenu } from './AvatarMenu';
 import { EntrySettingsMenu } from './EntrySettingsMenu';
 import { HandoffButton } from './HandoffButton';
 import { Icon } from './Icon';
-import { ProjectDesignSystemPicker } from './ProjectDesignSystemPicker';
+import { DesignSystemPicker } from './DesignSystemPicker';
 import { PluginDetailsModal } from './PluginDetailsModal';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
 import { ChatPane } from './ChatPane';
 import type { QuestionFormOpenRequest } from './AssistantMessage';
-import { WorkingDirPill } from './WorkingDirPill';
 import type { ChatSendMeta } from './ChatComposer';
 import {
   CritiqueTheaterMount,
@@ -5576,7 +5575,7 @@ export function ProjectView({
                 </span>
               )}
               designSystemPicker={(
-                <ProjectDesignSystemPicker
+                <DesignSystemPicker
                   designSystems={designSystems}
                   selectedId={project.designSystemId ?? null}
                   onChange={handleChangeDesignSystemId}
@@ -5599,12 +5598,6 @@ export function ProjectView({
                     className="workspace-edit-panel-host"
                     aria-label={t('fileViewer.edit')}
                   />
-                  {!editSelectionActive ? (
-                    <div className="workspace-edit-panel-empty">
-                      <Icon name="edit" size={18} />
-                      <span>{t('chat.inspect.editHint')}</span>
-                    </div>
-                  ) : null}
                 </div>
               </div>
             </div>
@@ -5707,26 +5700,6 @@ export function ProjectView({
           backLabel={t('project.backToProjects')}
           headerActions={(
             <>
-              <WorkingDirPill
-                projectId={project.id}
-                resolvedDir={projectDetail.resolvedDir}
-                onReplaced={({ project: updated }) => {
-                  if (updated) onProjectChange(updated);
-                  // The new working dir has a different file tree, so the
-                  // current listing, breadcrumb nav, and open tabs are all
-                  // stale. Refetch files; DesignFilesPanel's self-heal then
-                  // drops the now-unmatched currentDir back to root.
-                  // projectDetail.refresh() repulls resolvedDir so the
-                  // breadcrumb root + pill show the new folder name even on
-                  // the Electron path, which reports no updated project.
-                  setWorkingDirReplacing(true);
-                  refreshFilesAndDesignMd();
-                  void Promise.all([
-                    refreshWorkspaceItems(),
-                    projectDetail.refresh(),
-                  ]).finally(() => setWorkingDirReplacing(false));
-                }}
-              />
               <EntrySettingsMenu
                 config={config}
                 onThemeChange={handleThemeChange}

@@ -38,7 +38,7 @@ import {
   trackComposerSessionModeClick,
   trackHomeChatComposerClick,
 } from '../analytics/events';
-import { sessionModeToTracking } from '@open-design/contracts/analytics';
+import { executionModeToTracking } from '@open-design/contracts/analytics';
 import {
   chipsForGroup,
   type ChipGroup,
@@ -1470,8 +1470,8 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
                     page_name: 'home',
                     area: 'chat_composer',
                     element: 'session_mode_toggle',
-                    mode_before: sessionModeToTracking(sessionMode),
-                    mode_after: sessionModeToTracking(next),
+                    mode_before: executionModeToTracking(sessionMode),
+                    mode_after: executionModeToTracking(next),
                   });
                 }
                 onSessionModeChange?.(next);

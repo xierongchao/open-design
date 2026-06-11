@@ -688,6 +688,31 @@ export function setPreviewViewportCached(key: string, viewport: PreviewViewportI
   }
 }
 
+const OD_CANVAS_META_REGEX = /<meta\s+name=["']od-canvas["']\s+content=["']width=(\d+),height=(\d+)["']\s*\/?>/;
+
+export function readCanvasSizeFromSource(source: string): { width: number; height: number } | null {
+  const match = source.match(OD_CANVAS_META_REGEX);
+  if (!match || !match[1] || !match[2]) return null;
+  const width = parseInt(match[1], 10);
+  const height = parseInt(match[2], 10);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return { width, height };
+}
+
+export function writeCanvasSizeToSource(source: string, size: { width: number; height: number }): string {
+  const metaTag = `<meta name="od-canvas" content="width=${size.width},height=${size.height}">`;
+  if (OD_CANVAS_META_REGEX.test(source)) {
+    return source.replace(OD_CANVAS_META_REGEX, metaTag);
+  }
+  if (source.includes('</head>')) {
+    return source.replace('</head>', `  ${metaTag}\n</head>`);
+  }
+  if (source.includes('<head>')) {
+    return source.replace('<head>', `<head>\n  ${metaTag}`);
+  }
+  return `<head>${metaTag}</head>` + source;
+}
+
 // ---------------------------------------------------------------------------
 // Deploy URL / metadata helpers
 // ---------------------------------------------------------------------------
