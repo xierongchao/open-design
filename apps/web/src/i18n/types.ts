@@ -2322,6 +2322,8 @@ export interface Dict {
   'chat.example3Title': string;
   'chat.example3Tag': string;
   'chat.example3Prompt': string;
+  'chat.connectionDropped': string;
+  'chat.resumeRunCta': string;
 
   // Preview modal
   'preview.shareMenu': string;
@@ -3017,6 +3019,7 @@ export interface Dict {
   'qf.cardSampleText': string;
   'questions.tabLabel': string;
   'questions.banner': string;
+  'questions.bannerAnswered': string;
   'questions.continue': string;
   'questions.generating': string;
   'questions.skipAll': string;
@@ -3225,4 +3228,48 @@ export interface Dict {
   'diagnostics.exporting': string;
   'diagnostics.exportSuccess': string;
   'diagnostics.exportFailed': string;
+  'homeWorkingDir.applyFailed': string;
+  'homeWorkingDir.clear': string;
+  'homeWorkingDir.hint': string;
+  'homeWorkingDir.missing': string;
+  'homeWorkingDir.pick': string;
+  'homeWorkingDir.recent': string;
+  'homeWorkingDir.recentEmpty': string;
+  'homeWorkingDir.replace': string;
+  'homeWorkingDir.trigger': string;
+  'nextStep.contribute': string;
+  'nextStep.download': string;
+  'nextStep.more': string;
+  'pluginsHome.subfacet.app-prototypes': string;
+  'pluginsHome.subfacet.avatar-portrait': string;
+  'pluginsHome.subfacet.brand-design': string;
+  'pluginsHome.subfacet.brand-visuals': string;
+  'pluginsHome.subfacet.business-dashboards': string;
+  'pluginsHome.subfacet.cinematic-story': string;
+  'pluginsHome.subfacet.course-training': string;
+  'pluginsHome.subfacet.creative-decks': string;
+  'pluginsHome.subfacet.data-explainers': string;
+  'pluginsHome.subfacet.developer-tools': string;
+  'pluginsHome.subfacet.docs-reports': string;
+  'pluginsHome.subfacet.engineering-talks': string;
+  'pluginsHome.subfacet.illustration-style': string;
+  'pluginsHome.subfacet.landing-marketing': string;
+  'pluginsHome.subfacet.marketing-product': string;
+  'pluginsHome.subfacet.motion-effects': string;
+  'pluginsHome.subfacet.pitch-business': string;
+  'pluginsHome.subfacet.product-sales': string;
+  'pluginsHome.subfacet.reports-briefings': string;
+  'pluginsHome.subfacet.social-content': string;
+  'pluginsHome.subfacet.social-short-form': string;
+  'pluginsHome.subfacet.storyboards-motion-refs': string;
+  'pluginsHome.subfacet.ui-product-mockups': string;
+  'preview.usePlugin': string;
+  'updater.installRestart': string;
+  'updater.installingRestart': string;
+  'updater.payloadReadyGeneric': string;
+  'updater.payloadReadyVersion': string;
+  'preview.replicateContent': string;
+  'preview.replicateContentDesc': string;
+  'preview.usePluginOnly': string;
+  'preview.usePluginOnlyDesc': string;
 }

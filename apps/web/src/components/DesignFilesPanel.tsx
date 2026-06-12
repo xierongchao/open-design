@@ -948,10 +948,14 @@ export function DesignFilesPanel({
             <Icon name={rootExpanded ? 'chevron-down' : 'chevron-right'} size={12} />
           ) : null}
         </button>
-        <span className="df-tree-folder-icon" aria-hidden>
+        <span
+          className="df-tree-folder-icon"
+          aria-hidden
+          onDoubleClick={(e) => { e.stopPropagation(); if (hasChildren) setRootExpanded((expanded) => !expanded); }}
+        >
           <Icon name="folder-filled" size={15} />
         </span>
-        <button type="button" className="df-row-name-btn" onClick={() => openFolderPath('')}>
+        <button type="button" className="df-row-name-btn" onClick={() => openFolderPath('')} onDoubleClick={(e) => { e.stopPropagation(); if (hasChildren) setRootExpanded((expanded) => !expanded); }}>
           <span className="df-tree-name" title={rootDirName ?? t('designFiles.crumbs')}>
             {rootDirName ?? t('designFiles.crumbs')}
           </span>
@@ -1130,7 +1134,11 @@ export function DesignFilesPanel({
             <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
           ) : null}
         </button>
-        <span className="df-tree-folder-icon" aria-hidden>
+        <span
+          className="df-tree-folder-icon"
+          aria-hidden
+          onDoubleClick={(e) => { e.stopPropagation(); if (hasChildren) toggleFolderExpansion(node.path); }}
+        >
           <Icon name={currentDir === node.path ? 'folder-filled' : 'folder'} size={15} />
         </span>
         {isRenamingThisFolder && folderRenaming ? (
@@ -1157,7 +1165,7 @@ export function DesignFilesPanel({
             }}
           />
         ) : (
-          <button type="button" className="df-row-name-btn" onClick={() => openFolderPath(node.path)}>
+          <button type="button" className="df-row-name-btn" onClick={() => openFolderPath(node.path)} onDoubleClick={(e) => { e.stopPropagation(); if (hasChildren) toggleFolderExpansion(node.path); }}>
             <span className="df-tree-name" title={node.name}>{node.name}</span>
           </button>
         )}

@@ -716,95 +716,6 @@ export function buildManualEditBridge(enabled: boolean): string {
   }, true);
   document.addEventListener('pointerdown', function(ev){
     if (!enabled) return;
-    if (isMiddleButtonPan(ev) || spaceHeld) return;
-    if (ev.target && ev.target.getAttribute && ev.target.getAttribute('data-od-resize-handle')) return;
-    var el = closestTarget(ev);
-    if (!el) return;
-    var selected = document.querySelector('[data-od-edit-selected]');
-    if (!selected || el !== selected) return;
-    var kind = inferKind(el);
-    if (kind === 'text' || kind === 'link') return;
-    ev.preventDefault();
-    var startX = ev.clientX;
-    var startY = ev.clientY;
-    var startRect = el.getBoundingClientRect();
-    var isDragging = false;
-    var snapEdges = collectSnapEdges();
-    var ownerDoc = el.ownerDocument || document;
-    var latestDx = 0;
-    var latestDy = 0;
-    var lastClientX = startX;
-    var lastClientY = startY;
-    var activeDrop = null;
-    function onMove(me) {
-      var dx = me.clientX - startX;
-      var dy = me.clientY - startY;
-      if (!isDragging && (Math.abs(dx) > dragThreshold || Math.abs(dy) > dragThreshold)) {
-        isDragging = true;
-        el.setAttribute('data-od-edit-dragging', 'true');
-      }
-      if (!isDragging) return;
-      me.preventDefault();
-      var newLeft = startRect.left + dx;
-      var newTop = startRect.top + dy;
-      var w = startRect.right - startRect.left;
-      var h = startRect.bottom - startRect.top;
-      var proposedRect = { left: newLeft, right: newLeft + w, top: newTop, bottom: newTop + h };
-      var snap = findSnap(proposedRect, snapEdges);
-      var finalDx = dx + (snap.dx || 0);
-      var finalDy = dy + (snap.dy || 0);
-      latestDx = finalDx;
-      latestDy = finalDy;
-      lastClientX = me.clientX;
-      lastClientY = me.clientY;
-      el.style.transform = 'translate(' + finalDx + 'px,' + finalDy + 'px)';
-      activeDrop = findDropTarget(el, me.clientX, me.clientY);
-      setDropPreview(activeDrop);
-      // Update resize handles position
-      var visRect = { left: startRect.left + finalDx, top: startRect.top + finalDy,
-        right: startRect.right + finalDx, bottom: startRect.bottom + finalDy };
-      for (var i = 0; i < resizeHandles.length; i++) {
-        positionResizeHandle(resizeHandles[i], resizeHandles[i].getAttribute('data-od-resize-handle'), visRect);
-      }
-    }
-    function onUp(upEvent) {
-      ownerDoc.removeEventListener('pointermove', onMove, true);
-      ownerDoc.removeEventListener('pointerup', onUp, true);
-      ownerDoc.removeEventListener('pointercancel', onUp, true);
-      el.removeAttribute('data-od-edit-dragging');
-      if (isDragging) {
-        wasDrag = true;
-        if (upEvent) {
-          lastClientX = Number(upEvent.clientX) || lastClientX;
-          lastClientY = Number(upEvent.clientY) || lastClientY;
-        }
-        var drop = activeDrop || findDropTarget(el, lastClientX, lastClientY);
-        el.style.transform = '';
-        clearDropPreview();
-        if (drop && drop.id) {
-          window.parent.postMessage({
-            type: 'od-edit-move-end',
-            id: stableId(el),
-            targetId: drop.id,
-            position: drop.position
-          }, '*');
-        }
-        removeSnapOverlay();
-        // Re-position resize handles after clearing the transient transform.
-        var endRect = { left: startRect.left + latestDx, top: startRect.top + latestDy,
-          right: startRect.right + latestDx, bottom: startRect.bottom + latestDy,
-          width: startRect.width, height: startRect.height };
-        for (var k = 0; k < resizeHandles.length; k++) {
-          positionResizeHandle(resizeHandles[k], resizeHandles[k].getAttribute('data-od-resize-handle'), endRect);
-        }
-      }
-    }
-    ownerDoc.addEventListener('pointermove', onMove, true);
-    ownerDoc.addEventListener('pointerup', onUp, true);
-    ownerDoc.addEventListener('pointercancel', onUp, true);
-  }, true);
-  document.addEventListener('pointerdown', function(ev){
-    if (!enabled) return;
     if (!isMiddleButtonPan(ev) && !isSpacePan(ev)) return;
     setViewportPanActive(true);
     ev.preventDefault();
@@ -910,6 +821,45 @@ export function buildManualEditBridge(enabled: boolean): string {
         window.parent.postMessage({ type: 'od-edit-deselect' }, '*');
       }
     }
+    // Arrow keys: swap position with siblings in flex containers
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp' || ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+      var selEl = document.querySelector('[data-od-edit-selected]');
+      if (!selEl) return;
+      var parent = selEl.parentElement;
+      if (!parent) return;
+      var parentComputed = window.getComputedStyle(parent);
+      var parentDisplay = parentComputed.display || '';
+      if (parentDisplay.indexOf('flex') < 0 && parentDisplay.indexOf('grid') < 0) return;
+      var direction = parentComputed.flexDirection || '';
+      var isRow = direction.indexOf('row') === 0;
+      var siblings = Array.prototype.slice.call(parent.children).filter(function(c){ return !isHostNode(c); });
+      var idx = siblings.indexOf(selEl);
+      if (idx < 0) return;
+      var swapIdx = -1;
+      if (ev.key === 'ArrowDown' && !isRow) swapIdx = idx + 1;
+      else if (ev.key === 'ArrowUp' && !isRow) swapIdx = idx - 1;
+      else if (ev.key === 'ArrowRight' && isRow) swapIdx = idx + 1;
+      else if (ev.key === 'ArrowLeft' && isRow) swapIdx = idx - 1;
+      if (swapIdx < 0 || swapIdx >= siblings.length) return;
+      ev.preventDefault();
+      var swapEl = siblings[swapIdx];
+      var position = swapIdx > idx ? 'after' : 'before';
+      // Optimistic DOM swap so the user sees instant feedback
+      if (position === 'after') {
+        if (swapEl.nextSibling) parent.insertBefore(selEl, swapEl.nextSibling);
+        else parent.appendChild(selEl);
+      } else {
+        parent.insertBefore(selEl, swapEl);
+      }
+      // Reposition resize handles after DOM reorder
+      refreshResizeHandles(selEl);
+      window.parent.postMessage({
+        type: 'od-edit-move-end',
+        id: stableId(selEl),
+        targetId: stableId(swapEl),
+        position: position
+      }, '*');
+    }
   }, true);
   window.addEventListener('resize', postTargets);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', postTargets);
@@ -920,7 +870,7 @@ export function buildManualEditBridge(enabled: boolean): string {
 
 export function buildManualEditBridgeStyle(): string {
   return `<style data-od-edit-bridge-style>
-html[data-od-edit-mode] body * { cursor: pointer !important; }
+html[data-od-edit-mode] body * { cursor: pointer !important; user-select: none !important; -webkit-user-select: none !important; }
 html[data-od-edit-mode][data-od-edit-panning] body * { cursor: grabbing !important; }
 html[data-od-edit-mode] [data-od-edit-hover] {
   outline: 1px solid rgba(37, 99, 235, 0.5);
@@ -929,7 +879,6 @@ html[data-od-edit-mode] [data-od-edit-hover] {
 html[data-od-edit-mode] [data-od-edit-selected] {
   outline: 1px solid #2563eb !important;
   outline-offset: -1px;
-  cursor: move;
 }
 html[data-od-edit-mode] [data-od-edit-dragging],
 html[data-od-edit-mode] [data-od-edit-dragging] * {
@@ -945,6 +894,8 @@ html[data-od-edit-mode] [data-od-editing="true"] {
   outline-offset: -1px;
   background: rgba(37, 99, 235, 0.06);
   cursor: text !important;
+  user-select: text !important;
+  -webkit-user-select: text !important;
 }
 </style>`;
 }

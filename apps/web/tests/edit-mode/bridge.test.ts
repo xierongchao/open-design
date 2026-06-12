@@ -862,7 +862,7 @@ describe('manual edit bridge target normalization', () => {
     dom.window.close();
   });
 
-  it('posts od-edit-move-end when dragging a selected container element onto another editable target', () => {
+  it('does not trigger drag-to-move on container elements (drag is disabled)', () => {
     const posts: Array<{ type?: string; id?: string; targetId?: string; position?: string; styles?: Record<string, string> }> = [];
     const dom = new JSDOM(
       `<main>
@@ -893,7 +893,7 @@ describe('manual edit bridge target normalization', () => {
     }));
     expect(hero.getAttribute('data-od-edit-selected')).toBe('true');
 
-    // Simulate drag: pointerdown → pointermove (past threshold) → pointerup
+    // Try to drag: pointerdown → pointermove (past threshold) → pointerup
     hero.dispatchEvent(new dom.window.PointerEvent('pointerdown', {
       bubbles: true, cancelable: true, clientX: 50, clientY: 50,
     }));
@@ -904,14 +904,8 @@ describe('manual edit bridge target normalization', () => {
       bubbles: true, clientX: 80, clientY: 150,
     }));
 
-    const moveEnd = posts.find((m) => m.type === 'od-edit-move-end');
-    expect(moveEnd).toEqual({
-      type: 'od-edit-move-end',
-      id: 'hero',
-      targetId: 'content',
-      position: 'after',
-    });
-    expect(posts.find((m) => m.type === 'od-edit-drag-end')).toBeUndefined();
+    // Drag is disabled — no move-end should be posted
+    expect(posts.find((m) => m.type === 'od-edit-move-end')).toBeUndefined();
 
     dom.window.close();
   });
@@ -1548,6 +1542,291 @@ describe('gradient background support', () => {
     await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 
     expect(posts.some((m) => m.type === 'od-edit-deselect')).toBe(false);
+
+    dom.window.close();
+  });
+});
+
+// B: edit mode text selection disabled, flex reorder by arrow keys, drag removed
+describe('edit mode UX improvements', () => {
+  it('disables text selection on all elements in edit mode via bridge style', () => {
+    const style = buildManualEditBridgeStyle();
+    const bodyStarRule = style.match(/html\[data-od-edit-mode\] body \* \{[^}]*\}/)?.[0] ?? '';
+
+    expect(bodyStarRule).toContain('user-select: none');
+    expect(bodyStarRule).toContain('-webkit-user-select: none');
+  });
+
+  it('restores text selection on inline-edited elements', () => {
+    const style = buildManualEditBridgeStyle();
+    const editingRule = style.match(/\[data-od-editing="true"\][^{]*\{[^}]*\}/s)?.[0] ?? '';
+
+    expect(editingRule).toContain('user-select: text');
+  });
+
+  it('removes cursor:move from selected elements (drag disabled)', () => {
+    const style = buildManualEditBridgeStyle();
+    const selectedRule = style.match(/\[data-od-edit-selected\][^{]*\{[^}]*\}/s)?.[0] ?? '';
+
+    expect(selectedRule).not.toContain('cursor: move');
+  });
+
+  it('posts od-edit-move-end when ArrowDown swaps a selected element in a flex-column container', () => {
+    const posts: Array<{ type?: string; id?: string; targetId?: string; position?: string }> = [];
+    const dom = new JSDOM(
+      `<main style="display:flex;flex-direction:column">
+        <div data-od-id="card-a" style="width:100px;height:40px">Card A</div>
+        <div data-od-id="card-b" style="width:100px;height:40px">Card B</div>
+        <div data-od-id="card-c" style="width:100px;height:40px">Card C</div>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as typeof posts[0]);
+    }) as typeof dom.window.parent.postMessage;
+
+    const cardA = dom.window.document.querySelector('[data-od-id="card-a"]') as HTMLElement;
+    const cardB = dom.window.document.querySelector('[data-od-id="card-b"]') as HTMLElement;
+    cardA.getBoundingClientRect = () => ({ x: 0, y: 0, width: 100, height: 40, top: 0, right: 100, bottom: 40, left: 0, toJSON: () => ({}) } as DOMRect);
+    cardB.getBoundingClientRect = () => ({ x: 0, y: 44, width: 100, height: 40, top: 44, right: 100, bottom: 84, left: 0, toJSON: () => ({}) } as DOMRect);
+
+    // Select card-a
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'card-a' },
+    }));
+
+    // Press ArrowDown — should swap with next sibling (card-b)
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      bubbles: true, cancelable: true, key: 'ArrowDown',
+    }));
+
+    const moveEnd = posts.find((m) => m.type === 'od-edit-move-end');
+    expect(moveEnd).toEqual({
+      type: 'od-edit-move-end',
+      id: 'card-a',
+      targetId: 'card-b',
+      position: 'after',
+    });
+
+    // Optimistic DOM swap: card-a should now be after card-b in the DOM
+    const children = Array.from(dom.window.document.querySelector('main')!.children);
+    expect(children.indexOf(cardA)).toBeGreaterThan(children.indexOf(cardB));
+
+    // Selection should be preserved
+    expect(cardA.getAttribute('data-od-edit-selected')).toBe('true');
+
+    dom.window.close();
+  });
+
+  it('posts od-edit-move-end when ArrowUp swaps a selected element with previous sibling in flex-column', () => {
+    const posts: Array<{ type?: string; id?: string; targetId?: string; position?: string }> = [];
+    const dom = new JSDOM(
+      `<main style="display:flex;flex-direction:column">
+        <div data-od-id="card-a" style="width:100px;height:40px">Card A</div>
+        <div data-od-id="card-b" style="width:100px;height:40px">Card B</div>
+        <div data-od-id="card-c" style="width:100px;height:40px">Card C</div>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as typeof posts[0]);
+    }) as typeof dom.window.parent.postMessage;
+
+    const cardA = dom.window.document.querySelector('[data-od-id="card-a"]') as HTMLElement;
+    const cardB = dom.window.document.querySelector('[data-od-id="card-b"]') as HTMLElement;
+    cardA.getBoundingClientRect = () => ({ x: 0, y: 0, width: 100, height: 40, top: 0, right: 100, bottom: 40, left: 0, toJSON: () => ({}) } as DOMRect);
+    cardB.getBoundingClientRect = () => ({ x: 0, y: 44, width: 100, height: 40, top: 44, right: 100, bottom: 84, left: 0, toJSON: () => ({}) } as DOMRect);
+
+    // Select card-b
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'card-b' },
+    }));
+
+    // Press ArrowUp — should swap with previous sibling (card-a)
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      bubbles: true, cancelable: true, key: 'ArrowUp',
+    }));
+
+    const moveEnd = posts.find((m) => m.type === 'od-edit-move-end');
+    expect(moveEnd).toEqual({
+      type: 'od-edit-move-end',
+      id: 'card-b',
+      targetId: 'card-a',
+      position: 'before',
+    });
+
+    dom.window.close();
+  });
+
+  it('posts od-edit-move-end when ArrowRight swaps in a flex-row container', () => {
+    const posts: Array<{ type?: string; id?: string; targetId?: string; position?: string }> = [];
+    const dom = new JSDOM(
+      `<main style="display:flex;flex-direction:row">
+        <div data-od-id="col-a" style="width:100px;height:40px">Col A</div>
+        <div data-od-id="col-b" style="width:100px;height:40px">Col B</div>
+        <div data-od-id="col-c" style="width:100px;height:40px">Col C</div>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as typeof posts[0]);
+    }) as typeof dom.window.parent.postMessage;
+
+    const colA = dom.window.document.querySelector('[data-od-id="col-a"]') as HTMLElement;
+    const colB = dom.window.document.querySelector('[data-od-id="col-b"]') as HTMLElement;
+    colA.getBoundingClientRect = () => ({ x: 0, y: 0, width: 100, height: 40, top: 0, right: 100, bottom: 40, left: 0, toJSON: () => ({}) } as DOMRect);
+    colB.getBoundingClientRect = () => ({ x: 104, y: 0, width: 100, height: 40, top: 0, right: 204, bottom: 40, left: 104, toJSON: () => ({}) } as DOMRect);
+
+    // Select col-a
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'col-a' },
+    }));
+
+    // Press ArrowRight — should swap with next sibling (col-b)
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      bubbles: true, cancelable: true, key: 'ArrowRight',
+    }));
+
+    const moveEnd = posts.find((m) => m.type === 'od-edit-move-end');
+    expect(moveEnd).toEqual({
+      type: 'od-edit-move-end',
+      id: 'col-a',
+      targetId: 'col-b',
+      position: 'after',
+    });
+
+    dom.window.close();
+  });
+
+  it('posts od-edit-move-end when ArrowLeft swaps with previous sibling in flex-row', () => {
+    const posts: Array<{ type?: string; id?: string; targetId?: string; position?: string }> = [];
+    const dom = new JSDOM(
+      `<main style="display:flex;flex-direction:row">
+        <div data-od-id="col-a" style="width:100px;height:40px">Col A</div>
+        <div data-od-id="col-b" style="width:100px;height:40px">Col B</div>
+        <div data-od-id="col-c" style="width:100px;height:40px">Col C</div>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as typeof posts[0]);
+    }) as typeof dom.window.parent.postMessage;
+
+    const colA = dom.window.document.querySelector('[data-od-id="col-a"]') as HTMLElement;
+    const colB = dom.window.document.querySelector('[data-od-id="col-b"]') as HTMLElement;
+    colA.getBoundingClientRect = () => ({ x: 0, y: 0, width: 100, height: 40, top: 0, right: 100, bottom: 40, left: 0, toJSON: () => ({}) } as DOMRect);
+    colB.getBoundingClientRect = () => ({ x: 104, y: 0, width: 100, height: 40, top: 0, right: 204, bottom: 40, left: 104, toJSON: () => ({}) } as DOMRect);
+
+    // Select col-b
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'col-b' },
+    }));
+
+    // Press ArrowLeft — should swap with previous sibling (col-a)
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      bubbles: true, cancelable: true, key: 'ArrowLeft',
+    }));
+
+    const moveEnd = posts.find((m) => m.type === 'od-edit-move-end');
+    expect(moveEnd).toEqual({
+      type: 'od-edit-move-end',
+      id: 'col-b',
+      targetId: 'col-a',
+      position: 'before',
+    });
+
+    dom.window.close();
+  });
+
+  it('does not post od-edit-move-end for arrow keys when parent is not flex', () => {
+    const posts: Array<{ type?: string; id?: string; targetId?: string; position?: string }> = [];
+    const dom = new JSDOM(
+      `<main>
+        <div data-od-id="block-a" style="width:100px;height:40px">Block A</div>
+        <div data-od-id="block-b" style="width:100px;height:40px">Block B</div>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as typeof posts[0]);
+    }) as typeof dom.window.parent.postMessage;
+
+    const blockA = dom.window.document.querySelector('[data-od-id="block-a"]') as HTMLElement;
+    blockA.getBoundingClientRect = () => ({ x: 0, y: 0, width: 100, height: 40, top: 0, right: 100, bottom: 40, left: 0, toJSON: () => ({}) } as DOMRect);
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'block-a' },
+    }));
+
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      bubbles: true, cancelable: true, key: 'ArrowDown',
+    }));
+
+    expect(posts.find((m) => m.type === 'od-edit-move-end')).toBeUndefined();
+
+    dom.window.close();
+  });
+
+  it('does not post od-edit-move-end when the selected element is the only child', () => {
+    const posts: Array<{ type?: string; id?: string; targetId?: string; position?: string }> = [];
+    const dom = new JSDOM(
+      `<main style="display:flex;flex-direction:column">
+        <div data-od-id="only-child" style="width:100px;height:40px">Only</div>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as typeof posts[0]);
+    }) as typeof dom.window.parent.postMessage;
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'only-child' },
+    }));
+
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      bubbles: true, cancelable: true, key: 'ArrowDown',
+    }));
+
+    expect(posts.find((m) => m.type === 'od-edit-move-end')).toBeUndefined();
+
+    dom.window.close();
+  });
+
+  it('does not trigger drag on container elements when drag is disabled', () => {
+    const posts: Array<{ type?: string; id?: string; targetId?: string; position?: string }> = [];
+    const dom = new JSDOM(
+      `<main>
+        <section data-od-id="hero" style="width:200px;height:100px">Hero</section>
+        <div data-od-id="content" style="width:200px;height:100px">Content</div>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const hero = dom.window.document.querySelector('[data-od-id="hero"]') as HTMLElement;
+    const content = dom.window.document.querySelector('[data-od-id="content"]') as HTMLElement;
+    hero.getBoundingClientRect = () => ({ x: 0, y: 0, width: 200, height: 100, top: 0, right: 200, bottom: 100, left: 0, toJSON: () => ({}) } as DOMRect);
+    content.getBoundingClientRect = () => ({ x: 0, y: 100, width: 200, height: 100, top: 100, right: 200, bottom: 200, left: 0, toJSON: () => ({}) } as DOMRect);
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as typeof posts[0]);
+    }) as typeof dom.window.parent.postMessage;
+
+    // Select hero
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'hero' },
+    }));
+
+    // Try to drag past threshold
+    hero.dispatchEvent(new dom.window.PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, clientX: 50, clientY: 50,
+    }));
+    dom.window.document.dispatchEvent(new dom.window.PointerEvent('pointermove', {
+      bubbles: true, clientX: 80, clientY: 150,
+    }));
+    dom.window.document.dispatchEvent(new dom.window.PointerEvent('pointerup', {
+      bubbles: true, clientX: 80, clientY: 150,
+    }));
+
+    // Should NOT post od-edit-move-end (drag is disabled)
+    expect(posts.find((m) => m.type === 'od-edit-move-end')).toBeUndefined();
 
     dom.window.close();
   });

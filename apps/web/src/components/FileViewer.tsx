@@ -198,8 +198,10 @@ import {
   manualEditFloatingPanelStyle,
   manualEditHoverIconStyle,
   manualEditInspectorStyleValue,
+  manualEditPanFromPointer,
   manualEditPersistedValueMatchesSavedSnapshot,
   manualEditPreviewShellStyle,
+  manualEditZoomPanAtPoint,
   mergeManualEditInspectorStyles,
   normalizeCloudflareDomainPrefixInput,
   pickLatestShareDeployment,
@@ -4202,12 +4204,19 @@ function HtmlViewer({
   const [manualEditMode, setManualEditModeRaw] = useState(defaultEditMode);
   const [manualEditSrcDocActive, setManualEditSrcDocActive] = useState(defaultEditMode);
   const [manualEditFrozenSource, setManualEditFrozenSource] = useState<string | null>(null);
+  // When a move-element patch saves, the bridge already applied the change
+  // optimistically in the iframe DOM. This flag tells the external-change
+  // effect to skip the srcDoc rebuild (which would flash and lose selection).
+  // Cleared after one suppression so genuine external changes are still handled.
+  const skipSrcDocRebuildForMoveRef = useRef(false);
   const [commentPortalHost, setCommentPortalHost] = useState<HTMLElement | null>(null);
   const [manualEditPortalHost, setManualEditPortalHost] = useState<HTMLElement | null>(null);
   const [previewBodyRef, previewBodySize] = usePreviewCanvasSize<HTMLDivElement>();
   const manualEditCanvasRef = useRef<HTMLDivElement | null>(null);
+  const manualEditShellRef = useRef<HTMLDivElement | null>(null);
   const [manualEditViewportTransform, setManualEditViewportTransform] = useState<ManualEditViewportTransform>({ x: 0, y: 0 });
   const manualEditViewportTransformRef = useRef<ManualEditViewportTransform>({ x: 0, y: 0 });
+  const manualEditViewportCommitTimerRef = useRef<number | null>(null);
   const manualEditPanRef = useRef<{
     pointerId: number | null;
     startClientX: number;
@@ -4288,11 +4297,20 @@ function HtmlViewer({
   }, []);
   useEffect(() => {
     const resetTransform = { x: 0, y: 0 };
+    if (manualEditViewportCommitTimerRef.current !== null) {
+      window.clearTimeout(manualEditViewportCommitTimerRef.current);
+      manualEditViewportCommitTimerRef.current = null;
+    }
     manualEditViewportTransformRef.current = resetTransform;
     manualEditPanRef.current = null;
     setManualEditViewportTransform(resetTransform);
     setManualEditPanning(false);
   }, [file.name, manualEditMode, previewViewport]);
+  useEffect(() => () => {
+    if (manualEditViewportCommitTimerRef.current !== null) {
+      window.clearTimeout(manualEditViewportCommitTimerRef.current);
+    }
+  }, []);
   const previewScrollRestoreRef = useRef<{
     hostLeft: number;
     hostTop: number;
@@ -4846,9 +4864,17 @@ function HtmlViewer({
   // rewrites the file via the daemon), unfreeze the preview so the srcDoc
   // iframe rebuilds with the latest content instead of staying on the stale
   // snapshot taken at edit-mode entry.
+  // Exception: move-element patches apply optimistically in the bridge, so
+  // the file-re-fetch after save must NOT rebuild srcDoc (that would flash).
+  // The flag persists across multiple livePreviewSource changes (source
+  // update → inlining update) and is cleared only by a non-move patch,
+  // undo/redo, or edit-mode exit.
   useEffect(() => {
     if (!manualEditMode || manualEditFrozenSource == null || livePreviewSource == null) return;
     if (livePreviewSource !== manualEditFrozenSource) {
+      if (skipSrcDocRebuildForMoveRef.current) {
+        return;
+      }
       setManualEditFrozenSource(livePreviewSource);
     }
   }, [manualEditMode, manualEditFrozenSource, livePreviewSource]);
@@ -4934,16 +4960,26 @@ function HtmlViewer({
     };
   }, [source, effectiveDeck, projectId, file.name, reloadKey, useUrlLoadPreview]);
 
+  // During a move-element operation the bridge already applied the DOM swap
+  // optimistically. Keep returning the last-good srcDoc so the iframe never
+  // reloads mid-move, regardless of how source state changes arrive.
+  const lastGoodSrcDocRef = useRef('');
   const srcDoc = useMemo(
-    () => (previewSource ? buildSrcdoc(previewSource, {
-      deck: effectiveDeck,
-      baseHref: projectRawUrl(projectId, baseDirFor(file.name)),
-      initialSlideIndex: htmlPreviewSlideState.get(previewStateKey)?.active ?? 0,
-      selectionBridge: true,
-      editBridge: manualEditRequiresSrcDoc,
-      paletteBridge: false,
-      previewFocusGuard: true,
-    }) : ''),
+    () => {
+      if (!previewSource) return '';
+      const next = buildSrcdoc(previewSource, {
+        deck: effectiveDeck,
+        baseHref: projectRawUrl(projectId, baseDirFor(file.name)),
+        initialSlideIndex: htmlPreviewSlideState.get(previewStateKey)?.active ?? 0,
+        selectionBridge: true,
+        editBridge: manualEditRequiresSrcDoc,
+        paletteBridge: false,
+        previewFocusGuard: true,
+      });
+      if (skipSrcDocRebuildForMoveRef.current) return lastGoodSrcDocRef.current;
+      lastGoodSrcDocRef.current = next;
+      return next;
+    },
     [previewSource, effectiveDeck, projectId, file.name, previewStateKey, manualEditRequiresSrcDoc],
   );
   const lazySrcDocTransport = useMemo(() => buildLazySrcdocTransport(), []);
@@ -5365,7 +5401,12 @@ function HtmlViewer({
     setInspectOverrides(typeof source === 'string' ? parseInspectOverridesFromSource(source) : {});
   }
 
+  // During move-element operations, sourceRef is managed exclusively by
+  // applyManualEdit (which sets sourceRef.current = result.source directly).
+  // A stale file-re-fetch from a previous move could arrive here and overwrite
+  // sourceRef.current, losing later moves. Skip the overwrite during moves.
   useEffect(() => {
+    if (skipSrcDocRebuildForMoveRef.current) return;
     sourceRef.current = source;
     if (source == null) return;
     setManualEditDraft((current) => (
@@ -5893,6 +5934,14 @@ function HtmlViewer({
   async function exitManualEditModeAfterFlush(): Promise<boolean> {
     const ok = await flushManualEditStyleSave();
     if (!ok) return false;
+    skipSrcDocRebuildForMoveRef.current = false;
+    // Flush any pending source state from move-element patches that skipped
+    // setSource to avoid an iframe flash. The iframe will reload anyway on
+    // edit-mode exit, so this is the right place to sync.
+    if (sourceRef.current !== source) {
+      setSource(sourceRef.current);
+      setInlinedSource(null);
+    }
     setManualEditPanelPosition(null);
     setManualEditMode(false);
     setManualEditHistory([]);
@@ -5925,9 +5974,71 @@ function HtmlViewer({
     }
   }
 
-  function setManualEditViewportTransformValue(next: ManualEditViewportTransform) {
+  function manualEditViewportContentSize() {
+    const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === previewViewport);
+    return {
+      width: customViewportSize?.width ?? preset?.width ?? 1920,
+      height: customViewportSize?.height ?? preset?.height ?? 1080,
+    };
+  }
+
+  function applyManualEditViewportVisual(rasterScale = zoom / 100) {
+    const shell = manualEditShellRef.current;
+    if (!shell) return;
+    const nextScale = zoomRef.current / 100;
+    const nextTransform = manualEditViewportTransformRef.current;
+    const style = manualEditPreviewShellStyle(
+      previewViewport,
+      nextScale,
+      nextTransform,
+      previewBodySize,
+      customViewportSize ?? undefined,
+      rasterScale,
+    );
+    if (typeof style.zoom === 'number') {
+      shell.style.zoom = String(style.zoom);
+    } else {
+      shell.style.removeProperty('zoom');
+    }
+    if (typeof style.transform === 'string') shell.style.transform = style.transform;
+    const canvas = manualEditCanvasRef.current;
+    if (canvas && previewViewport !== 'desktop') {
+      canvas.style.transform = `translate(${nextTransform.x}px, ${nextTransform.y}px)`;
+    }
+  }
+
+  function commitManualEditViewportState() {
+    if (manualEditViewportCommitTimerRef.current !== null) {
+      window.clearTimeout(manualEditViewportCommitTimerRef.current);
+      manualEditViewportCommitTimerRef.current = null;
+    }
+    const nextTransform = manualEditViewportTransformRef.current;
+    setManualEditViewportTransform((current) => (
+      current.x === nextTransform.x && current.y === nextTransform.y ? current : nextTransform
+    ));
+    const nextZoom = zoomRef.current;
+    setZoom((current) => current === nextZoom ? current : nextZoom);
+    applyManualEditViewportVisual(nextZoom / 100);
+  }
+
+  function queueManualEditViewportCommit() {
+    if (manualEditViewportCommitTimerRef.current !== null) {
+      window.clearTimeout(manualEditViewportCommitTimerRef.current);
+    }
+    manualEditViewportCommitTimerRef.current = window.setTimeout(() => {
+      manualEditViewportCommitTimerRef.current = null;
+      commitManualEditViewportState();
+    }, 80);
+  }
+
+  function setManualEditViewportTransformValue(
+    next: ManualEditViewportTransform,
+    commit: 'deferred' | 'immediate' = 'deferred',
+  ) {
     manualEditViewportTransformRef.current = next;
-    setManualEditViewportTransform(next);
+    applyManualEditViewportVisual();
+    if (commit === 'immediate') commitManualEditViewportState();
+    else queueManualEditViewportCommit();
   }
 
   function normalizeManualEditViewportPoint(data: {
@@ -5972,54 +6083,61 @@ function HtmlViewer({
 
     const oldUserScale = currentZoom / 100;
     const nextUserScale = nextZoom / 100;
-    // For desktop edit mode, the effective transform includes an auto-fit
-    // base centering offset. We must account for it in anchor-based zoom so
-    // the content under the mouse stays fixed.
-    const baseFit = previewViewport === 'desktop' && previewBodySize?.width && previewBodySize.height
+    const contentSize = manualEditViewportContentSize();
+    const currentLayout = previewViewport === 'desktop' && previewBodySize?.width && previewBodySize.height
       ? desktopEditAutoFitTransform(
           previewBodySize.width,
           previewBodySize.height,
-          1920,
-          1080,
-          1.0,
-          { x: 0, y: 0 },
+          contentSize.width,
+          contentSize.height,
+          oldUserScale,
+          manualEditViewportTransformRef.current,
         )
       : null;
-    const effectiveOldScale = baseFit ? baseFit.zoom * oldUserScale : oldUserScale;
+    const effectiveOldScale = currentLayout?.zoom ?? oldUserScale;
     const anchor = normalizeManualEditViewportPoint(data, effectiveOldScale);
     if (anchor) {
       const pan = manualEditViewportTransformRef.current;
-      if (baseFit) {
-        // Transform = translate(baseCenter + pan) scale(fitScale * userScale).
-        // Keep the canvas point under the mouse fixed when user zoom changes.
-        const ratio = nextUserScale / oldUserScale;
-        setManualEditViewportTransformValue({
-          x: anchor.x - baseFit.translateX - (anchor.x - baseFit.translateX - pan.x) * ratio,
-          y: anchor.y - baseFit.translateY - (anchor.y - baseFit.translateY - pan.y) * ratio,
+      if (currentLayout && previewBodySize) {
+        manualEditViewportTransformRef.current = manualEditZoomPanAtPoint({
+          anchor,
+          currentPan: pan,
+          currentUserScale: oldUserScale,
+          nextUserScale,
+          container: {
+            width: previewBodySize.width,
+            height: previewBodySize.height,
+          },
+          content: contentSize,
         });
       } else if (previewViewport === 'desktop') {
         // Non-auto-fit desktop: translate is on the inner shell.
         const contentX = (anchor.x - pan.x) / oldUserScale;
         const contentY = (anchor.y - pan.y) / oldUserScale;
-        setManualEditViewportTransformValue({
+        manualEditViewportTransformRef.current = {
           x: anchor.x - contentX * nextUserScale,
           y: anchor.y - contentY * nextUserScale,
-        });
+        };
       } else {
         // Non-desktop (mobile/tablet): translate is on the canvas div.
         // getBoundingClientRect already includes the translate offset in anchor,
         // so the zoom adjustment uses a ratio-based formula.
         const ratio = 1 - nextUserScale / oldUserScale;
-        setManualEditViewportTransformValue({
+        manualEditViewportTransformRef.current = {
           x: pan.x + anchor.x * ratio,
           y: pan.y + anchor.y * ratio,
-        });
+        };
       }
     }
 
     zoomRef.current = nextZoom;
-    setZoom(nextZoom);
-    setZoomMenuOpen(false);
+    applyManualEditViewportVisual();
+    if (zoomMenuOpen) {
+      setZoomMenuOpen(false);
+      commitManualEditViewportState();
+    } else {
+      queueManualEditViewportCommit();
+    }
   }
 
   function manualEditPanPoint(
@@ -6047,6 +6165,7 @@ function HtmlViewer({
     const point = manualEditPanPoint(data, preferScreenCoordinates);
     if (!point) return;
     const current = manualEditViewportTransformRef.current;
+    commitManualEditViewportState();
     manualEditPanRef.current = {
       pointerId,
       startClientX: point.x,
@@ -6068,17 +6187,17 @@ function HtmlViewer({
     if (!pan) return;
     const point = manualEditPanPoint(data, preferScreenCoordinates);
     if (!point) return;
-    // Multiply delta by speed factor so panning feels responsive at all zoom levels.
-    const panSpeed = 1.5;
-    setManualEditViewportTransformValue({
-      x: pan.startX + (point.x - pan.startClientX) * panSpeed,
-      y: pan.startY + (point.y - pan.startClientY) * panSpeed,
-    });
+    setManualEditViewportTransformValue(manualEditPanFromPointer(
+      { x: pan.startX, y: pan.startY },
+      { x: pan.startClientX, y: pan.startClientY },
+      point,
+    ));
   }
 
   function finishManualEditViewportPan() {
     if (!manualEditPanRef.current) return;
     manualEditPanRef.current = null;
+    commitManualEditViewportState();
     setManualEditPanning(false);
   }
 
@@ -6290,12 +6409,24 @@ function HtmlViewer({
         afterSource: result.source,
         createdAt: Date.now(),
       };
-      setSource(result.source);
-      sourceRef.current = result.source;
-      setInlinedSource(null);
-      if (patch.kind !== 'set-style' && patch.kind !== 'set-text') {
-        setManualEditFrozenSource(result.source);
+      // For move-element, the bridge already applied the change optimistically
+      // in the iframe DOM. Skip React state updates that would rebuild srcDoc
+      // (which causes a flash and loses the bridge's selection state).
+      // sourceRef is still updated so the next patch operates on the correct base.
+      const skipSrcDocRebuild = patch.kind === 'move-element';
+      if (skipSrcDocRebuild) {
+        skipSrcDocRebuildForMoveRef.current = true;
+      } else {
+        // Non-move patches rebuild srcDoc normally; clear any lingering
+        // move-element suppression so external changes are handled again.
+        skipSrcDocRebuildForMoveRef.current = false;
+        setSource(result.source);
+        setInlinedSource(null);
+        if (patch.kind !== 'set-style' && patch.kind !== 'set-text') {
+          setManualEditFrozenSource(result.source);
+        }
       }
+      sourceRef.current = result.source;
       setManualEditHistory((current) => {
         const next = [entry, ...current];
         return next.length > MAX_MANUAL_EDIT_HISTORY ? next.slice(0, MAX_MANUAL_EDIT_HISTORY) : next;
@@ -6327,6 +6458,9 @@ function HtmlViewer({
         if (nextSelectedTargets[0]) setDraftForManualEditTarget(nextSelectedTargets[0]);
         else setManualEditDraft(emptyManualEditDraft(result.source));
         postSelectedManualEditTargetsToIframe(nextSelectedTargets.map((target) => target.id));
+      } else if (patch.kind === 'move-element') {
+        // srcDoc was not rebuilt (see skipSrcDocRebuild above), so the bridge's
+        // optimistic DOM swap and selection are still intact. No re-post needed.
       } else {
         setManualEditDraft((current) => ({ ...current, fullSource: result.source }));
       }
@@ -6365,6 +6499,7 @@ function HtmlViewer({
 
   async function undoManualEdit() {
     if (manualEditSavingRef.current) return;
+    skipSrcDocRebuildForMoveRef.current = false;
     const [latest, ...rest] = manualEditHistory;
     if (!latest) return;
     manualEditSavingRef.current = true;
@@ -6397,6 +6532,7 @@ function HtmlViewer({
 
   async function redoManualEdit() {
     if (manualEditSavingRef.current) return;
+    skipSrcDocRebuildForMoveRef.current = false;
     const [latest, ...rest] = manualEditUndone;
     if (!latest) return;
     manualEditSavingRef.current = true;
@@ -8758,6 +8894,7 @@ function HtmlViewer({
               ) : null}
               <div className={manualEditMode ? undefined : 'comment-frame-clip'} style={manualEditMode ? { height: '100%' } : undefined}>
                 <div
+                  ref={manualEditMode ? manualEditShellRef : undefined}
                   style={
                     manualEditMode
                       ? manualEditPreviewShellStyle(previewViewport, previewScale, manualEditViewportTransform, previewBodySize, customViewportSize ?? undefined)

@@ -218,21 +218,31 @@ export function createPackagedDesktopLogger(paths: PackagedNamespacePaths): Pack
     warn: console.warn.bind(console),
   };
 
+  const safeEcho = (fn: (...a: unknown[]) => void, ...args: unknown[]) => {
+    if (!echo) return;
+    try {
+      fn(...args);
+    } catch {
+      // EPIPE: stdout/stderr closed when launched from Finder (no terminal).
+      // Swallow silently — the persistent log file already captured the entry.
+    }
+  };
+
   console.log = (...args: unknown[]) => {
     logger.info("console.log", { args });
-    if (echo) originalConsole.log(...args);
+    safeEcho(originalConsole.log, ...args);
   };
   console.info = (...args: unknown[]) => {
     logger.info("console.info", { args });
-    if (echo) originalConsole.info(...args);
+    safeEcho(originalConsole.info, ...args);
   };
   console.warn = (...args: unknown[]) => {
     logger.warn("console.warn", { args });
-    if (echo) originalConsole.warn(...args);
+    safeEcho(originalConsole.warn, ...args);
   };
   console.error = (...args: unknown[]) => {
     logger.error("console.error", { args });
-    if (echo) originalConsole.error(...args);
+    safeEcho(originalConsole.error, ...args);
   };
 
   return logger;

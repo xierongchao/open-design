@@ -1636,8 +1636,8 @@ export interface ComposerSessionModeClickProps {
   page_name: 'home' | 'chat_panel';
   area: 'chat_composer';
   element: 'session_mode_toggle';
-  mode_before: TrackingSessionMode;
-  mode_after: TrackingSessionMode;
+  mode_before: TrackingExecutionMode;
+  mode_after: TrackingExecutionMode;
   project_id?: string;
 }
 

@@ -514,13 +514,8 @@ export function previewScaleShellStyle(
 
 /**
  * Computes the auto-fit zoom and centering translate for desktop edit mode.
- * Uses CSS `zoom` for scaling (re-renders at zoomed resolution → crisp text)
- * and `transform: translate()` only for positioning.
- *
- * Visual math is identical to translate+scale with transformOrigin: 0 0:
- *   content at (cx, cy) → screen at (tx + cx * zoom, ty + cy * zoom)
- * But `zoom` causes the browser to allocate a proper rasterization buffer
- * instead of stretching pixels in the compositor.
+ * The returned translate is measured in screen pixels and is applied before
+ * compositor scale, so panning remains 1:1 at every zoom level.
  */
 export function desktopEditAutoFitTransform(
   containerWidth: number,
@@ -546,20 +541,74 @@ export function desktopEditAutoFitTransform(
   };
 }
 
+export function manualEditZoomPanAtPoint({
+  anchor,
+  currentPan,
+  currentUserScale,
+  nextUserScale,
+  container,
+  content,
+}: {
+  anchor: ManualEditViewportTransform;
+  currentPan: ManualEditViewportTransform;
+  currentUserScale: number;
+  nextUserScale: number;
+  container: { width: number; height: number };
+  content: { width: number; height: number };
+}): ManualEditViewportTransform {
+  const current = desktopEditAutoFitTransform(
+    container.width,
+    container.height,
+    content.width,
+    content.height,
+    currentUserScale,
+    currentPan,
+  );
+  const nextBase = desktopEditAutoFitTransform(
+    container.width,
+    container.height,
+    content.width,
+    content.height,
+    nextUserScale,
+    { x: 0, y: 0 },
+  );
+  if (current.zoom <= 0 || nextBase.zoom <= 0) return currentPan;
+  const contentX = (anchor.x - current.translateX) / current.zoom;
+  const contentY = (anchor.y - current.translateY) / current.zoom;
+  return {
+    x: anchor.x - nextBase.translateX - contentX * nextBase.zoom,
+    y: anchor.y - nextBase.translateY - contentY * nextBase.zoom,
+  };
+}
+
+export function manualEditPanFromPointer(
+  startPan: ManualEditViewportTransform,
+  startPoint: ManualEditViewportTransform,
+  currentPoint: ManualEditViewportTransform,
+): ManualEditViewportTransform {
+  return {
+    x: startPan.x + currentPoint.x - startPoint.x,
+    y: startPan.y + currentPoint.y - startPoint.y,
+  };
+}
+
 export function manualEditPreviewShellStyle(
   viewport: PreviewViewportId,
   previewScale: number,
   viewportTransform: ManualEditViewportTransform = { x: 0, y: 0 },
   canvasSize?: PreviewCanvasSize,
   overrideSize?: { width: number; height: number },
+  rasterScale = previewScale,
 ): CSSProperties & Record<string, string | number> {
   if (viewport === 'desktop') {
     const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
     const contentWidth = overrideSize?.width ?? preset?.width ?? 1920;
     const contentHeight = overrideSize?.height ?? preset?.height ?? 1080;
-    // When canvasSize is available, compute auto-fit zoom and centering.
-    // Otherwise fall back to raw user zoom + pan (legacy behavior).
-    const autoFit = canvasSize?.width && canvasSize.height
+    const safeRasterScale =
+      Number.isFinite(rasterScale) && rasterScale > 0
+        ? rasterScale
+        : previewScale;
+    const liveLayout = canvasSize?.width && canvasSize.height
       ? desktopEditAutoFitTransform(
           canvasSize.width,
           canvasSize.height,
@@ -569,21 +618,33 @@ export function manualEditPreviewShellStyle(
           viewportTransform,
         )
       : null;
-    if (autoFit) {
+    const rasterLayout = canvasSize?.width && canvasSize.height
+      ? desktopEditAutoFitTransform(
+          canvasSize.width,
+          canvasSize.height,
+          contentWidth,
+          contentHeight,
+          safeRasterScale,
+          { x: 0, y: 0 },
+        )
+      : null;
+    if (liveLayout && rasterLayout) {
+      const rasterZoom = rasterLayout.zoom > 0 ? rasterLayout.zoom : liveLayout.zoom;
       return {
         width: 'var(--preview-viewport-width)',
         height: 'var(--preview-viewport-height)',
-        zoom: autoFit.zoom,
-        transform: `translate(${autoFit.translateX.toFixed(2)}px, ${autoFit.translateY.toFixed(2)}px)`,
+        zoom: rasterZoom,
+        transform: `translate(${liveLayout.translateX / rasterZoom}px, ${liveLayout.translateY / rasterZoom}px) scale(${liveLayout.zoom / rasterZoom})`,
         transformOrigin: '0 0',
         willChange: 'transform',
       };
     }
+    const rasterZoom = safeRasterScale > 0 ? safeRasterScale : 1;
     return {
       width: 'var(--preview-viewport-width)',
       height: 'var(--preview-viewport-height)',
-      zoom: previewScale,
-      transform: `translate(${viewportTransform.x}px, ${viewportTransform.y}px)`,
+      zoom: rasterZoom,
+      transform: `translate(${viewportTransform.x / rasterZoom}px, ${viewportTransform.y / rasterZoom}px) scale(${previewScale / rasterZoom})`,
       transformOrigin: '0 0',
       willChange: 'transform',
     };
