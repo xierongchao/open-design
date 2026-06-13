@@ -2561,10 +2561,49 @@ export function FileWorkspace({
             onCurrentDirChange={setUploadDir}
             navState={designFilesNavRef.current}
             onNavStateChange={onDesignFilesNavStateChange}
-            onOpenFile={openFile}
+            onOpenFile={openDesignFilesPreview}
             onOpenLiveArtifact={(tabId) => openFile(tabId)}
             activeFileName={designFilesPreviewName}
-            previewContent={null}
+            previewContent={
+              designFilesPreviewFile ? (
+                <FileViewer
+                  key={`${projectId}:${designFilesPreviewFile.name}`}
+                  projectId={projectId}
+                  projectKind={projectKind}
+                  file={designFilesPreviewFile}
+                  filesRefreshKey={filesRefreshKey}
+                  isDeck={isDeck}
+                  onExportAsPptx={onExportAsPptx}
+                  streaming={streaming}
+                  commentQueueOnSend={commentQueueOnSend}
+                  commentSendDisabled={commentSendDisabled}
+                  previewComments={previewComments.filter(
+                    (comment) => comment.filePath === designFilesPreviewFile.name,
+                  )}
+                  onSavePreviewComment={onSavePreviewComment}
+                  onRemovePreviewComment={onRemovePreviewComment}
+                  onSendBoardCommentAttachments={onSendBoardCommentAttachments}
+                  onFileSaved={onRefreshFiles}
+                  onOpenFileReplacing={(openName) => openDesignFilesPreview(openName)}
+                  commentPortalId={commentPortalId}
+                  onCommentModeChange={onCommentModeChange}
+                  editPortalId={editPortalId}
+                  onEditSelectionChange={onEditSelectionChange}
+                  shareRequest={
+                    shareRequest && shareRequest.name === designFilesPreviewFile.name
+                      ? { nonce: shareRequest.nonce }
+                      : null
+                  }
+                  slideNavRequest={deliverableSlideNavForActiveFile(
+                    slideNavRequest,
+                    designFilesPreviewFile.name,
+                    slideNavDeliverableNonce,
+                  )}
+                  onEditModeChange={handleEditModeChange}
+                  defaultEditMode
+                />
+              ) : null
+            }
             onCopyFile={handleCopy}
             fileAliases={fileAliases}
             onSetFileAlias={handleSetFileAlias}

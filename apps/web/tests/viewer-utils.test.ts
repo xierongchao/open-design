@@ -70,7 +70,7 @@ describe('desktopEditAutoFitTransform', () => {
 });
 
 describe('manualEditPreviewShellStyle', () => {
-  it('uses CSS zoom for settled raster quality without multiplying screen-space panning', () => {
+  it('uses a layout-stable transform without multiplying screen-space panning', () => {
     const result = manualEditPreviewShellStyle(
       'desktop', 1.0, { x: 0, y: 0 }, { width: 1263, height: 800 },
     );
@@ -79,9 +79,10 @@ describe('manualEditPreviewShellStyle', () => {
     const fitScale = 1263 / 1920;
     const centerX = (1263 - 1920 * fitScale) / 2;
     const centerY = (800 - 1080 * fitScale) / 2;
-    expect(result.zoom).toBeCloseTo(fitScale, 8);
-    expect(result.transform).toContain(`translate(${centerX / fitScale}px, ${centerY / fitScale}px)`);
-    expect(result.transform).toContain('scale(1)');
+    expect(result.zoom).toBeUndefined();
+    expect(result.transform).toContain(`translate(${centerX}px, ${centerY}px)`);
+    expect(result.transform).toContain(`scale(${fitScale})`);
+    expect(result.willChange).toBe('auto');
   });
 
   it('applies user pan offset in translate', () => {
@@ -90,38 +91,38 @@ describe('manualEditPreviewShellStyle', () => {
     );
     const fitScale = 1263 / 1920;
     const visualX = (1263 - 1920 * fitScale) / 2 + 100;
-    expect(result.transform).toContain(`translate(${visualX / fitScale}px`);
+    expect(result.transform).toContain(`translate(${visualX}px`);
   });
 
-  it('applies settled user zoom through CSS zoom', () => {
+  it('applies settled user zoom through the transform', () => {
     const result = manualEditPreviewShellStyle(
       'desktop', 1.5, { x: 0, y: 0 }, { width: 1263, height: 800 },
     );
-    expect(result.zoom).toBeCloseTo((1263 / 1920) * 1.5, 8);
-    expect(result.transform).toContain('scale(1)');
+    expect(result.zoom).toBeUndefined();
+    expect(result.transform).toContain(`scale(${(1263 / 1920) * 1.5})`);
+    expect(result.willChange).toBe('auto');
   });
 
-  it('uses a relative compositor scale while CSS zoom remains at the last rasterized scale', () => {
-    const fitScale = 1263 / 1920;
+  it('keeps the compositor hint only while the viewport is moving', () => {
     const result = manualEditPreviewShellStyle(
       'desktop',
       1.5,
       { x: 100, y: 50 },
       { width: 1263, height: 800 },
       undefined,
-      1.0,
+      true,
     );
     const live = desktopEditAutoFitTransform(1263, 800, 1920, 1080, 1.5, { x: 100, y: 50 });
-    expect(result.zoom).toBeCloseTo(fitScale, 8);
     expect(result.transform).toContain(
-      `translate(${live.translateX / fitScale}px, ${live.translateY / fitScale}px)`,
+      `translate(${live.translateX}px, ${live.translateY}px)`,
     );
-    expect(result.transform).toContain('scale(1.5)');
+    expect(result.transform).toContain(`scale(${live.zoom})`);
+    expect(result.willChange).toBe('transform');
   });
 
-  it('falls back to CSS zoom + compensated translate when canvasSize is undefined', () => {
+  it('falls back to a direct transform when canvasSize is undefined', () => {
     const result = manualEditPreviewShellStyle('desktop', 1.0);
-    expect(result.zoom).toBe(1.0);
+    expect(result.zoom).toBeUndefined();
     expect(result.transform).toContain('translate');
     expect(result.transform).toContain('scale(1)');
     expect(result.transformOrigin).toBe('0 0');
@@ -138,8 +139,8 @@ describe('manualEditPreviewShellStyle', () => {
     const fittedScale = Math.min(1, (1000 - 48) / 390, (800 - 48) / 844);
     expect(result.width).toBe('var(--preview-viewport-width)');
     expect(result.height).toBe('var(--preview-viewport-height)');
-    expect(result.zoom).toBeCloseTo(fittedScale * 1.5, 8);
-    expect(result.transform).toContain('scale(1)');
+    expect(result.zoom).toBeUndefined();
+    expect(result.transform).toContain(`scale(${fittedScale * 1.5})`);
   });
 });
 

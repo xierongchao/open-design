@@ -1115,8 +1115,7 @@ html.od-export-capture-active .od-toast {
 }
 .preview-viewport:not(.preview-viewport-desktop) .preview-frame-clip > div,
 .preview-viewport:not(.preview-viewport-desktop) .comment-frame-clip > div,
-.preview-viewport:not(.preview-viewport-desktop) .comment-preview-canvas > .comment-frame-clip > div,
-.preview-viewport:not(.preview-viewport-desktop).manual-edit-workspace .manual-edit-canvas > div {
+.preview-viewport:not(.preview-viewport-desktop) .comment-preview-canvas > .comment-frame-clip > div {
   will-change: transform;
 }
 .preview-viewport:not(.preview-viewport-desktop) .preview-frame-clip,
@@ -1145,8 +1144,7 @@ html.od-export-capture-active .od-toast {
   flex: 0 0 auto;
   overflow: hidden;
 }
-.preview-viewport.preview-viewport-desktop .comment-frame-clip,
-.preview-viewport.preview-viewport-desktop .manual-edit-canvas > div {
+.preview-viewport.preview-viewport-desktop .comment-frame-clip {
   will-change: transform;
 }
 .preview-frame-clip,

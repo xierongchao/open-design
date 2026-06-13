@@ -813,8 +813,10 @@
 }
 
 .df-tree-file-row {
+  /* Indent = folder toggle (18) + one gap (2) = 20px, so the file icon sits
+     under the folder icon and the file name aligns with the folder name. */
   grid-template-columns:
-    calc(var(--df-tree-depth, 0) * 16px)
+    calc(var(--df-tree-depth, 0) * 16px + 20px)
     22px
     minmax(0, 1fr)
     26px;
@@ -823,6 +825,8 @@
   display: none;
 }
 .df-panel--batch .df-tree-file-row {
+  /* Batch check (18) fills the toggle slot, so no indent offset is needed:
+     check + icon mirror the folder row's toggle + icon. */
   grid-template-columns:
     calc(var(--df-tree-depth, 0) * 16px)
     18px
@@ -862,15 +866,44 @@
   align-items: center;
   justify-content: center;
   color: var(--text-soft);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 650;
   cursor: pointer;
 }
 
-.df-tree-file-icon[data-kind="html"] { color: var(--accent-strong); }
-.df-tree-file-icon[data-kind="image"] { color: var(--green); }
-.df-tree-file-icon[data-kind="stylesheet"] { color: var(--blue, var(--accent-strong)); }
+.df-tree-file-icon[data-ext="html"],
+.df-tree-file-icon[data-ext="htm"] { color: var(--red); }
+.df-tree-file-icon[data-ext="css"],
+.df-tree-file-icon[data-ext="scss"],
+.df-tree-file-icon[data-ext="sass"],
+.df-tree-file-icon[data-ext="less"] { color: var(--blue); }
+.df-tree-file-icon[data-ext="js"],
+.df-tree-file-icon[data-ext="mjs"],
+.df-tree-file-icon[data-ext="cjs"],
+.df-tree-file-icon[data-ext="jsx"] { color: var(--amber); }
+.df-tree-file-icon[data-ext="ts"],
+.df-tree-file-icon[data-ext="tsx"] { color: var(--accent-strong); }
+.df-tree-file-icon[data-ext="json"] { color: var(--purple); }
+.df-tree-file-icon[data-ext="py"] { color: var(--green); }
+.df-tree-file-icon[data-ext="svg"],
+.df-tree-file-icon[data-ext="png"],
+.df-tree-file-icon[data-ext="jpg"],
+.df-tree-file-icon[data-ext="jpeg"],
+.df-tree-file-icon[data-ext="gif"],
+.df-tree-file-icon[data-ext="webp"],
+.df-tree-file-icon[data-ext="ico"],
+.df-tree-file-icon[data-ext="bmp"] { color: var(--green); }
+.df-tree-file-icon[data-ext="mp4"],
+.df-tree-file-icon[data-ext="webm"],
+.df-tree-file-icon[data-ext="mov"],
+.df-tree-file-icon[data-ext="avi"],
+.df-tree-file-icon[data-ext="mkv"] { color: var(--purple); }
+.df-tree-file-icon[data-ext="mp3"],
+.df-tree-file-icon[data-ext="wav"],
+.df-tree-file-icon[data-ext="ogg"],
+.df-tree-file-icon[data-ext="flac"],
+.df-tree-file-icon[data-ext="m4a"] { color: var(--red); }
+.df-tree-file-icon[data-ext="pdf"] { color: var(--red); }
+.df-tree-file-icon[data-ext="md"],
+.df-tree-file-icon[data-ext="markdown"] { color: var(--text-muted); }
 .df-tree-file-icon[data-kind="live-artifact"] { color: var(--green); }
 
 .df-tree-file-row .df-row-check {

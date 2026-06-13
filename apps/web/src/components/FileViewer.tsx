@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { detectOpenDesignHostClientType } from '@open-design/host';
@@ -6049,27 +6049,44 @@ function HtmlViewer({
     };
   }
 
-  function applyManualEditViewportVisual(rasterScale = zoom / 100) {
+  function applyManualEditViewportVisual(interacting = false) {
     const shell = manualEditShellRef.current;
     if (!shell) return;
     const nextScale = zoomRef.current / 100;
     const nextTransform = manualEditViewportTransformRef.current;
+    // Changing CSS zoom on an iframe subtree can expose a blank raster frame
+    // after window/fullscreen resize. Keep layout stable and release the
+    // compositor hint after interaction so Chromium can refresh sharp tiles.
     const style = manualEditPreviewShellStyle(
       previewViewport,
       nextScale,
       nextTransform,
       previewBodySize,
       previewViewport === 'desktop' ? customViewportSize ?? undefined : undefined,
-      rasterScale,
+      interacting,
     );
-    if (typeof style.zoom === 'number') {
-      shell.style.zoom = String(style.zoom);
-    } else {
-      shell.style.removeProperty('zoom');
-    }
+    shell.style.removeProperty('zoom');
     if (typeof style.transform === 'string') shell.style.transform = style.transform;
+    shell.style.willChange = String(style.willChange ?? 'auto');
     manualEditCanvasRef.current?.style.removeProperty('transform');
   }
+
+  useLayoutEffect(() => {
+    if (!manualEditMode) return;
+    applyManualEditViewportVisual(
+      manualEditViewportCommitTimerRef.current !== null || manualEditPanRef.current !== null,
+    );
+  }, [
+    manualEditMode,
+    previewViewport,
+    previewBodySize?.width,
+    previewBodySize?.height,
+    customViewportSize?.width,
+    customViewportSize?.height,
+    zoom,
+    manualEditViewportTransform.x,
+    manualEditViewportTransform.y,
+  ]);
 
   function commitManualEditViewportState() {
     if (manualEditViewportCommitTimerRef.current !== null) {
@@ -6082,7 +6099,7 @@ function HtmlViewer({
     ));
     const nextZoom = zoomRef.current;
     setZoom((current) => current === nextZoom ? current : nextZoom);
-    applyManualEditViewportVisual(nextZoom / 100);
+    applyManualEditViewportVisual(false);
   }
 
   function queueManualEditViewportCommit() {
@@ -6100,7 +6117,7 @@ function HtmlViewer({
     commit: 'deferred' | 'immediate' = 'deferred',
   ) {
     manualEditViewportTransformRef.current = next;
-    applyManualEditViewportVisual();
+    applyManualEditViewportVisual(true);
     if (commit === 'immediate') commitManualEditViewportState();
     else queueManualEditViewportCommit();
   }
@@ -6188,7 +6205,7 @@ function HtmlViewer({
     }
 
     zoomRef.current = nextZoom;
-    applyManualEditViewportVisual();
+    applyManualEditViewportVisual(true);
     if (zoomMenuOpen) {
       setZoomMenuOpen(false);
       commitManualEditViewportState();

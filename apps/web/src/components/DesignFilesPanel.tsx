@@ -12,7 +12,7 @@ import {
 } from '../utils/fileSystemErrors';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { getPluginFolderCandidates } from './design-files/pluginFolders';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 import { LiveArtifactBadges } from './LiveArtifactBadges';
 
 export interface DesignFilesNavState {
@@ -984,6 +984,9 @@ export function DesignFilesPanel({
 
   function renderTreeFile(file: ProjectFile, depth: number) {
     const category = fileCategory(file);
+    const extBase = basenameForPath(file.name);
+    const extDot = extBase.lastIndexOf('.');
+    const ext = extDot >= 0 ? extBase.slice(extDot + 1).toLowerCase() : '';
     const active = resolvedActiveFile === file.name;
     const isSelected = selected.has(file.name);
     const renameState = renaming?.name === file.name ? renaming : null;
@@ -1037,13 +1040,14 @@ export function DesignFilesPanel({
         <span
           className="df-tree-file-icon"
           data-kind={category}
+          data-ext={ext}
           aria-hidden
           onClick={() => {
             setActiveFile(file.name);
             onOpenFile(file.name);
           }}
         >
-          {categoryGlyph(category)}
+          <Icon name={fileCategoryIconName(category)} size={14} />
         </span>
         {renameState ? (
           <input
@@ -1940,9 +1944,19 @@ export function DesignFilesPanel({
   );
 }
 
-function categoryGlyph(category: FileCategory): string {
-  if (category === 'stylesheet') return '#';
-  return kindGlyph(category);
+function fileCategoryIconName(category: FileCategory): IconName {
+  switch (category) {
+    case 'html': return 'file-code';
+    case 'image': return 'image';
+    case 'video': return 'play';
+    case 'audio': return 'volume';
+    case 'sketch': return 'draw';
+    case 'code': return 'file-code';
+    case 'stylesheet': return 'file-code';
+    case 'pdf': return 'file';
+    case 'text': return 'file';
+    default: return 'file';
+  }
 }
 
 async function filesFromDataTransfer(dataTransfer: DataTransfer): Promise<File[]> {
@@ -2000,19 +2014,6 @@ function readEntryBatch(reader: FileSystemDirectoryReader): Promise<FileSystemEn
       reject(createFileSystemReadError('Could not read dropped folder', error));
     });
   });
-}
-
-function kindGlyph(kind: ProjectFileKind): string {
-  if (kind === 'html') return '⟨⟩';
-  if (kind === 'image') return '▣';
-  if (kind === 'sketch') return '✎';
-  if (kind === 'text') return '¶';
-  if (kind === 'code') return '{}';
-  if (kind === 'pdf') return 'PDF';
-  if (kind === 'document') return 'DOC';
-  if (kind === 'presentation') return 'PPT';
-  if (kind === 'spreadsheet') return 'XLS';
-  return '·';
 }
 
 const DESIGN_FILE_DRAG_TYPE = 'application/x-open-design-project-files';

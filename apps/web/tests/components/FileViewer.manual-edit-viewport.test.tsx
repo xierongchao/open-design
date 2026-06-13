@@ -1,22 +1,23 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FileViewer } from '../../src/components/FileViewer';
 import type { ProjectFile } from '../../src/types';
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('FileViewer manual edit viewport interactions', () => {
-  it('uses compositor scale during the wheel gesture, then settles into CSS zoom', async () => {
+  it('keeps zoom on the compositor and releases the raster hint after the gesture', async () => {
     renderViewer();
     const canvas = await screen.findByTestId('manual-edit-canvas');
     const shell = previewShell(canvas);
-    const initialRasterScale = Number(shell.style.zoom);
+    const initialScale = transformScale(shell);
 
     fireEvent.wheel(canvas, {
       clientX: 0,
@@ -25,13 +26,62 @@ describe('FileViewer manual edit viewport interactions', () => {
       metaKey: true,
     });
 
-    expect(Number(shell.style.zoom)).toBe(initialRasterScale);
-    expect(transformScale(shell)).toBeGreaterThan(1);
+    expect(shell.style.zoom).toBe('');
+    expect(shell.style.willChange).toBe('transform');
+    expect(transformScale(shell)).toBeGreaterThan(initialScale);
     await waitFor(() => {
       expect(screen.getByText('110%')).toBeTruthy();
-      expect(Number(shell.style.zoom)).toBeGreaterThan(initialRasterScale);
-      expect(transformScale(shell)).toBeCloseTo(1, 8);
+      expect(shell.style.zoom).toBe('');
+      expect(shell.style.willChange).toBe('auto');
+      expect(transformScale(shell)).toBeGreaterThan(initialScale);
     });
+  });
+
+  it('keeps the live zoom frame when fullscreen resize lands before the wheel gesture settles', async () => {
+    let previewWidth = 1000;
+    let previewHeight = 700;
+    let resizeCallback: ResizeObserverCallback | null = null;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (
+        this.classList.contains('viewer-body')
+        || this.classList.contains('manual-edit-canvas')
+        || this.classList.contains('preview-viewport')
+      ) {
+        return rect(100, 50, previewWidth, previewHeight);
+      }
+      return rect(0, 0, 0, 0);
+    });
+    renderViewer();
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+    const shell = previewShell(canvas);
+    vi.useFakeTimers();
+
+    fireEvent.wheel(canvas, {
+      clientX: 600,
+      clientY: 350,
+      deltaY: -80,
+      metaKey: true,
+    });
+    const liveScale = transformScale(shell);
+    expect(liveScale).toBeGreaterThan(0);
+
+    previewWidth = 1600;
+    previewHeight = 1000;
+    act(() => {
+      resizeCallback?.([], {} as ResizeObserver);
+    });
+
+    expect(shell.style.zoom).toBe('');
+    expect(transformScale(shell)).toBeGreaterThan(0);
   });
 
   it('keeps the same content point under a canvas-originated wheel anchor', async () => {
@@ -44,7 +94,7 @@ describe('FileViewer manual edit viewport interactions', () => {
     renderViewer();
     const canvas = await screen.findByTestId('manual-edit-canvas');
     const shell = previewShell(canvas);
-    await waitFor(() => expect(Number(shell.style.zoom)).toBeCloseTo(1263 / 1920, 5));
+    await waitFor(() => expect(transformScale(shell)).toBeCloseTo(1263 / 1920, 5));
     const anchor = { x: 930, y: 260 };
     const before = visualViewportTransform(shell);
     const contentPoint = {
@@ -74,7 +124,7 @@ describe('FileViewer manual edit viewport interactions', () => {
     renderViewer();
     const canvas = await screen.findByTestId('manual-edit-canvas');
     const shell = previewShell(canvas);
-    await waitFor(() => expect(Number(shell.style.zoom)).toBeCloseTo(1263 / 1920, 5));
+    await waitFor(() => expect(transformScale(shell)).toBeCloseTo(1263 / 1920, 5));
     const before = visualViewportTransform(shell);
     let duringKeydown: ReturnType<typeof visualViewportTransform> | null = null;
     window.addEventListener('keydown', () => {
@@ -98,7 +148,7 @@ describe('FileViewer manual edit viewport interactions', () => {
     const shell = previewShell(canvas);
     const iframe = shell.querySelector('iframe');
     if (!(iframe instanceof HTMLIFrameElement)) throw new Error('manual edit iframe not found');
-    await waitFor(() => expect(Number(shell.style.zoom)).toBeCloseTo(1263 / 1920, 5));
+    await waitFor(() => expect(transformScale(shell)).toBeCloseTo(1263 / 1920, 5));
     const before = visualViewportTransform(shell);
     let duringMessage: ReturnType<typeof visualViewportTransform> | null = null;
     window.addEventListener('message', () => {
@@ -125,8 +175,9 @@ describe('FileViewer manual edit viewport interactions', () => {
       metaKey: true,
     });
     await waitFor(() => {
-      expect(Number(shell.style.zoom)).toBeGreaterThan(1.5);
-      expect(transformScale(shell)).toBeCloseTo(1, 8);
+      expect(shell.style.zoom).toBe('');
+      expect(transformScale(shell)).toBeGreaterThan(1.5);
+      expect(shell.style.willChange).toBe('auto');
     });
     const before = visualViewportTransform(shell);
 
@@ -183,7 +234,7 @@ describe('FileViewer manual edit viewport interactions', () => {
     const canvas = await screen.findByTestId('manual-edit-canvas');
     await selectViewport('Mobile');
     const shell = previewShell(canvas);
-    const initialRasterScale = Number(shell.style.zoom);
+    const initialScale = transformScale(shell);
 
     fireEvent.wheel(canvas, {
       clientX: 500,
@@ -193,8 +244,9 @@ describe('FileViewer manual edit viewport interactions', () => {
     });
 
     await waitFor(() => {
-      expect(Number(shell.style.zoom)).toBeGreaterThan(initialRasterScale);
-      expect(transformScale(shell)).toBeCloseTo(1, 8);
+      expect(shell.style.zoom).toBe('');
+      expect(transformScale(shell)).toBeGreaterThan(initialScale);
+      expect(shell.style.willChange).toBe('auto');
     });
     expect(canvas.style.transform).toBe('');
   });

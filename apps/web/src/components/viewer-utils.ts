@@ -623,7 +623,7 @@ export function manualEditPreviewShellStyle(
   viewportTransform: ManualEditViewportTransform = { x: 0, y: 0 },
   canvasSize?: PreviewCanvasSize,
   overrideSize?: { width: number; height: number },
-  rasterScale = previewScale,
+  interacting = false,
 ): CSSProperties & Record<string, string | number> {
   const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
   const contentWidth = viewport === 'desktop'
@@ -633,10 +633,6 @@ export function manualEditPreviewShellStyle(
     ? overrideSize?.height ?? preset?.height ?? 1080
     : preset?.height ?? 844;
   const canvasPadding = viewport === 'desktop' ? 0 : 48;
-  const safeRasterScale =
-    Number.isFinite(rasterScale) && rasterScale > 0
-      ? rasterScale
-      : previewScale;
   const liveLayout = canvasSize?.width && canvasSize.height
     ? manualEditAutoFitTransform(
         canvasSize.width,
@@ -648,36 +644,21 @@ export function manualEditPreviewShellStyle(
         canvasPadding,
       )
     : null;
-  const rasterLayout = canvasSize?.width && canvasSize.height
-    ? manualEditAutoFitTransform(
-        canvasSize.width,
-        canvasSize.height,
-        contentWidth,
-        contentHeight,
-        safeRasterScale,
-        { x: 0, y: 0 },
-        canvasPadding,
-      )
-    : null;
-  if (liveLayout && rasterLayout) {
-    const rasterZoom = rasterLayout.zoom > 0 ? rasterLayout.zoom : liveLayout.zoom;
+  if (liveLayout) {
     return {
       width: 'var(--preview-viewport-width)',
       height: 'var(--preview-viewport-height)',
-      zoom: rasterZoom,
-      transform: `translate(${liveLayout.translateX / rasterZoom}px, ${liveLayout.translateY / rasterZoom}px) scale(${liveLayout.zoom / rasterZoom})`,
+      transform: `translate(${liveLayout.translateX}px, ${liveLayout.translateY}px) scale(${liveLayout.zoom})`,
       transformOrigin: '0 0',
-      willChange: 'transform',
+      willChange: interacting ? 'transform' : 'auto',
     };
   }
-  const rasterZoom = safeRasterScale > 0 ? safeRasterScale : 1;
   return {
     width: 'var(--preview-viewport-width)',
     height: 'var(--preview-viewport-height)',
-    zoom: rasterZoom,
-    transform: `translate(${viewportTransform.x / rasterZoom}px, ${viewportTransform.y / rasterZoom}px) scale(${previewScale / rasterZoom})`,
+    transform: `translate(${viewportTransform.x}px, ${viewportTransform.y}px) scale(${previewScale})`,
     transformOrigin: '0 0',
-    willChange: 'transform',
+    willChange: interacting ? 'transform' : 'auto',
   };
 }
 
