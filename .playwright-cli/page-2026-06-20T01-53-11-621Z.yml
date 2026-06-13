@@ -1,0 +1,377 @@
+- generic [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e8] [cursor=pointer]:
+    - img [ref=e9]
+  - alert [ref=e12]
+  - generic [ref=e13]:
+    - text: 主页 sfl 2 关闭 New tab Search tabs
+    - generic [ref=e16]:
+      - generic [ref=e18]:
+        - tablist "对话 / 编辑" [ref=e538]:
+          - tab "对话" [selected] [ref=e539] [cursor=pointer]:
+            - img [ref=e540]
+            - generic [ref=e542]: 对话
+          - tab "编辑" [ref=e543] [cursor=pointer]:
+            - img [ref=e544]
+            - generic [ref=e547]: 编辑
+        - generic [ref=e19]:
+          - generic [ref=e21]:
+            - generic [ref=e22]:
+              - button "对话历史" [ref=e24] [cursor=pointer]:
+                - img [ref=e25]
+              - textbox "sfl 2" [ref=e29]
+              - button "Hide chat" [ref=e30] [cursor=pointer]:
+                - img [ref=e31]
+            - generic [ref=e34]:
+              - generic [ref=e236]:
+                - generic [ref=e238]: 你
+                - generic [ref=e239]:
+                  - generic "设计" [ref=e240]:
+                    - img [ref=e241]
+                    - generic [ref=e243]: 设计
+                  - button "Plugin 网页原型 @0.1.1 new-generation" [ref=e245] [cursor=pointer]:
+                    - generic [ref=e247]:
+                      - generic [ref=e248]: Plugin
+                      - generic [ref=e249]: 网页原型
+                      - generic [ref=e250]: "@0.1.1"
+                    - generic [ref=e251]: new-generation
+                - button "Attachment 1 live-ffff730b10d4.png live-ffff730b10d4.png" [disabled] [ref=e253]:
+                  - generic "Attachment 1" [ref=e254]: "1"
+                  - img "live-ffff730b10d4.png" [ref=e255]
+                  - generic [ref=e256]: live-ffff730b10d4.png
+                - generic "图钉" [ref=e259]:
+                  - strong [ref=e260]: 图钉
+                - generic [ref=e261]:
+                  - generic [ref=e262]: "123"
+                  - generic [ref=e263]:
+                    - time [ref=e264]: 22:41
+                    - button "复制提示词" [ref=e265] [cursor=pointer]:
+                      - img [ref=e266]
+              - generic [ref=e269]:
+                - generic [ref=e270]:
+                  - img [ref=e271]
+                  - generic [ref=e272]: Claude
+                - generic [ref=e276]:
+                  - generic [ref=e278]: 已完成
+                  - generic [ref=e279]: 4.0s
+                  - generic [ref=e280]:
+                    - button "分叉对话" [ref=e281] [cursor=pointer]:
+                      - img [ref=e282]
+                      - text: 分叉对话
+                    - group "反馈" [ref=e287]:
+                      - button "有帮助" [ref=e288] [cursor=pointer]:
+                        - img [ref=e289]
+                        - text: 有帮助
+                      - button "没有帮助" [ref=e291] [cursor=pointer]:
+                        - img [ref=e292]
+                        - text: 没有帮助
+              - generic [ref=e294]:
+                - generic [ref=e296]: 你
+                - generic [ref=e297]:
+                  - generic "设计" [ref=e298]:
+                    - img [ref=e299]
+                    - generic [ref=e301]: 设计
+                  - button "Current 画板.html" [ref=e302] [cursor=pointer]:
+                    - img [ref=e304]
+                    - generic [ref=e307]:
+                      - generic [ref=e308]: Current
+                      - generic [ref=e309]: 画板.html
+                - button "Attachment 1 drawing-2026-06-18T14-41-45-026Z.png drawing-2026-06-18T14-41-45-026Z.png" [disabled] [ref=e311]:
+                  - generic "Attachment 1" [ref=e312]: "1"
+                  - img "drawing-2026-06-18T14-41-45-026Z.png" [ref=e313]
+                  - generic [ref=e314]: drawing-2026-06-18T14-41-45-026Z.png
+                - generic [ref=e315]:
+                  - generic [ref=e316]: "123"
+                  - generic [ref=e317]:
+                    - time [ref=e318]: 22:41
+                    - button "复制提示词" [ref=e319] [cursor=pointer]:
+                      - img [ref=e320]
+              - generic [ref=e323]:
+                - generic [ref=e324]:
+                  - img [ref=e325]
+                  - generic [ref=e326]: Claude
+                - generic [ref=e330]:
+                  - generic [ref=e332]: 已完成
+                  - generic [ref=e333]: 2.5s
+                  - generic [ref=e334]:
+                    - button "分叉对话" [ref=e335] [cursor=pointer]:
+                      - img [ref=e336]
+                      - text: 分叉对话
+                    - group "反馈" [ref=e341]:
+                      - button "有帮助" [ref=e342] [cursor=pointer]:
+                        - img [ref=e343]
+                        - text: 有帮助
+                      - button "没有帮助" [ref=e345] [cursor=pointer]:
+                        - img [ref=e346]
+                        - text: 没有帮助
+          - text: 左对齐 ⌥ A 左右居中对齐 ⌥ H 右对齐 ⌥ D 顶对齐 ⌥ W 上下居中对齐 ⌥ V 底对齐 ⌥ S 垂直平均分布 ⇧ ⌥ V 水平平均分布 ⇧ ⌥ H 画板宽度，拖拽调整 画板高度，拖拽调整 编辑HTML 背景 隐藏HTML 背景 字号，拖拽调整
+      - separator "调整聊天面板大小" [ref=e46]
+      - generic [ref=e52]:
+        - complementary "文件夹" [ref=e53]:
+          - generic [ref=e54]:
+            - generic [ref=e55]: 文件夹
+            - generic [ref=e56]:
+              - button "全部展开" [ref=e57] [cursor=pointer]:
+                - img [ref=e58]
+                - text: 全部展开
+              - button "批量选择" [ref=e60] [cursor=pointer]:
+                - img [ref=e61]
+                - text: 批量选择
+              - button "创建" [ref=e63] [cursor=pointer]:
+                - img [ref=e64]
+                - text: 创建
+          - generic [ref=e65]:
+            - generic [ref=e66]:
+              - button "Collapse folder" [expanded] [ref=e67] [cursor=pointer]:
+                - img [ref=e68]
+              - img [ref=e71]
+              - button "sfl 2" [ref=e73] [cursor=pointer]:
+                - generic "sfl 2" [ref=e74]
+            - generic [ref=e76]:
+              - button "Expand folder" [ref=e77] [cursor=pointer]:
+                - img [ref=e78]
+              - img [ref=e81]
+              - button "规范-移动端" [ref=e83] [cursor=pointer]:
+                - generic "规范-移动端" [ref=e84]
+            - generic [ref=e86]:
+              - button "Expand folder" [ref=e87] [cursor=pointer]:
+                - img [ref=e88]
+              - img [ref=e91]
+              - button "直播模块" [ref=e93] [cursor=pointer]:
+                - generic "直播模块" [ref=e94]
+            - generic [ref=e96]:
+              - button "Expand folder" [ref=e97] [cursor=pointer]:
+                - img [ref=e98]
+              - img [ref=e101]
+              - button "assets" [ref=e103] [cursor=pointer]:
+                - generic "assets" [ref=e104]
+            - generic [ref=e106]:
+              - button "Expand folder" [ref=e107] [cursor=pointer]:
+                - img [ref=e348]
+              - img [ref=e109]
+              - button "css" [ref=e111] [cursor=pointer]:
+                - generic "css" [ref=e112]
+            - generic [ref=e114]:
+              - button "Expand folder" [ref=e115] [cursor=pointer]:
+                - img [ref=e350]
+              - img [ref=e117]
+              - button "js" [ref=e119] [cursor=pointer]:
+                - generic "js" [ref=e120]
+            - generic [ref=e121]:
+              - generic [ref=e122]:
+                - button "Collapse folder" [expanded] [ref=e352] [cursor=pointer]:
+                  - img [ref=e124]
+                - img [ref=e127]
+                - button "pages" [ref=e129] [cursor=pointer]:
+                  - generic "pages" [ref=e130]
+              - generic [ref=e355]:
+                - button "Expand folder" [ref=e356] [cursor=pointer]:
+                  - img [ref=e357]
+                - img [ref=e360]
+                - button "supplier" [ref=e362] [cursor=pointer]:
+                  - generic "supplier" [ref=e363]
+            - generic [ref=e364]:
+              - img [ref=e366] [cursor=pointer]
+              - button "画板-2.html" [active] [ref=e371] [cursor=pointer]:
+                - generic [ref=e372]: 画板-2.html
+              - button "行菜单" [ref=e373] [cursor=pointer]:
+                - img [ref=e374]
+            - generic [ref=e378]:
+              - img [ref=e380] [cursor=pointer]
+              - button "画板.html" [ref=e385] [cursor=pointer]:
+                - generic [ref=e386]: 画板.html
+              - button "行菜单" [ref=e387] [cursor=pointer]:
+                - img [ref=e388]
+            - generic [ref=e392]:
+              - img [ref=e394] [cursor=pointer]
+              - button "提示词-1.0.md" [ref=e397] [cursor=pointer]:
+                - generic [ref=e398]: 提示词-1.0.md
+              - button "行菜单" [ref=e399] [cursor=pointer]:
+                - img [ref=e400]
+            - generic [ref=e404]:
+              - img [ref=e406] [cursor=pointer]
+              - button "admin-components.html" [ref=e411] [cursor=pointer]:
+                - generic [ref=e412]: admin-components.html
+              - button "行菜单" [ref=e413] [cursor=pointer]:
+                - img [ref=e414]
+            - generic [ref=e418]:
+              - img [ref=e420] [cursor=pointer]
+              - button "admin-components.pptx" [ref=e423] [cursor=pointer]:
+                - generic [ref=e424]: admin-components.pptx
+              - button "行菜单" [ref=e425] [cursor=pointer]:
+                - img [ref=e426]
+            - generic [ref=e430]:
+              - img [ref=e432] [cursor=pointer]
+              - button "export_pptx.py" [ref=e437] [cursor=pointer]:
+                - generic [ref=e438]: export_pptx.py
+              - button "行菜单" [ref=e439] [cursor=pointer]:
+                - img [ref=e440]
+            - generic [ref=e444]:
+              - img [ref=e446] [cursor=pointer]
+              - button "index.html" [ref=e451] [cursor=pointer]:
+                - generic [ref=e452]: index.html
+              - button "行菜单" [ref=e453] [cursor=pointer]:
+                - img [ref=e454]
+            - generic [ref=e458]:
+              - img [ref=e460] [cursor=pointer]
+              - button "internal-dashboard.html" [ref=e465] [cursor=pointer]:
+                - generic [ref=e466]: internal-dashboard.html
+              - button "行菜单" [ref=e467] [cursor=pointer]:
+                - img [ref=e468]
+            - generic [ref=e472]:
+              - img [ref=e474] [cursor=pointer]
+              - button "internal-training.html" [ref=e479] [cursor=pointer]:
+                - generic [ref=e480]: internal-training.html
+              - button "行菜单" [ref=e481] [cursor=pointer]:
+                - img [ref=e482]
+            - generic [ref=e486]:
+              - img [ref=e488] [cursor=pointer]
+              - button "internal-vendor-detail.html" [ref=e493] [cursor=pointer]:
+                - generic [ref=e494]: internal-vendor-detail.html
+              - button "行菜单" [ref=e495] [cursor=pointer]:
+                - img [ref=e496]
+            - generic [ref=e500]:
+              - img [ref=e502] [cursor=pointer]
+              - button "internal-vendor-list.html" [ref=e507] [cursor=pointer]:
+                - generic [ref=e508]: internal-vendor-list.html
+              - button "行菜单" [ref=e509] [cursor=pointer]:
+                - img [ref=e510]
+            - generic [ref=e514]:
+              - img [ref=e516] [cursor=pointer]
+              - button "logo.svg" [ref=e519] [cursor=pointer]:
+                - generic [ref=e520]: logo.svg
+              - button "行菜单" [ref=e521] [cursor=pointer]:
+                - img [ref=e522]
+            - generic [ref=e526]:
+              - img [ref=e528] [cursor=pointer]
+              - button "schaeffler-Colors.md" [ref=e531] [cursor=pointer]:
+                - generic [ref=e532]: schaeffler-Colors.md
+              - button "行菜单" [ref=e533] [cursor=pointer]:
+                - img [ref=e534]
+        - generic [ref=e132]:
+          - generic [ref=e133]:
+            - button "返回项目列表" [ref=e134] [cursor=pointer]:
+              - img [ref=e135]
+              - text: 返回项目列表
+            - tablist "设计文件" [ref=e137]:
+              - tab "画板-2.html" [selected] [ref=e548] [cursor=pointer]:
+                - img [ref=e140]
+                - generic [ref=e145]: 画板-2.html
+            - button "新建标签页" [ref=e147] [cursor=pointer]:
+              - img [ref=e148]
+              - text: 新建标签页
+            - generic [ref=e152]:
+              - button "在当前标签页" [ref=e554] [cursor=pointer]:
+                - generic [ref=e555]: 
+                - text: 在当前标签页
+              - generic [ref=e153]:
+                - button "下载" [ref=e155] [cursor=pointer]:
+                  - img [ref=e156]
+                  - text: 下载
+                - button "打开设置" [ref=e160] [cursor=pointer]:
+                  - img [ref=e161]
+                  - text: 设置
+                - generic [ref=e165]:
+                  - button "在 Cursor 中打开" [ref=e166] [cursor=pointer]:
+                    - img [ref=e168]
+                    - generic [ref=e170]: 在 Cursor 中打开
+                    - text: 在 Cursor 中打开
+                  - button "选择交付目标" [ref=e171] [cursor=pointer]:
+                    - img [ref=e172]
+                    - text: 选择交付目标
+          - generic [ref=e556]:
+            - generic [ref=e557]:
+              - generic [ref=e558]:
+                - button "重新加载 预览" [ref=e559] [cursor=pointer]:
+                  - img [ref=e560]
+                  - text: 重新加载 预览
+                - tablist "View mode" [ref=e563]:
+                  - tab "编辑模式" [selected] [ref=e564] [cursor=pointer]
+                  - tab "交互模式" [ref=e565] [cursor=pointer]
+                  - tab "代码" [ref=e566] [cursor=pointer]
+                - button "预览视口" [ref=e569] [cursor=pointer]:
+                  - generic [ref=e570]: 
+                  - generic [ref=e571]: 桌面端
+                  - generic [ref=e572]: 
+                  - text: 全宽桌面预览
+              - generic [ref=e573]:
+                - button "截图" [ref=e574] [cursor=pointer]:
+                  - generic [ref=e575]: 
+                  - text: 截图
+                - button "录制操作诊断" [ref=e576] [cursor=pointer]:
+                  - generic [ref=e577]: 
+                  - text: 录制操作诊断
+                - button "60% 重置缩放" [ref=e579] [cursor=pointer]:
+                  - generic [ref=e580]: 60%
+                  - text: 重置缩放
+            - generic [ref=e581]:
+              - generic [ref=e583]:
+                - iframe [ref=e590]:
+                  
+                - generic "画板-2" [ref=e591]:
+                  - generic [ref=e592]: 画板-2
+              - toolbar "画布工具" [ref=e593]:
+                - generic [ref=e594]:
+                  - button "光标 V" [pressed] [ref=e595] [cursor=pointer]:
+                    - generic [ref=e596]: 
+                    - text: 光标 V
+                  - button "形状 R" [ref=e598] [cursor=pointer]:
+                    - generic [ref=e599]: 
+                    - generic [ref=e600]: 
+                    - text: 形状 R
+                  - button "文本 T" [ref=e601] [cursor=pointer]:
+                    - generic [ref=e602]: 
+                    - text: 文本 T
+                  - button "图标库" [ref=e604] [cursor=pointer]:
+                    - generic [ref=e605]: 
+                    - text: 图标库
+                - generic [ref=e607]:
+                  - button "标注 C" [ref=e608] [cursor=pointer]:
+                    - generic [ref=e609]: 
+                    - text: 标注 C
+                  - button "手绘" [ref=e610] [cursor=pointer]:
+                    - generic [ref=e611]: 
+                    - text: 手绘
+                  - button "评论 (0)" [ref=e612] [cursor=pointer]:
+                    - generic [ref=e613]: 
+                    - generic [ref=e614]: "0"
+                    - text: 评论
+                - button "快捷键说明" [ref=e617] [cursor=pointer]:
+                  - img [ref=e618]
+                  - text: 快捷键说明
+  - generic [ref=e181]:
+    - generic [ref=e182]:
+      - generic [ref=e183]:
+        - button "选择设计系统" [ref=e186] [cursor=pointer]:
+          - img [ref=e187]
+          - generic [ref=e193]: 选择设计系统
+          - img [ref=e194]
+        - generic [ref=e621]:
+          - img [ref=e623]
+          - 'generic "File | path: 画板-2.html | absolute: /Users/xierongchao/open-design-workspace/sfl 2/画板-2.html" [ref=e626]': Current画板-2.html
+          - button "移除 画板-2.html" [ref=e627] [cursor=pointer]:
+            - img [ref=e628]
+            - text: 删除
+      - generic [ref=e206]:
+        - combobox "描述你想生成的内容…" [ref=e207]:
+          - paragraph [ref=e208]
+        - generic: 描述你想生成的内容…
+        - generic: 描述你想生成的内容…
+      - generic [ref=e209]:
+        - button "添加" [ref=e211] [cursor=pointer]:
+          - img [ref=e212]
+          - text: 添加
+        - button "账户与设置" [ref=e214] [cursor=pointer]:
+          - img [ref=e215]
+          - generic [ref=e216]: 
+          - text: 账户与设置
+        - button "设计模式" [ref=e218] [cursor=pointer]:
+          - img [ref=e219]
+          - img [ref=e221]
+          - text: 设计模式
+        - button "发送" [disabled] [ref=e223]:
+          - img [ref=e224]
+          - text: 发送
+    - button "homeWorkingDir.trigger" [ref=e230] [cursor=pointer]:
+      - img [ref=e231]
+      - generic [ref=e233]: homeWorkingDir.trigger
+      - img [ref=e234]

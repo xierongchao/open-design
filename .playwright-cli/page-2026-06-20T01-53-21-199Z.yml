@@ -1,0 +1,893 @@
+- generic [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e8] [cursor=pointer]:
+    - img [ref=e9]
+  - alert [ref=e12]
+  - generic [ref=e13]:
+    - text: 主页 sfl 2 关闭 New tab Search tabs
+    - generic [ref=e16]:
+      - generic [ref=e18]:
+        - tablist "对话 / 编辑" [ref=e538]:
+          - tab "对话" [selected] [ref=e539] [cursor=pointer]:
+            - img [ref=e540]
+            - generic [ref=e542]: 对话
+          - tab "编辑" [ref=e543] [cursor=pointer]:
+            - img [ref=e544]
+            - generic [ref=e547]: 编辑
+        - generic [ref=e19]:
+          - generic [ref=e21]:
+            - generic [ref=e22]:
+              - button "对话历史" [ref=e24] [cursor=pointer]:
+                - img [ref=e25]
+              - textbox "sfl 2" [ref=e29]
+              - button "Hide chat" [ref=e30] [cursor=pointer]:
+                - img [ref=e31]
+            - generic [ref=e34]:
+              - generic [ref=e236]:
+                - generic [ref=e238]: 你
+                - generic [ref=e239]:
+                  - generic "设计" [ref=e240]:
+                    - img [ref=e241]
+                    - generic [ref=e243]: 设计
+                  - button "Plugin 网页原型 @0.1.1 new-generation" [ref=e245] [cursor=pointer]:
+                    - generic [ref=e247]:
+                      - generic [ref=e248]: Plugin
+                      - generic [ref=e249]: 网页原型
+                      - generic [ref=e250]: "@0.1.1"
+                    - generic [ref=e251]: new-generation
+                - button "Attachment 1 live-ffff730b10d4.png live-ffff730b10d4.png" [disabled] [ref=e253]:
+                  - generic "Attachment 1" [ref=e254]: "1"
+                  - img "live-ffff730b10d4.png" [ref=e255]
+                  - generic [ref=e256]: live-ffff730b10d4.png
+                - generic "图钉" [ref=e259]:
+                  - strong [ref=e260]: 图钉
+                - generic [ref=e261]:
+                  - generic [ref=e262]: "123"
+                  - generic [ref=e263]:
+                    - time [ref=e264]: 22:41
+                    - button "复制提示词" [ref=e265] [cursor=pointer]:
+                      - img [ref=e266]
+              - generic [ref=e269]:
+                - generic [ref=e270]:
+                  - img [ref=e271]
+                  - generic [ref=e272]: Claude
+                - generic [ref=e276]:
+                  - generic [ref=e278]: 已完成
+                  - generic [ref=e279]: 4.0s
+                  - generic [ref=e280]:
+                    - button "分叉对话" [ref=e281] [cursor=pointer]:
+                      - img [ref=e282]
+                      - text: 分叉对话
+                    - group "反馈" [ref=e287]:
+                      - button "有帮助" [ref=e288] [cursor=pointer]:
+                        - img [ref=e289]
+                        - text: 有帮助
+                      - button "没有帮助" [ref=e291] [cursor=pointer]:
+                        - img [ref=e292]
+                        - text: 没有帮助
+              - generic [ref=e294]:
+                - generic [ref=e296]: 你
+                - generic [ref=e297]:
+                  - generic "设计" [ref=e298]:
+                    - img [ref=e299]
+                    - generic [ref=e301]: 设计
+                  - button "Current 画板.html" [ref=e302] [cursor=pointer]:
+                    - img [ref=e304]
+                    - generic [ref=e307]:
+                      - generic [ref=e308]: Current
+                      - generic [ref=e309]: 画板.html
+                - button "Attachment 1 drawing-2026-06-18T14-41-45-026Z.png drawing-2026-06-18T14-41-45-026Z.png" [disabled] [ref=e311]:
+                  - generic "Attachment 1" [ref=e312]: "1"
+                  - img "drawing-2026-06-18T14-41-45-026Z.png" [ref=e313]
+                  - generic [ref=e314]: drawing-2026-06-18T14-41-45-026Z.png
+                - generic [ref=e315]:
+                  - generic [ref=e316]: "123"
+                  - generic [ref=e317]:
+                    - time [ref=e318]: 22:41
+                    - button "复制提示词" [ref=e319] [cursor=pointer]:
+                      - img [ref=e320]
+              - generic [ref=e323]:
+                - generic [ref=e324]:
+                  - img [ref=e325]
+                  - generic [ref=e326]: Claude
+                - generic [ref=e330]:
+                  - generic [ref=e332]: 已完成
+                  - generic [ref=e333]: 2.5s
+                  - generic [ref=e334]:
+                    - button "分叉对话" [ref=e335] [cursor=pointer]:
+                      - img [ref=e336]
+                      - text: 分叉对话
+                    - group "反馈" [ref=e341]:
+                      - button "有帮助" [ref=e342] [cursor=pointer]:
+                        - img [ref=e343]
+                        - text: 有帮助
+                      - button "没有帮助" [ref=e345] [cursor=pointer]:
+                        - img [ref=e346]
+                        - text: 没有帮助
+          - text: 左对齐 ⌥ A 左右居中对齐 ⌥ H 右对齐 ⌥ D 顶对齐 ⌥ W 上下居中对齐 ⌥ V 底对齐 ⌥ S 垂直平均分布 ⇧ ⌥ V 水平平均分布 ⇧ ⌥ H 画板宽度，拖拽调整 画板高度，拖拽调整 编辑HTML 背景 隐藏HTML 背景 字号，拖拽调整
+      - separator "调整聊天面板大小" [ref=e46]
+      - generic [ref=e52]:
+        - complementary "文件夹" [ref=e53]:
+          - generic [ref=e54]:
+            - generic [ref=e55]: 文件夹
+            - generic [ref=e56]:
+              - button "全部展开" [ref=e57] [cursor=pointer]:
+                - img [ref=e58]
+                - text: 全部展开
+              - button "批量选择" [ref=e60] [cursor=pointer]:
+                - img [ref=e61]
+                - text: 批量选择
+              - button "创建" [ref=e63] [cursor=pointer]:
+                - img [ref=e64]
+                - text: 创建
+          - generic [ref=e65]:
+            - generic [ref=e66]:
+              - button "Collapse folder" [expanded] [ref=e67] [cursor=pointer]:
+                - img [ref=e68]
+              - img [ref=e71]
+              - button "sfl 2" [ref=e73] [cursor=pointer]:
+                - generic "sfl 2" [ref=e74]
+            - generic [ref=e76]:
+              - button "Expand folder" [ref=e77] [cursor=pointer]:
+                - img [ref=e78]
+              - img [ref=e81]
+              - button "规范-移动端" [ref=e83] [cursor=pointer]:
+                - generic "规范-移动端" [ref=e84]
+            - generic [ref=e86]:
+              - button "Expand folder" [ref=e87] [cursor=pointer]:
+                - img [ref=e88]
+              - img [ref=e91]
+              - button "直播模块" [ref=e93] [cursor=pointer]:
+                - generic "直播模块" [ref=e94]
+            - generic [ref=e96]:
+              - button "Expand folder" [ref=e97] [cursor=pointer]:
+                - img [ref=e98]
+              - img [ref=e101]
+              - button "assets" [ref=e103] [cursor=pointer]:
+                - generic "assets" [ref=e104]
+            - generic [ref=e106]:
+              - button "Expand folder" [ref=e107] [cursor=pointer]:
+                - img [ref=e348]
+              - img [ref=e109]
+              - button "css" [ref=e111] [cursor=pointer]:
+                - generic "css" [ref=e112]
+            - generic [ref=e114]:
+              - button "Expand folder" [ref=e115] [cursor=pointer]:
+                - img [ref=e350]
+              - img [ref=e117]
+              - button "js" [ref=e119] [cursor=pointer]:
+                - generic "js" [ref=e120]
+            - generic [ref=e121]:
+              - generic [ref=e122]:
+                - button "Collapse folder" [expanded] [ref=e352] [cursor=pointer]:
+                  - img [ref=e124]
+                - img [ref=e127]
+                - button "pages" [ref=e129] [cursor=pointer]:
+                  - generic "pages" [ref=e130]
+              - generic [ref=e355]:
+                - button "Expand folder" [ref=e356] [cursor=pointer]:
+                  - img [ref=e357]
+                - img [ref=e360]
+                - button "supplier" [ref=e362] [cursor=pointer]:
+                  - generic "supplier" [ref=e363]
+            - generic [ref=e364]:
+              - img [ref=e366] [cursor=pointer]
+              - button "画板-2.html" [ref=e371] [cursor=pointer]:
+                - generic [ref=e372]: 画板-2.html
+              - button "行菜单" [ref=e373] [cursor=pointer]:
+                - img [ref=e374]
+            - generic [ref=e378]:
+              - img [ref=e380] [cursor=pointer]
+              - button "画板.html" [ref=e385] [cursor=pointer]:
+                - generic [ref=e386]: 画板.html
+              - button "行菜单" [ref=e387] [cursor=pointer]:
+                - img [ref=e388]
+            - generic [ref=e392]:
+              - img [ref=e394] [cursor=pointer]
+              - button "提示词-1.0.md" [ref=e397] [cursor=pointer]:
+                - generic [ref=e398]: 提示词-1.0.md
+              - button "行菜单" [ref=e399] [cursor=pointer]:
+                - img [ref=e400]
+            - generic [ref=e404]:
+              - img [ref=e406] [cursor=pointer]
+              - button "admin-components.html" [ref=e411] [cursor=pointer]:
+                - generic [ref=e412]: admin-components.html
+              - button "行菜单" [ref=e413] [cursor=pointer]:
+                - img [ref=e414]
+            - generic [ref=e418]:
+              - img [ref=e420] [cursor=pointer]
+              - button "admin-components.pptx" [ref=e423] [cursor=pointer]:
+                - generic [ref=e424]: admin-components.pptx
+              - button "行菜单" [ref=e425] [cursor=pointer]:
+                - img [ref=e426]
+            - generic [ref=e430]:
+              - img [ref=e432] [cursor=pointer]
+              - button "export_pptx.py" [ref=e437] [cursor=pointer]:
+                - generic [ref=e438]: export_pptx.py
+              - button "行菜单" [ref=e439] [cursor=pointer]:
+                - img [ref=e440]
+            - generic [ref=e444]:
+              - img [ref=e446] [cursor=pointer]
+              - button "index.html" [ref=e451] [cursor=pointer]:
+                - generic [ref=e452]: index.html
+              - button "行菜单" [ref=e453] [cursor=pointer]:
+                - img [ref=e454]
+            - generic [ref=e458]:
+              - img [ref=e460] [cursor=pointer]
+              - button "internal-dashboard.html" [ref=e465] [cursor=pointer]:
+                - generic [ref=e466]: internal-dashboard.html
+              - button "行菜单" [ref=e467] [cursor=pointer]:
+                - img [ref=e468]
+            - generic [ref=e472]:
+              - img [ref=e474] [cursor=pointer]
+              - button "internal-training.html" [ref=e479] [cursor=pointer]:
+                - generic [ref=e480]: internal-training.html
+              - button "行菜单" [ref=e481] [cursor=pointer]:
+                - img [ref=e482]
+            - generic [ref=e486]:
+              - img [ref=e488] [cursor=pointer]
+              - button "internal-vendor-detail.html" [ref=e493] [cursor=pointer]:
+                - generic [ref=e494]: internal-vendor-detail.html
+              - button "行菜单" [ref=e495] [cursor=pointer]:
+                - img [ref=e496]
+            - generic [ref=e500]:
+              - img [ref=e502] [cursor=pointer]
+              - button "internal-vendor-list.html" [ref=e507] [cursor=pointer]:
+                - generic [ref=e508]: internal-vendor-list.html
+              - button "行菜单" [ref=e509] [cursor=pointer]:
+                - img [ref=e510]
+            - generic [ref=e514]:
+              - img [ref=e516] [cursor=pointer]
+              - button "logo.svg" [ref=e519] [cursor=pointer]:
+                - generic [ref=e520]: logo.svg
+              - button "行菜单" [ref=e521] [cursor=pointer]:
+                - img [ref=e522]
+            - generic [ref=e526]:
+              - img [ref=e528] [cursor=pointer]
+              - button "schaeffler-Colors.md" [ref=e531] [cursor=pointer]:
+                - generic [ref=e532]: schaeffler-Colors.md
+              - button "行菜单" [ref=e533] [cursor=pointer]:
+                - img [ref=e534]
+        - generic [ref=e132]:
+          - generic [ref=e133]:
+            - button "返回项目列表" [ref=e134] [cursor=pointer]:
+              - img [ref=e135]
+              - text: 返回项目列表
+            - tablist "设计文件" [ref=e137]:
+              - tab "画板-2.html" [selected] [ref=e548] [cursor=pointer]:
+                - img [ref=e140]
+                - generic [ref=e145]: 画板-2.html
+            - button "新建标签页" [expanded] [ref=e147] [cursor=pointer]:
+              - img [ref=e148]
+              - text: 新建标签页
+            - generic [ref=e152]:
+              - button "在当前标签页" [ref=e554] [cursor=pointer]:
+                - generic [ref=e555]: 
+                - text: 在当前标签页
+              - generic [ref=e153]:
+                - button "下载" [ref=e155] [cursor=pointer]:
+                  - img [ref=e156]
+                  - text: 下载
+                - button "打开设置" [ref=e160] [cursor=pointer]:
+                  - img [ref=e161]
+                  - text: 设置
+                - generic [ref=e165]:
+                  - button "在 Cursor 中打开" [ref=e166] [cursor=pointer]:
+                    - img [ref=e168]
+                    - generic [ref=e170]: 在 Cursor 中打开
+                    - text: 在 Cursor 中打开
+                  - button "选择交付目标" [ref=e171] [cursor=pointer]:
+                    - img [ref=e172]
+                    - text: 选择交付目标
+          - generic [ref=e556]:
+            - generic [ref=e557]:
+              - generic [ref=e558]:
+                - button "重新加载 预览" [ref=e559] [cursor=pointer]:
+                  - img [ref=e560]
+                  - text: 重新加载 预览
+                - tablist "View mode" [ref=e563]:
+                  - tab "编辑模式" [selected] [ref=e564] [cursor=pointer]
+                  - tab "交互模式" [ref=e565] [cursor=pointer]
+                  - tab "代码" [ref=e566] [cursor=pointer]
+                - button "预览视口" [ref=e569] [cursor=pointer]:
+                  - generic [ref=e570]: 
+                  - generic [ref=e571]: 桌面端
+                  - generic [ref=e572]: 
+                  - text: 全宽桌面预览
+              - generic [ref=e573]:
+                - button "截图" [ref=e574] [cursor=pointer]:
+                  - generic [ref=e575]: 
+                  - text: 截图
+                - button "录制操作诊断" [ref=e576] [cursor=pointer]:
+                  - generic [ref=e577]: 
+                  - text: 录制操作诊断
+                - button "60% 重置缩放" [ref=e579] [cursor=pointer]:
+                  - generic [ref=e580]: 60%
+                  - text: 重置缩放
+            - generic [ref=e581]:
+              - generic [ref=e583]:
+                - iframe [ref=e590]:
+                  
+                - generic "画板-2" [ref=e591]:
+                  - generic [ref=e592]: 画板-2
+              - toolbar "画布工具" [ref=e593]:
+                - generic [ref=e594]:
+                  - button "光标 V" [pressed] [ref=e595] [cursor=pointer]:
+                    - generic [ref=e596]: 
+                    - text: 光标 V
+                  - button "形状 R" [ref=e598] [cursor=pointer]:
+                    - generic [ref=e599]: 
+                    - generic [ref=e600]: 
+                    - text: 形状 R
+                  - button "文本 T" [ref=e601] [cursor=pointer]:
+                    - generic [ref=e602]: 
+                    - text: 文本 T
+                  - button "图标库" [ref=e604] [cursor=pointer]:
+                    - generic [ref=e605]: 
+                    - text: 图标库
+                - generic [ref=e607]:
+                  - button "标注 C" [ref=e608] [cursor=pointer]:
+                    - generic [ref=e609]: 
+                    - text: 标注 C
+                  - button "手绘" [ref=e610] [cursor=pointer]:
+                    - generic [ref=e611]: 
+                    - text: 手绘
+                  - button "评论 (0)" [ref=e612] [cursor=pointer]:
+                    - generic [ref=e613]: 
+                    - generic [ref=e614]: "0"
+                    - text: 评论
+                - button "快捷键说明" [ref=e617] [cursor=pointer]:
+                  - img [ref=e618]
+                  - text: 快捷键说明
+  - generic [ref=e181]:
+    - generic [ref=e182]:
+      - generic [ref=e183]:
+        - button "选择设计系统" [ref=e186] [cursor=pointer]:
+          - img [ref=e187]
+          - generic [ref=e193]: 选择设计系统
+          - img [ref=e194]
+        - generic [ref=e621]:
+          - img [ref=e623]
+          - 'generic "File | path: 画板-2.html | absolute: /Users/xierongchao/open-design-workspace/sfl 2/画板-2.html" [ref=e626]': Current画板-2.html
+          - button "移除 画板-2.html" [ref=e627] [cursor=pointer]:
+            - img [ref=e628]
+            - text: 删除
+      - generic [ref=e206]:
+        - combobox "描述你想生成的内容…" [ref=e207]:
+          - paragraph [ref=e208]
+        - generic: 描述你想生成的内容…
+        - generic: 描述你想生成的内容…
+      - generic [ref=e209]:
+        - button "添加" [ref=e211] [cursor=pointer]:
+          - img [ref=e212]
+          - text: 添加
+        - button "账户与设置" [ref=e214] [cursor=pointer]:
+          - img [ref=e215]
+          - generic [ref=e216]: 
+          - text: 账户与设置
+        - button "设计模式" [ref=e218] [cursor=pointer]:
+          - img [ref=e219]
+          - img [ref=e221]
+          - text: 设计模式
+        - button "发送" [disabled] [ref=e223]:
+          - img [ref=e224]
+          - text: 发送
+    - button "homeWorkingDir.trigger" [ref=e230] [cursor=pointer]:
+      - img [ref=e231]
+      - generic [ref=e233]: homeWorkingDir.trigger
+      - img [ref=e234]
+  - dialog "新建标签页" [ref=e631]:
+    - generic [ref=e632]:
+      - img [ref=e634]
+      - textbox "搜索文件或标签页" [active] [ref=e637]
+    - generic [ref=e638]:
+      - button "全部文件" [ref=e639] [cursor=pointer]
+      - button "HTML 页面" [ref=e640] [cursor=pointer]
+      - button "图片" [ref=e641] [cursor=pointer]
+      - button "草图" [ref=e642] [cursor=pointer]
+      - button "脚本" [ref=e643] [cursor=pointer]
+      - button "二进制" [ref=e644] [cursor=pointer]
+      - button "文本" [ref=e645] [cursor=pointer]
+      - button "演示文稿" [ref=e646] [cursor=pointer]
+    - generic [ref=e647]:
+      - generic [ref=e648]:
+        - generic [ref=e649]: 新建
+        - list [ref=e650]:
+          - listitem [ref=e651]:
+            - button "新建浏览器 打开浏览器标签用于参考" [ref=e652] [cursor=pointer]:
+              - img [ref=e654]
+              - generic [ref=e657]:
+                - generic [ref=e658]: 新建浏览器
+                - generic [ref=e659]: 打开浏览器标签用于参考
+      - generic [ref=e660]:
+        - generic [ref=e661]: 打开文件
+        - list [ref=e662]:
+          - listitem [ref=e663]:
+            - button "画板-2.html HTML 页面 · 3.6 KB · 14 分钟前" [ref=e664] [cursor=pointer]:
+              - img [ref=e666]
+              - generic [ref=e671]:
+                - generic [ref=e672]: 画板-2.html
+                - generic [ref=e673]: HTML 页面 · 3.6 KB · 14 分钟前
+          - listitem [ref=e674]:
+            - button "画板.html HTML 页面 · 4.8 KB · 23 分钟前" [ref=e675] [cursor=pointer]:
+              - img [ref=e677]
+              - generic [ref=e682]:
+                - generic [ref=e683]: 画板.html
+                - generic [ref=e684]: HTML 页面 · 4.8 KB · 23 分钟前
+          - listitem [ref=e685]:
+            - button "internal-vendor-list.html HTML 页面 · 50.3 KB · 8 小时前" [ref=e686] [cursor=pointer]:
+              - img [ref=e688]
+              - generic [ref=e693]:
+                - generic [ref=e694]: internal-vendor-list.html
+                - generic [ref=e695]: HTML 页面 · 50.3 KB · 8 小时前
+          - listitem [ref=e696]:
+            - button "admin-components.html HTML 页面 · 127.4 KB · 10 小时前" [ref=e697] [cursor=pointer]:
+              - img [ref=e699]
+              - generic [ref=e704]:
+                - generic [ref=e705]: admin-components.html
+                - generic [ref=e706]: HTML 页面 · 127.4 KB · 10 小时前
+          - listitem [ref=e707]:
+            - button "internal-training.html HTML 页面 · 55.3 KB · 22 小时前" [ref=e708] [cursor=pointer]:
+              - img [ref=e710]
+              - generic [ref=e715]:
+                - generic [ref=e716]: internal-training.html
+                - generic [ref=e717]: HTML 页面 · 55.3 KB · 22 小时前
+          - listitem [ref=e718]:
+            - button "internal-vendor-detail.html HTML 页面 · 107.3 KB · 1 天前" [ref=e719] [cursor=pointer]:
+              - img [ref=e721]
+              - generic [ref=e726]:
+                - generic [ref=e727]: internal-vendor-detail.html
+                - generic [ref=e728]: HTML 页面 · 107.3 KB · 1 天前
+          - listitem [ref=e729]:
+            - button "直播模块/独立直播/小程序页面/直播详情页.html HTML 页面 · 72.1 KB · 1 天前" [ref=e730] [cursor=pointer]:
+              - img [ref=e732]
+              - generic [ref=e737]:
+                - generic [ref=e738]: 直播模块/独立直播/小程序页面/直播详情页.html
+                - generic [ref=e739]: HTML 页面 · 72.1 KB · 1 天前
+          - listitem [ref=e740]:
+            - button "直播模块/独立直播/小程序页面/直播间页.html HTML 页面 · 76.6 KB · 1 天前" [ref=e741] [cursor=pointer]:
+              - img [ref=e743]
+              - generic [ref=e748]:
+                - generic [ref=e749]: 直播模块/独立直播/小程序页面/直播间页.html
+                - generic [ref=e750]: HTML 页面 · 76.6 KB · 1 天前
+          - listitem [ref=e751]:
+            - button "规范-移动端/视频播放页/视频播放页.html HTML 页面 · 44.3 KB · 1 天前" [ref=e752] [cursor=pointer]:
+              - img [ref=e754]
+              - generic [ref=e759]:
+                - generic [ref=e760]: 规范-移动端/视频播放页/视频播放页.html
+                - generic [ref=e761]: HTML 页面 · 44.3 KB · 1 天前
+          - listitem [ref=e762]:
+            - button "规范-移动端/卡片列表页/卡片列表页1.html HTML 页面 · 46.4 KB · 1 天前" [ref=e763] [cursor=pointer]:
+              - img [ref=e765]
+              - generic [ref=e770]:
+                - generic [ref=e771]: 规范-移动端/卡片列表页/卡片列表页1.html
+                - generic [ref=e772]: HTML 页面 · 46.4 KB · 1 天前
+          - listitem [ref=e773]:
+            - button "规范-移动端/卡片列表页/卡片列表页2.html HTML 页面 · 41.8 KB · 1 天前" [ref=e774] [cursor=pointer]:
+              - img [ref=e776]
+              - generic [ref=e781]:
+                - generic [ref=e782]: 规范-移动端/卡片列表页/卡片列表页2.html
+                - generic [ref=e783]: HTML 页面 · 41.8 KB · 1 天前
+          - listitem [ref=e784]:
+            - button "internal-dashboard.html HTML 页面 · 16.9 KB · 1 天前" [ref=e785] [cursor=pointer]:
+              - img [ref=e787]
+              - generic [ref=e792]:
+                - generic [ref=e793]: internal-dashboard.html
+                - generic [ref=e794]: HTML 页面 · 16.9 KB · 1 天前
+          - listitem [ref=e795]:
+            - button "直播模块/独立直播/小程序页面/直播列表页.html HTML 页面 · 47.0 KB · 1 天前" [ref=e796] [cursor=pointer]:
+              - img [ref=e798]
+              - generic [ref=e803]:
+                - generic [ref=e804]: 直播模块/独立直播/小程序页面/直播列表页.html
+                - generic [ref=e805]: HTML 页面 · 47.0 KB · 1 天前
+          - listitem [ref=e806]:
+            - button "直播模块/独立直播/小程序页面/报名表单页.html HTML 页面 · 52.9 KB · 1 天前" [ref=e807] [cursor=pointer]:
+              - img [ref=e809]
+              - generic [ref=e814]:
+                - generic [ref=e815]: 直播模块/独立直播/小程序页面/报名表单页.html
+                - generic [ref=e816]: HTML 页面 · 52.9 KB · 1 天前
+          - listitem [ref=e817]:
+            - button "直播模块/独立直播/小程序页面/邀约海报生成页.html HTML 页面 · 71.8 KB · 1 天前" [ref=e818] [cursor=pointer]:
+              - img [ref=e820]
+              - generic [ref=e825]:
+                - generic [ref=e826]: 直播模块/独立直播/小程序页面/邀约海报生成页.html
+                - generic [ref=e827]: HTML 页面 · 71.8 KB · 1 天前
+          - listitem [ref=e828]:
+            - button "直播模块/独立直播/后台页面/报名情况查看页.html HTML 页面 · 35.4 KB · 1 天前" [ref=e829] [cursor=pointer]:
+              - img [ref=e831]
+              - generic [ref=e836]:
+                - generic [ref=e837]: 直播模块/独立直播/后台页面/报名情况查看页.html
+                - generic [ref=e838]: HTML 页面 · 35.4 KB · 1 天前
+          - listitem [ref=e839]:
+            - button "直播模块/独立直播/后台页面/活动审核页.html HTML 页面 · 34.1 KB · 1 天前" [ref=e840] [cursor=pointer]:
+              - img [ref=e842]
+              - generic [ref=e847]:
+                - generic [ref=e848]: 直播模块/独立直播/后台页面/活动审核页.html
+                - generic [ref=e849]: HTML 页面 · 34.1 KB · 1 天前
+          - listitem [ref=e850]:
+            - button "直播模块/独立直播/后台页面/直播列表页.html HTML 页面 · 38.6 KB · 1 天前" [ref=e851] [cursor=pointer]:
+              - img [ref=e853]
+              - generic [ref=e858]:
+                - generic [ref=e859]: 直播模块/独立直播/后台页面/直播列表页.html
+                - generic [ref=e860]: HTML 页面 · 38.6 KB · 1 天前
+          - listitem [ref=e861]:
+            - button "直播模块/独立直播/后台页面/直播观看数据看板.html HTML 页面 · 36.0 KB · 1 天前" [ref=e862] [cursor=pointer]:
+              - img [ref=e864]
+              - generic [ref=e869]:
+                - generic [ref=e870]: 直播模块/独立直播/后台页面/直播观看数据看板.html
+                - generic [ref=e871]: HTML 页面 · 36.0 KB · 1 天前
+          - listitem [ref=e872]:
+            - button "直播模块/独立直播/后台页面/邀约海报模板配置页.html HTML 页面 · 35.7 KB · 1 天前" [ref=e873] [cursor=pointer]:
+              - img [ref=e875]
+              - generic [ref=e880]:
+                - generic [ref=e881]: 直播模块/独立直播/后台页面/邀约海报模板配置页.html
+                - generic [ref=e882]: HTML 页面 · 35.7 KB · 1 天前
+          - listitem [ref=e883]:
+            - button "直播模块/独立直播/后台页面/邀约人配置页.html HTML 页面 · 34.6 KB · 1 天前" [ref=e884] [cursor=pointer]:
+              - img [ref=e886]
+              - generic [ref=e891]:
+                - generic [ref=e892]: 直播模块/独立直播/后台页面/邀约人配置页.html
+                - generic [ref=e893]: HTML 页面 · 34.6 KB · 1 天前
+          - listitem [ref=e894]:
+            - button "直播模块/独立直播/后台页面/观看权限回放审核页.html HTML 页面 · 35.9 KB · 1 天前" [ref=e895] [cursor=pointer]:
+              - img [ref=e897]
+              - generic [ref=e902]:
+                - generic [ref=e903]: 直播模块/独立直播/后台页面/观看权限回放审核页.html
+                - generic [ref=e904]: HTML 页面 · 35.9 KB · 1 天前
+          - listitem [ref=e905]:
+            - button "直播模块/独立直播/后台页面/直播活动配置页.html HTML 页面 · 41.4 KB · 1 天前" [ref=e906] [cursor=pointer]:
+              - img [ref=e908]
+              - generic [ref=e913]:
+                - generic [ref=e914]: 直播模块/独立直播/后台页面/直播活动配置页.html
+                - generic [ref=e915]: HTML 页面 · 41.4 KB · 1 天前
+          - listitem [ref=e916]:
+            - button "直播模块/活动整合直播/小程序页面/活动详情页.html HTML 页面 · 53.4 KB · 1 天前" [ref=e917] [cursor=pointer]:
+              - img [ref=e919]
+              - generic [ref=e924]:
+                - generic [ref=e925]: 直播模块/活动整合直播/小程序页面/活动详情页.html
+                - generic [ref=e926]: HTML 页面 · 53.4 KB · 1 天前
+          - listitem [ref=e927]:
+            - button "直播模块/活动整合直播/小程序页面/整合直播间页.html HTML 页面 · 51.1 KB · 1 天前" [ref=e928] [cursor=pointer]:
+              - img [ref=e930]
+              - generic [ref=e935]:
+                - generic [ref=e936]: 直播模块/活动整合直播/小程序页面/整合直播间页.html
+                - generic [ref=e937]: HTML 页面 · 51.1 KB · 1 天前
+          - listitem [ref=e938]:
+            - button "直播模块/活动整合直播/小程序页面/分会场列表页.html HTML 页面 · 53.2 KB · 1 天前" [ref=e939] [cursor=pointer]:
+              - img [ref=e941]
+              - generic [ref=e946]:
+                - generic [ref=e947]: 直播模块/活动整合直播/小程序页面/分会场列表页.html
+                - generic [ref=e948]: HTML 页面 · 53.2 KB · 1 天前
+          - listitem [ref=e949]:
+            - button "assets/img/live-ffff730b10d4.png 图片 · 260.6 KB · 1 天前" [ref=e950] [cursor=pointer]:
+              - img [ref=e952]
+              - generic [ref=e956]:
+                - generic [ref=e957]: assets/img/live-ffff730b10d4.png
+                - generic [ref=e958]: 图片 · 260.6 KB · 1 天前
+          - listitem [ref=e959]:
+            - button "assets/img/live-9b4f65b83e9e.png 图片 · 301.3 KB · 1 天前" [ref=e960] [cursor=pointer]:
+              - img [ref=e962]
+              - generic [ref=e966]:
+                - generic [ref=e967]: assets/img/live-9b4f65b83e9e.png
+                - generic [ref=e968]: 图片 · 301.3 KB · 1 天前
+          - listitem [ref=e969]:
+            - button "assets/img/live-23e1ea5fcd8a.png 图片 · 341.0 KB · 1 天前" [ref=e970] [cursor=pointer]:
+              - img [ref=e972]
+              - generic [ref=e976]:
+                - generic [ref=e977]: assets/img/live-23e1ea5fcd8a.png
+                - generic [ref=e978]: 图片 · 341.0 KB · 1 天前
+          - listitem [ref=e979]:
+            - button "assets/img/live-0f9b7dd18e39.png 图片 · 274.3 KB · 1 天前" [ref=e980] [cursor=pointer]:
+              - img [ref=e982]
+              - generic [ref=e986]:
+                - generic [ref=e987]: assets/img/live-0f9b7dd18e39.png
+                - generic [ref=e988]: 图片 · 274.3 KB · 1 天前
+          - listitem [ref=e989]:
+            - button "直播模块/活动整合直播/后台页面/活动整合直播配置页.html HTML 页面 · 35.0 KB · 1 天前" [ref=e990] [cursor=pointer]:
+              - img [ref=e992]
+              - generic [ref=e997]:
+                - generic [ref=e998]: 直播模块/活动整合直播/后台页面/活动整合直播配置页.html
+                - generic [ref=e999]: HTML 页面 · 35.0 KB · 1 天前
+          - listitem [ref=e1000]:
+            - button "直播模块/活动整合直播/后台页面/整合直播数据看板.html HTML 页面 · 36.5 KB · 1 天前" [ref=e1001] [cursor=pointer]:
+              - img [ref=e1003]
+              - generic [ref=e1008]:
+                - generic [ref=e1009]: 直播模块/活动整合直播/后台页面/整合直播数据看板.html
+                - generic [ref=e1010]: HTML 页面 · 36.5 KB · 1 天前
+          - listitem [ref=e1011]:
+            - button "直播模块/活动整合直播/后台页面/整合报名情况查看页.html HTML 页面 · 34.4 KB · 1 天前" [ref=e1012] [cursor=pointer]:
+              - img [ref=e1014]
+              - generic [ref=e1019]:
+                - generic [ref=e1020]: 直播模块/活动整合直播/后台页面/整合报名情况查看页.html
+                - generic [ref=e1021]: HTML 页面 · 34.4 KB · 1 天前
+          - listitem [ref=e1022]:
+            - button "直播模块/活动整合直播/后台页面/整合客户自主申请审核页.html HTML 页面 · 35.5 KB · 1 天前" [ref=e1023] [cursor=pointer]:
+              - img [ref=e1025]
+              - generic [ref=e1030]:
+                - generic [ref=e1031]: 直播模块/活动整合直播/后台页面/整合客户自主申请审核页.html
+                - generic [ref=e1032]: HTML 页面 · 35.5 KB · 1 天前
+          - listitem [ref=e1033]:
+            - button "assets/img/live-39eddff9ab64.svg 草图 · 1.9 KB · 1 天前" [ref=e1034] [cursor=pointer]:
+              - img [ref=e1036]
+              - generic [ref=e1038]:
+                - generic [ref=e1039]: assets/img/live-39eddff9ab64.svg
+                - generic [ref=e1040]: 草图 · 1.9 KB · 1 天前
+          - listitem [ref=e1041]:
+            - button "直播模块/活动整合直播/小程序页面/名下客户报名查看页.html HTML 页面 · 56.0 KB · 1 天前" [ref=e1042] [cursor=pointer]:
+              - img [ref=e1044]
+              - generic [ref=e1049]:
+                - generic [ref=e1050]: 直播模块/活动整合直播/小程序页面/名下客户报名查看页.html
+                - generic [ref=e1051]: HTML 页面 · 56.0 KB · 1 天前
+          - listitem [ref=e1052]:
+            - button "规范-移动端/移动端UI规范.html HTML 页面 · 58.7 KB · 1 天前" [ref=e1053] [cursor=pointer]:
+              - img [ref=e1055]
+              - generic [ref=e1060]:
+                - generic [ref=e1061]: 规范-移动端/移动端UI规范.html
+                - generic [ref=e1062]: HTML 页面 · 58.7 KB · 1 天前
+          - listitem [ref=e1063]:
+            - button "规范-移动端/瀑布流列表页/瀑布流列表页.html HTML 页面 · 42.6 KB · 2 天前" [ref=e1064] [cursor=pointer]:
+              - img [ref=e1066]
+              - generic [ref=e1071]:
+                - generic [ref=e1072]: 规范-移动端/瀑布流列表页/瀑布流列表页.html
+                - generic [ref=e1073]: HTML 页面 · 42.6 KB · 2 天前
+          - listitem [ref=e1074]:
+            - button "规范-移动端/详情页1/详情页1.html HTML 页面 · 54.0 KB · 2 天前" [ref=e1075] [cursor=pointer]:
+              - img [ref=e1077]
+              - generic [ref=e1082]:
+                - generic [ref=e1083]: 规范-移动端/详情页1/详情页1.html
+                - generic [ref=e1084]: HTML 页面 · 54.0 KB · 2 天前
+          - listitem [ref=e1085]:
+            - button "规范-移动端/表单页/表单.html HTML 页面 · 43.6 KB · 2 天前" [ref=e1086] [cursor=pointer]:
+              - img [ref=e1088]
+              - generic [ref=e1093]:
+                - generic [ref=e1094]: 规范-移动端/表单页/表单.html
+                - generic [ref=e1095]: HTML 页面 · 43.6 KB · 2 天前
+          - listitem [ref=e1096]:
+            - button "规范-移动端/审批页/审批页.html HTML 页面 · 46.2 KB · 2 天前" [ref=e1097] [cursor=pointer]:
+              - img [ref=e1099]
+              - generic [ref=e1104]:
+                - generic [ref=e1105]: 规范-移动端/审批页/审批页.html
+                - generic [ref=e1106]: HTML 页面 · 46.2 KB · 2 天前
+          - listitem [ref=e1107]:
+            - button "规范-移动端/详情页2/详情页2.html HTML 页面 · 45.0 KB · 3 天前" [ref=e1108] [cursor=pointer]:
+              - img [ref=e1110]
+              - generic [ref=e1115]:
+                - generic [ref=e1116]: 规范-移动端/详情页2/详情页2.html
+                - generic [ref=e1117]: HTML 页面 · 45.0 KB · 3 天前
+          - listitem [ref=e1118]:
+            - button "规范-移动端/弹窗筛选/弹窗筛选.html HTML 页面 · 6.3 KB · 3 天前" [ref=e1119] [cursor=pointer]:
+              - img [ref=e1121]
+              - generic [ref=e1126]:
+                - generic [ref=e1127]: 规范-移动端/弹窗筛选/弹窗筛选.html
+                - generic [ref=e1128]: HTML 页面 · 6.3 KB · 3 天前
+          - listitem [ref=e1129]:
+            - button "规范-移动端/lib/tailwind.css 脚本 · 33.9 KB · 3 天前" [ref=e1130] [cursor=pointer]:
+              - img [ref=e1132]
+              - generic [ref=e1137]:
+                - generic [ref=e1138]: 规范-移动端/lib/tailwind.css
+                - generic [ref=e1139]: 脚本 · 33.9 KB · 3 天前
+          - listitem [ref=e1140]:
+            - button "规范-移动端/lib/fonts/inter.css 脚本 · 649 B · 3 天前" [ref=e1141] [cursor=pointer]:
+              - img [ref=e1143]
+              - generic [ref=e1148]:
+                - generic [ref=e1149]: 规范-移动端/lib/fonts/inter.css
+                - generic [ref=e1150]: 脚本 · 649 B · 3 天前
+          - listitem [ref=e1151]:
+            - button "规范-移动端/lib/fonts/noto-sans-sc.css 脚本 · 725 B · 3 天前" [ref=e1152] [cursor=pointer]:
+              - img [ref=e1154]
+              - generic [ref=e1159]:
+                - generic [ref=e1160]: 规范-移动端/lib/fonts/noto-sans-sc.css
+                - generic [ref=e1161]: 脚本 · 725 B · 3 天前
+          - listitem [ref=e1162]:
+            - button "规范-移动端/lib/fonts/inter-400.woff2 二进制 · 23.1 KB · 3 天前" [ref=e1163] [cursor=pointer]:
+              - img [ref=e1165]
+              - generic [ref=e1168]:
+                - generic [ref=e1169]: 规范-移动端/lib/fonts/inter-400.woff2
+                - generic [ref=e1170]: 二进制 · 23.1 KB · 3 天前
+          - listitem [ref=e1171]:
+            - button "规范-移动端/lib/fonts/inter-500.woff2 二进制 · 23.7 KB · 3 天前" [ref=e1172] [cursor=pointer]:
+              - img [ref=e1174]
+              - generic [ref=e1177]:
+                - generic [ref=e1178]: 规范-移动端/lib/fonts/inter-500.woff2
+                - generic [ref=e1179]: 二进制 · 23.7 KB · 3 天前
+          - listitem [ref=e1180]:
+            - button "规范-移动端/lib/fonts/inter-600.woff2 二进制 · 23.9 KB · 3 天前" [ref=e1181] [cursor=pointer]:
+              - img [ref=e1183]
+              - generic [ref=e1186]:
+                - generic [ref=e1187]: 规范-移动端/lib/fonts/inter-600.woff2
+                - generic [ref=e1188]: 二进制 · 23.9 KB · 3 天前
+          - listitem [ref=e1189]:
+            - button "规范-移动端/lib/fonts/inter-700.woff2 二进制 · 23.8 KB · 3 天前" [ref=e1190] [cursor=pointer]:
+              - img [ref=e1192]
+              - generic [ref=e1195]:
+                - generic [ref=e1196]: 规范-移动端/lib/fonts/inter-700.woff2
+                - generic [ref=e1197]: 二进制 · 23.8 KB · 3 天前
+          - listitem [ref=e1198]:
+            - button "规范-移动端/lib/fonts/noto-sans-sc-700.woff2 二进制 · 1.1 MB · 3 天前" [ref=e1199] [cursor=pointer]:
+              - img [ref=e1201]
+              - generic [ref=e1204]:
+                - generic [ref=e1205]: 规范-移动端/lib/fonts/noto-sans-sc-700.woff2
+                - generic [ref=e1206]: 二进制 · 1.1 MB · 3 天前
+          - listitem [ref=e1207]:
+            - button "规范-移动端/lib/fonts/noto-sans-sc-300.woff2 二进制 · 1.1 MB · 3 天前" [ref=e1208] [cursor=pointer]:
+              - img [ref=e1210]
+              - generic [ref=e1213]:
+                - generic [ref=e1214]: 规范-移动端/lib/fonts/noto-sans-sc-300.woff2
+                - generic [ref=e1215]: 二进制 · 1.1 MB · 3 天前
+          - listitem [ref=e1216]:
+            - button "规范-移动端/lib/fonts/noto-sans-sc-400.woff2 二进制 · 1.1 MB · 3 天前" [ref=e1217] [cursor=pointer]:
+              - img [ref=e1219]
+              - generic [ref=e1222]:
+                - generic [ref=e1223]: 规范-移动端/lib/fonts/noto-sans-sc-400.woff2
+                - generic [ref=e1224]: 二进制 · 1.1 MB · 3 天前
+          - listitem [ref=e1225]:
+            - button "规范-移动端/lib/fonts/noto-sans-sc-500.woff2 二进制 · 1.1 MB · 3 天前" [ref=e1226] [cursor=pointer]:
+              - img [ref=e1228]
+              - generic [ref=e1231]:
+                - generic [ref=e1232]: 规范-移动端/lib/fonts/noto-sans-sc-500.woff2
+                - generic [ref=e1233]: 二进制 · 1.1 MB · 3 天前
+          - listitem [ref=e1234]:
+            - button "规范-移动端/lib/img/thumb-leaflet.png 图片 · 259.3 KB · 3 天前" [ref=e1235] [cursor=pointer]:
+              - img [ref=e1237]
+              - generic [ref=e1241]:
+                - generic [ref=e1242]: 规范-移动端/lib/img/thumb-leaflet.png
+                - generic [ref=e1243]: 图片 · 259.3 KB · 3 天前
+          - listitem [ref=e1244]:
+            - button "规范-移动端/lib/img/thumb-brochure.png 图片 · 268.8 KB · 3 天前" [ref=e1245] [cursor=pointer]:
+              - img [ref=e1247]
+              - generic [ref=e1251]:
+                - generic [ref=e1252]: 规范-移动端/lib/img/thumb-brochure.png
+                - generic [ref=e1253]: 图片 · 268.8 KB · 3 天前
+          - listitem [ref=e1254]:
+            - button "规范-移动端/lib/img/poster.png 图片 · 341.0 KB · 3 天前" [ref=e1255] [cursor=pointer]:
+              - img [ref=e1257]
+              - generic [ref=e1261]:
+                - generic [ref=e1262]: 规范-移动端/lib/img/poster.png
+                - generic [ref=e1263]: 图片 · 341.0 KB · 3 天前
+          - listitem [ref=e1264]:
+            - button "规范-移动端/lib/img/banner-design.png 图片 · 274.3 KB · 3 天前" [ref=e1265] [cursor=pointer]:
+              - img [ref=e1267]
+              - generic [ref=e1271]:
+                - generic [ref=e1272]: 规范-移动端/lib/img/banner-design.png
+                - generic [ref=e1273]: 图片 · 274.3 KB · 3 天前
+          - listitem [ref=e1274]:
+            - button "规范-移动端/lib/img/folded-leaflet.png 图片 · 260.6 KB · 3 天前" [ref=e1275] [cursor=pointer]:
+              - img [ref=e1277]
+              - generic [ref=e1281]:
+                - generic [ref=e1282]: 规范-移动端/lib/img/folded-leaflet.png
+                - generic [ref=e1283]: 图片 · 260.6 KB · 3 天前
+          - listitem [ref=e1284]:
+            - button "规范-移动端/lib/img/promo-brochure.png 图片 · 301.3 KB · 3 天前" [ref=e1285] [cursor=pointer]:
+              - img [ref=e1287]
+              - generic [ref=e1291]:
+                - generic [ref=e1292]: 规范-移动端/lib/img/promo-brochure.png
+                - generic [ref=e1293]: 图片 · 301.3 KB · 3 天前
+          - listitem [ref=e1294]:
+            - button "规范-移动端/DESIGN.md 文本 · 8.1 KB · 4 天前" [ref=e1295] [cursor=pointer]:
+              - img [ref=e1297]
+              - generic [ref=e1300]:
+                - generic [ref=e1301]: 规范-移动端/DESIGN.md
+                - generic [ref=e1302]: 文本 · 8.1 KB · 4 天前
+          - listitem [ref=e1303]:
+            - button "css/live-admin.css 脚本 · 21.8 KB · 5 天前" [ref=e1304] [cursor=pointer]:
+              - img [ref=e1306]
+              - generic [ref=e1311]:
+                - generic [ref=e1312]: css/live-admin.css
+                - generic [ref=e1313]: 脚本 · 21.8 KB · 5 天前
+          - listitem [ref=e1314]:
+            - button "直播模块/PRD/功能清单-页面与字段规划-补全v2-跳转通知状态.md 文本 · 31.3 KB · 5 天前" [ref=e1315] [cursor=pointer]:
+              - img [ref=e1317]
+              - generic [ref=e1320]:
+                - generic [ref=e1321]: 直播模块/PRD/功能清单-页面与字段规划-补全v2-跳转通知状态.md
+                - generic [ref=e1322]: 文本 · 31.3 KB · 5 天前
+          - listitem [ref=e1323]:
+            - button "直播模块/PRD/功能清单-页面与字段规划-补全v1.md 文本 · 27.7 KB · 5 天前" [ref=e1324] [cursor=pointer]:
+              - img [ref=e1326]
+              - generic [ref=e1329]:
+                - generic [ref=e1330]: 直播模块/PRD/功能清单-页面与字段规划-补全v1.md
+                - generic [ref=e1331]: 文本 · 27.7 KB · 5 天前
+          - listitem [ref=e1332]:
+            - button "提示词-1.0.md 文本 · 1.3 KB · 5 天前" [ref=e1333] [cursor=pointer]:
+              - img [ref=e1335]
+              - generic [ref=e1338]:
+                - generic [ref=e1339]: 提示词-1.0.md
+                - generic [ref=e1340]: 文本 · 1.3 KB · 5 天前
+          - listitem [ref=e1341]:
+            - button "直播模块/PRD/功能清单-页面与字段规划.md 文本 · 19.9 KB · 5 天前" [ref=e1342] [cursor=pointer]:
+              - img [ref=e1344]
+              - generic [ref=e1347]:
+                - generic [ref=e1348]: 直播模块/PRD/功能清单-页面与字段规划.md
+                - generic [ref=e1349]: 文本 · 19.9 KB · 5 天前
+          - listitem [ref=e1350]:
+            - button "index.html HTML 页面 · 13.1 KB · 1 周前" [ref=e1351] [cursor=pointer]:
+              - img [ref=e1353]
+              - generic [ref=e1358]:
+                - generic [ref=e1359]: index.html
+                - generic [ref=e1360]: HTML 页面 · 13.1 KB · 1 周前
+          - listitem [ref=e1361]:
+            - button "pages/supplier/supplier-onboarding.html HTML 页面 · 17.2 KB · 1 周前" [ref=e1362] [cursor=pointer]:
+              - img [ref=e1364]
+              - generic [ref=e1369]:
+                - generic [ref=e1370]: pages/supplier/supplier-onboarding.html
+                - generic [ref=e1371]: HTML 页面 · 17.2 KB · 1 周前
+          - listitem [ref=e1372]:
+            - button "pages/supplier/supplier-order-detail.html HTML 页面 · 18.0 KB · 1 周前" [ref=e1373] [cursor=pointer]:
+              - img [ref=e1375]
+              - generic [ref=e1380]:
+                - generic [ref=e1381]: pages/supplier/supplier-order-detail.html
+                - generic [ref=e1382]: HTML 页面 · 18.0 KB · 1 周前
+          - listitem [ref=e1383]:
+            - button "pages/supplier/supplier-orders.html HTML 页面 · 14.9 KB · 1 周前" [ref=e1384] [cursor=pointer]:
+              - img [ref=e1386]
+              - generic [ref=e1391]:
+                - generic [ref=e1392]: pages/supplier/supplier-orders.html
+                - generic [ref=e1393]: HTML 页面 · 14.9 KB · 1 周前
+          - listitem [ref=e1394]:
+            - button "pages/supplier/supplier-settlement.html HTML 页面 · 15.2 KB · 1 周前" [ref=e1395] [cursor=pointer]:
+              - img [ref=e1397]
+              - generic [ref=e1402]:
+                - generic [ref=e1403]: pages/supplier/supplier-settlement.html
+                - generic [ref=e1404]: HTML 页面 · 15.2 KB · 1 周前
+          - listitem [ref=e1405]:
+            - button "pages/supplier/supplier-staff.html HTML 页面 · 13.0 KB · 1 周前" [ref=e1406] [cursor=pointer]:
+              - img [ref=e1408]
+              - generic [ref=e1413]:
+                - generic [ref=e1414]: pages/supplier/supplier-staff.html
+                - generic [ref=e1415]: HTML 页面 · 13.0 KB · 1 周前
+          - listitem [ref=e1416]:
+            - button "admin-components.pptx 演示文稿 · 56.0 KB · 2 周前" [ref=e1417] [cursor=pointer]:
+              - img [ref=e1419]
+              - generic [ref=e1422]:
+                - generic [ref=e1423]: admin-components.pptx
+                - generic [ref=e1424]: 演示文稿 · 56.0 KB · 2 周前
+          - listitem [ref=e1425]:
+            - button "export_pptx.py 脚本 · 52.6 KB · 2 周前" [ref=e1426] [cursor=pointer]:
+              - img [ref=e1428]
+              - generic [ref=e1433]:
+                - generic [ref=e1434]: export_pptx.py
+                - generic [ref=e1435]: 脚本 · 52.6 KB · 2 周前
+          - listitem [ref=e1436]:
+            - button "assets/qr-code.png 图片 · 30.0 KB · 2 周前" [ref=e1437] [cursor=pointer]:
+              - img [ref=e1439]
+              - generic [ref=e1443]:
+                - generic [ref=e1444]: assets/qr-code.png
+                - generic [ref=e1445]: 图片 · 30.0 KB · 2 周前
+          - listitem [ref=e1446]:
+            - button "css/admin-kit.css 脚本 · 55.5 KB · 2 周前" [ref=e1447] [cursor=pointer]:
+              - img [ref=e1449]
+              - generic [ref=e1454]:
+                - generic [ref=e1455]: css/admin-kit.css
+                - generic [ref=e1456]: 脚本 · 55.5 KB · 2 周前
+          - listitem [ref=e1457]:
+            - button "logo.svg 草图 · 1.9 KB · 2 周前" [ref=e1458] [cursor=pointer]:
+              - img [ref=e1460]
+              - generic [ref=e1462]:
+                - generic [ref=e1463]: logo.svg
+                - generic [ref=e1464]: 草图 · 1.9 KB · 2 周前
+          - listitem [ref=e1465]:
+            - button "css/shared.css 脚本 · 34.2 KB · 2 周前" [ref=e1466] [cursor=pointer]:
+              - img [ref=e1468]
+              - generic [ref=e1473]:
+                - generic [ref=e1474]: css/shared.css
+                - generic [ref=e1475]: 脚本 · 34.2 KB · 2 周前
+          - listitem [ref=e1476]:
+            - button "schaeffler-Colors.md 文本 · 12.1 KB · 2 周前" [ref=e1477] [cursor=pointer]:
+              - img [ref=e1479]
+              - generic [ref=e1482]:
+                - generic [ref=e1483]: schaeffler-Colors.md
+                - generic [ref=e1484]: 文本 · 12.1 KB · 2 周前
+          - listitem [ref=e1485]:
+            - button "js/shared.js 脚本 · 9.0 KB · 2 周前" [ref=e1486] [cursor=pointer]:
+              - img [ref=e1488]
+              - generic [ref=e1493]:
+                - generic [ref=e1494]: js/shared.js
+                - generic [ref=e1495]: 脚本 · 9.0 KB · 2 周前
+      - generic [ref=e1496]:
+        - generic [ref=e1497]: 打开的标签页
+        - list [ref=e1498]:
+          - listitem [ref=e1499]:
+            - button "设计文件 Design files · /Users/xierongchao/open-design-workspace/sfl 2 已打开" [ref=e1500] [cursor=pointer]:
+              - img [ref=e1502]
+              - generic [ref=e1504]:
+                - generic [ref=e1505]: 设计文件
+                - generic [ref=e1506]: Design files · /Users/xierongchao/open-design-workspace/sfl 2
+              - generic [ref=e1507]: 已打开

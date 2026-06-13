@@ -1,0 +1,160 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - navigation [ref=e3]:
+      - link "首页" [ref=e4] [cursor=pointer]:
+        - /url: index.html
+      - generic [ref=e5]:
+        - text: DEMS
+        - generic [ref=e6] [cursor=pointer]: ×
+      - generic [ref=e7]:
+        - text: 舍弗勒供应商管理系统
+        - generic [ref=e8] [cursor=pointer]: ×
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - img [ref=e11]
+        - text: 币种：人民币（CNY）▾
+      - generic [ref=e15]:
+        - img [ref=e16]
+        - text: 中文▾
+      - button [ref=e23]:
+        - img
+  - generic [ref=e26]:
+    - generic [ref=e27]:
+      - generic [ref=e28]: S
+      - heading "舍弗勒传播与营销线上管理系统" [level=1] [ref=e29]
+      - paragraph [ref=e30]: 供应商管理模块 — 高保真原型总览，包含内部管理端（5 页）与供应商端（4 页）共 9 个核心界面
+    - generic [ref=e31]:
+      - generic [ref=e32]: 内部管理端
+      - text: DAP 供应商管理员 / 采购供应商管理用户
+    - generic [ref=e33]:
+      - link "供应商管理看板 指标卡、费用趋势、服务范围分布、风险列表、工单动态 仪表盘 数据可视化 风险预警" [ref=e34] [cursor=pointer]:
+        - /url: internal-dashboard.html
+        - img [ref=e36]
+        - heading "供应商管理看板" [level=3] [ref=e40]
+        - paragraph [ref=e41]: 指标卡、费用趋势、服务范围分布、风险列表、工单动态
+        - generic [ref=e42]:
+          - generic [ref=e43]: 仪表盘
+          - generic [ref=e44]: 数据可视化
+          - generic [ref=e45]: 风险预警
+      - link "供应商列表 多条件筛选、表格展示、状态标签、批量操作 表格 筛选 分页" [ref=e46] [cursor=pointer]:
+        - /url: internal-vendor-list.html
+        - img [ref=e48]
+        - heading "供应商列表" [level=3] [ref=e50]
+        - paragraph [ref=e51]: 多条件筛选、表格展示、状态标签、批量操作
+        - generic [ref=e52]:
+          - generic [ref=e53]: 表格
+          - generic [ref=e54]: 筛选
+          - generic [ref=e55]: 分页
+      - link "供应商详情 摘要概览 + 8 个 Tab：基本信息、服务范围、协议资质、账号、培训、工单、结算、评价 详情页 Tab 切换 抽屉" [ref=e56] [cursor=pointer]:
+        - /url: internal-vendor-detail.html
+        - img [ref=e58]
+        - heading "供应商详情" [level=3] [ref=e61]
+        - paragraph [ref=e62]: 摘要概览 + 8 个 Tab：基本信息、服务范围、协议资质、账号、培训、工单、结算、评价
+        - generic [ref=e63]:
+          - generic [ref=e64]: 详情页
+          - generic [ref=e65]: Tab 切换
+          - generic [ref=e66]: 抽屉
+      - link "培训管理 培训列表、详情/编辑抽屉、资料上传、考试配置 列表 抽屉 考试" [ref=e67] [cursor=pointer]:
+        - /url: internal-training.html
+        - img [ref=e69]
+        - heading "培训管理" [level=3] [ref=e72]
+        - paragraph [ref=e73]: 培训列表、详情/编辑抽屉、资料上传、考试配置
+        - generic [ref=e74]:
+          - generic [ref=e75]: 列表
+          - generic [ref=e76]: 抽屉
+          - generic [ref=e77]: 考试
+      - link "报表页 服务记录、费用结算、服务评价（整合在供应商详情报表 Tab 中） 报表 聚合统计 导出" [ref=e78] [cursor=pointer]:
+        - /url: internal-vendor-detail.html#tab-settlement
+        - img [ref=e80]
+        - heading "报表页" [level=3] [ref=e83]
+        - paragraph [ref=e84]: 服务记录、费用结算、服务评价（整合在供应商详情报表 Tab 中）
+        - generic [ref=e85]:
+          - generic [ref=e86]: 报表
+          - generic [ref=e87]: 聚合统计
+          - generic [ref=e88]: 导出
+    - generic [ref=e89]:
+      - generic [ref=e90]: 供应商端
+      - text: 供应商负责人 / 供应商员工
+    - generic [ref=e91]:
+      - link "首次登录 / 培训首页 欢迎页、待办卡片、必修培训列表、接单状态解锁 引导 培训 待办" [ref=e92] [cursor=pointer]:
+        - /url: pages/supplier/supplier-onboarding.html
+        - img [ref=e94]
+        - heading "首次登录 / 培训首页" [level=3] [ref=e99]
+        - paragraph [ref=e100]: 欢迎页、待办卡片、必修培训列表、接单状态解锁
+        - generic [ref=e101]:
+          - generic [ref=e102]: 引导
+          - generic [ref=e103]: 培训
+          - generic [ref=e104]: 待办
+      - link "我的工单 工单表格、状态筛选、敏感标记、商务联系人 表格 工单 敏感" [ref=e105] [cursor=pointer]:
+        - /url: pages/supplier/supplier-orders.html
+        - img [ref=e107]
+        - heading "我的工单" [level=3] [ref=e110]
+        - paragraph [ref=e111]: 工单表格、状态筛选、敏感标记、商务联系人
+        - generic [ref=e112]:
+          - generic [ref=e113]: 表格
+          - generic [ref=e114]: 工单
+          - generic [ref=e115]: 敏感
+      - link "工单详情 报价区、分配区、交付区、修改意见、时间线 详情 报价 时间线" [ref=e116] [cursor=pointer]:
+        - /url: pages/supplier/supplier-order-detail.html
+        - img [ref=e118]
+        - heading "工单详情" [level=3] [ref=e121]
+        - paragraph [ref=e122]: 报价区、分配区、交付区、修改意见、时间线
+        - generic [ref=e123]:
+          - generic [ref=e124]: 详情
+          - generic [ref=e125]: 报价
+          - generic [ref=e126]: 时间线
+      - link "员工管理 员工列表、新增弹窗、服务范围绑定、培训状态 员工 弹窗 权限" [ref=e127] [cursor=pointer]:
+        - /url: pages/supplier/supplier-staff.html
+        - img [ref=e129]
+        - heading "员工管理" [level=3] [ref=e134]
+        - paragraph [ref=e135]: 员工列表、新增弹窗、服务范围绑定、培训状态
+        - generic [ref=e136]:
+          - generic [ref=e137]: 员工
+          - generic [ref=e138]: 弹窗
+          - generic [ref=e139]: 权限
+      - link "结算与反馈 费用汇总、明细表、反馈列表 结算 费用 反馈" [ref=e140] [cursor=pointer]:
+        - /url: pages/supplier/supplier-settlement.html
+        - img [ref=e142]
+        - heading "结算与反馈" [level=3] [ref=e144]
+        - paragraph [ref=e145]: 费用汇总、明细表、反馈列表
+        - generic [ref=e146]:
+          - generic [ref=e147]: 结算
+          - generic [ref=e148]: 费用
+          - generic [ref=e149]: 反馈
+    - generic [ref=e150]:
+      - generic [ref=e151]: 页面流转关系
+      - generic [ref=e152]:
+        - generic [ref=e153]:
+          - generic [ref=e154]: 供应商看板
+          - generic [ref=e155]: →
+          - generic [ref=e156]: 供应商列表
+          - generic [ref=e157]: →
+          - generic [ref=e158]: 供应商详情
+          - generic [ref=e159]: →
+          - generic [ref=e160]: 账号管理 (抽屉)
+        - generic [ref=e161]:
+          - generic [ref=e162]: 供应商详情
+          - generic [ref=e163]: →
+          - generic [ref=e164]: 培训管理
+          - generic [ref=e165]: →
+          - generic [ref=e166]: 报表
+        - generic [ref=e168]:
+          - generic [ref=e169]: 首次登录/培训
+          - generic [ref=e170]: →
+          - generic [ref=e171]: 完成培训
+          - generic [ref=e172]: →
+          - generic [ref=e173]: 我的工单
+          - generic [ref=e174]: →
+          - generic [ref=e175]: 工单详情
+        - generic [ref=e176]:
+          - generic [ref=e177]: 工单详情
+          - generic [ref=e178]: →
+          - generic [ref=e179]: 报价/交付/结算
+          - generic [ref=e180]: →
+          - generic [ref=e181]: 结算与反馈
+        - generic [ref=e182]:
+          - generic [ref=e183]: 员工管理
+          - generic [ref=e184]: ↔
+          - generic [ref=e185]: 创建员工/绑定服务范围
+          - generic [ref=e186]: ↔
+          - generic [ref=e187]: 工单分配

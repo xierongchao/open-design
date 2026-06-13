@@ -1,0 +1,72 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 9:41
+      - generic [ref=e6]:
+        - img [ref=e7]
+        - img [ref=e9]
+    - generic [ref=e13]:
+      - button [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+      - heading "邀约海报" [level=1] [ref=e17]
+      - img [ref=e19]
+  - main [ref=e26]:
+    - generic [ref=e27]:
+      - generic [ref=e28]: 关联直播
+      - generic [ref=e29]:
+        - generic [ref=e30]:
+          - generic [ref=e31]: 新能源电驱系统技术在线研讨会
+          - generic [ref=e32]: 公开 · 6月20日 14:00
+        - generic [ref=e33]:
+          - text: 更换
+          - img [ref=e34]
+    - generic [ref=e36]:
+      - generic [ref=e37]: 海报预览
+      - generic [ref=e38]:
+        - generic [ref=e39]:
+          - img "KV" [ref=e40]
+          - generic [ref=e41]: 公开直播
+        - generic [ref=e42]: 新能源电驱系统技术在线研讨会
+        - generic [ref=e43]:
+          - img [ref=e44]
+          - text: 6月20日（周五）14:00
+        - generic [ref=e47]:
+          - text: · 电驱系统轴承选型与寿命计算
+          - text: · 高速球轴承的润滑与密封
+          - text: · NVH 优化与减振方案
+        - generic [ref=e48]:
+          - generic [ref=e49]:
+            - generic [ref=e50]: 张
+            - text: 张伟
+          - generic [ref=e51]:
+            - generic [ref=e52]: 李
+            - text: 李娜
+          - generic [ref=e53]:
+            - generic [ref=e54]: 王
+            - text: 王强
+        - generic [ref=e55]:
+          - generic [ref=e56]: 小程序码
+          - generic [ref=e57]:
+            - text: 长按识别小程序码
+            - text: 预约直播 · 累计预约 326 人
+        - generic [ref=e58]:
+          - img [ref=e59]
+          - text: 邀约人：陈涛（LIVE-7K2A-9F3X）
+      - generic [ref=e62]: 海报含您的专属小程序码，客户扫码报名自动归属到您名下；二维码在直播回放期结束后 7 天失效。
+    - generic [ref=e63]:
+      - generic [ref=e64]: 我的邀约
+      - generic [ref=e65]:
+        - generic [ref=e66]:
+          - generic [ref=e67]: "42"
+          - generic [ref=e68]: 扫码人数
+        - generic [ref=e69]:
+          - generic [ref=e70]: "28"
+          - generic [ref=e71]: 报名人数
+        - generic [ref=e72]:
+          - generic [ref=e73]: "18"
+          - generic [ref=e74]: 已观看
+  - contentinfo [ref=e75]:
+    - button "保存到相册" [ref=e76] [cursor=pointer]
+    - button "分享给客户" [ref=e77] [cursor=pointer]:
+      - img [ref=e78]
+      - text: 分享给客户

@@ -1,0 +1,1064 @@
+/* Figma-style right-side properties panel (docked, not floating). */
+
+/* ── Grid dock layout ────────────────────────────────────────────────────── */
+
+.manual-edit-workspace.pp-dock-active {
+  --pp-width: 280px;
+  display: grid !important; /* override .preview-viewport display:flex */
+  grid-template-columns: minmax(0, 1fr) var(--pp-width);
+  gap: 0;
+  /* Override preview-viewport centering that breaks grid */
+  justify-content: stretch;
+  align-items: stretch;
+  padding: 0 !important;
+  background: var(--bg-subtle);
+}
+
+/* Canvas (second grid child) must occupy the first (flexible) column.
+   The pp-dock panel renders before it in DOM, so default auto-placement
+   would put the panel in column 1 (wide) and canvas in column 2 (narrow).
+   order: -1 pulls the canvas left, panel stays right. */
+.manual-edit-workspace.pp-dock-active .manual-edit-canvas {
+  order: -1;
+  min-width: 0;
+  min-height: 0;
+  position: relative !important;
+  inset: auto !important;
+  /* Reset the fixed size from preview-viewport so canvas fills grid cell */
+  width: auto !important;
+  height: auto !important;
+  max-width: none;
+  max-height: none;
+  flex: 1 1 auto;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--border) 24%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--border) 24%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--border) 24%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--border) 24%, transparent) 75%),
+    var(--bg-subtle);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+/* ── Dock column (the grid child) ────────────────────────────────────────── */
+
+.pp-dock {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+/* ── Panel chrome ─────────────────────────────────────────────────────────── */
+
+.pp-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pp-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+.pp-titlebar-name {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.pp-titlebar-tag {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.pp-titlebar-close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.pp-titlebar-close:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+/* ── Scrollable body ─────────────────────────────────────────────────────── */
+
+.pp-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+/* ── Collapsible sections ─────────────────────────────────────────────────── */
+
+.pp-section {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.pp-section-head-row {
+  display: flex;
+  align-items: center;
+}
+
+.pp-section-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  justify-content: flex-start;
+}
+.pp-section-chevron {
+  font-size: 9px;
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.pp-section-head.pp-section-collapsed .pp-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.pp-section-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+}
+.pp-section-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.pp-section-add:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+.pp-section-body {
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Collapsed state: accordion pattern via grid rows */
+.pp-section-collapsible {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.pp-section-collapsible.pp-section-collapsed-anim {
+  grid-template-rows: 0fr;
+}
+.pp-section-collapsible > .pp-section-body {
+  overflow: hidden;
+}
+
+/* ── Toolbar icon row (frame info icons) ──────────────────────────────────── */
+
+/* Custom dark tooltip via data-tooltip attribute */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]:hover::after {
+  opacity: 1;
+}
+[data-tooltip][data-tooltip-placement="left"]::after {
+  left: auto;
+  right: calc(100% + 6px);
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+}
+
+.pp-toolbar-icons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 0 4px;
+}
+
+.pp-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms, color 100ms;
+}
+.pp-icon-btn:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  color: var(--text);
+}
+.pp-icon-btn.pp-icon-btn-active {
+  background: var(--selected-soft);
+  border-color: var(--selected);
+  color: var(--text);
+}
+
+.pp-alignment-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+
+.pp-asset-icon {
+  display: block;
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  pointer-events: none;
+  filter: var(--manual-edit-asset-icon-filter, none);
+  opacity: 0.78;
+}
+
+[data-theme="dark"] .pp-asset-icon {
+  --manual-edit-asset-icon-filter: invert(1) brightness(1.15);
+  opacity: 0.84;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .pp-asset-icon {
+    --manual-edit-asset-icon-filter: invert(1) brightness(1.15);
+    opacity: 0.84;
+  }
+}
+
+.pp-textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 7px 8px;
+  box-sizing: border-box;
+}
+
+.pp-textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--selected) 32%, transparent);
+  outline-offset: 1px;
+  border-color: var(--selected);
+}
+
+.pp-spacing-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+/* ── Auto layout direction icons ─────────────────────────────────────────── */
+
+.pp-flow-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: fit-content;
+  background: color-mix(in srgb, var(--bg-subtle) 86%, var(--bg-panel) 14%);
+  border-radius: 6px;
+  padding: 2px;
+}
+.pp-flow-row .pp-icon-btn {
+  border-radius: 4px;
+}
+.pp-flow-row .pp-icon-btn.pp-icon-btn-active {
+  background: var(--bg-panel);
+  border-color: color-mix(in srgb, var(--selected) 22%, var(--border) 78%);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.pp-auto-layout-toggle {
+  color: var(--text-muted);
+}
+
+.pp-auto-layout-toggle-active {
+  color: var(--text-muted);
+}
+
+/* ── Alignment grid ────────────────────────────────────────────────────── */
+
+.pp-align-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+}
+
+/* ── Figma-style alignment picker (9 icons in a box) ────────────────────── */
+
+.pp-align-grid-box {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 2px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  aspect-ratio: 1;
+}
+.pp-align-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  aspect-ratio: 1;
+  transition: background 100ms;
+  color: var(--text-muted);
+}
+.pp-align-dot:hover {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+/* Active state: accent color icon + highlighted background */
+.pp-align-dot-active {
+  background: var(--selected-soft);
+  color: var(--accent, #2563eb);
+}
+.pp-align-dot-active svg rect {
+  stroke: var(--accent, #2563eb);
+}
+.pp-align-dot-active svg circle {
+  fill: var(--accent, #2563eb);
+}
+
+/* ── Auto layout control matrix ─────────────────────────────────────────── */
+
+.pp-auto-layout-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px;
+  gap: 6px;
+  align-items: start;
+}
+
+.pp-auto-layout-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pp-auto-layout-right {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.pp-auto-layout-right > .pp-align-grid-box {
+  width: 84px;
+  height: 84px;
+}
+
+.pp-auto-layout-left > .pp-gap-panel {
+  min-width: 0;
+}
+
+/* ── Gap panel ───────────────────────────────────────────────────────────── */
+
+.pp-gap-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pp-gap-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pp-gap-header > .cc-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: ew-resize;
+  padding: 0 4px;
+  border-radius: 3px;
+  min-width: 0;
+}
+.pp-gap-header > .cc-label:hover {
+  background: var(--bg-subtle);
+}
+.pp-gap-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.pp-gap-toggle:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.pp-gap-toggle-active {
+  color: var(--accent, #2563eb);
+}
+.pp-gap-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pp-gap-row {
+  display: flex;
+  gap: 3px;
+}
+.pp-gap-row > .pp-gap-field {
+  flex: 1;
+}
+.pp-gap-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  height: 26px;
+  padding: 0 6px;
+}
+.pp-gap-field[data-spacing-side] .pp-gap-field-label {
+  font-weight: 600;
+}
+.pp-gap-field [data-spacing-icon] {
+  display: block;
+}
+.pp-gap-field-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 16px;
+}
+.pp-gap-field input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  width: 100%;
+  min-width: 0;
+  outline: none;
+  padding: 0;
+  box-sizing: border-box;
+}
+.pp-gap-field input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+/* Draggable gap label */
+.pp-gap-drag {
+  cursor: ew-resize;
+  border-radius: 2px;
+  user-select: none;
+  padding: 0 6px;
+}
+.pp-gap-drag:hover {
+  background: var(--border);
+}
+.pp-gap-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+
+/* ── Margin collapsed row ───────────────────────────────────────────────── */
+
+.pp-margin-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  height: 26px;
+  padding: 0 6px;
+}
+.pp-margin-collapsed input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  min-width: 0;
+  outline: none;
+  padding: 0;
+}
+.pp-margin-collapsed .pp-gap-toggle {
+  width: 20px;
+  height: 20px;
+}
+
+/* ── Resize mode selector ─────────────────────────────────────────────────── */
+
+.pp-resize-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Color palette row ────────────────────────────────────────────────────── */
+
+.pp-color-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.pp-color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 100ms ease;
+}
+.pp-color-swatch:hover {
+  transform: scale(1.15);
+  border-color: var(--text-muted);
+}
+
+/* ── Fill / stroke / effect rows ──────────────────────────────────────────── */
+
+.pp-fill-row,
+.pp-stroke-row,
+.pp-effect-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pp-fill-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────────── */
+
+.pp-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-soft);
+  padding: 8px 10px;
+}
+
+/* ── Inline row helpers (compact two-field rows) ──────────────────────────── */
+
+.pp-field-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.pp-size-mode-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.pp-size-mode-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-subtle);
+}
+
+.pp-size-mode-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.pp-size-mode-icon svg {
+  display: block;
+}
+
+.pp-size-mode-field span:not(.pp-size-mode-icon) {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.pp-size-mode-select {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+}
+
+.pp-field-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pp-field-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  min-width: 14px;
+}
+
+/* ── Clip content toggle ──────────────────────────────────────────────────── */
+
+.pp-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 0;
+}
+.pp-toggle-row input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+.pp-toggle-row label {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Enhanced input styling inside pp-panel (Figma-inspired)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Make cc-row inputs look more like Figma fields with visible background */
+.pp-panel .cc-row {
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  border-radius: 5px;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.pp-panel .cc-row:focus-within {
+  border-color: var(--accent, #2563eb);
+  box-shadow: 0 0 0 1px var(--accent, #2563eb);
+}
+.pp-panel .cc-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  min-width: 20px;
+}
+/* Figma-style scrub cursor on draggable labels */
+.cc-label-scrub {
+  cursor: ew-resize !important;
+  user-select: none;
+  border-radius: 3px;
+}
+.cc-label-scrub:hover {
+  background: var(--bg-subtle);
+}
+.pp-panel .cc-value > input,
+.pp-panel .cc-value > select {
+  font-size: 11px;
+}
+.pp-panel .cc-step {
+  width: 16px;
+  height: 20px;
+  border-radius: 3px;
+}
+.pp-panel .cc-step:hover:not(:disabled) {
+  background: var(--border);
+}
+
+/* Quad inputs (padding, margin) */
+.pp-panel .cc-quad-cell {
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  border-radius: 5px;
+  height: 28px;
+  padding: 0 6px;
+}
+.pp-panel .cc-quad-head {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.pp-panel .cc-quad-grid {
+  gap: 4px;
+}
+
+/* Color swatch inside panel */
+.pp-panel .cc-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+
+/* Dropdown select styling */
+.pp-panel .cc-value.cc-select select {
+  font-size: 11px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SVG layout direction icons (inline)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pp-svg-layout {
+  color: currentColor;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Gradient Editor
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.ge-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.ge-preview {
+  width: 100%;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.ge-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 4px;
+  padding: 1px;
+}
+
+.ge-mode-btn {
+  font-size: 10px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ge-mode-btn.ge-mode-active {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.ge-type-row {
+  display: flex;
+  gap: 2px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 4px;
+  padding: 1px;
+}
+
+.ge-type-btn {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ge-type-btn.ge-type-active {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.ge-angle-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ge-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ge-angle-presets {
+  display: flex;
+  gap: 1px;
+  flex: 1;
+}
+
+.ge-angle-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ge-angle-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.ge-angle-btn.ge-angle-active {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.ge-angle-input {
+  width: 36px;
+  font-size: 10px;
+  text-align: center;
+  padding: 2px 4px;
+  border: 1px solid var(--manual-edit-field-border);
+  border-radius: 3px;
+  background: var(--manual-edit-field-bg);
+  color: var(--text);
+}
+
+.ge-unit {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ge-stops-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  cursor: pointer;
+  margin: 2px 0;
+  background:
+    var(--ge-gradient, linear-gradient(90deg, #3b82f6, #ec4899)),
+    repeating-conic-gradient(
+      color-mix(in srgb, var(--text) 10%, transparent) 0% 25%,
+      transparent 0% 50%
+    ) 50% / 8px 8px;
+}
+
+.ge-stops-bar:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #2563eb) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.ge-stop-marker {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-panel);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 30%, transparent);
+  transform: translate(-50%, -50%);
+  padding: 0;
+  cursor: grab;
+  z-index: 1;
+  transition: box-shadow 0.15s;
+}
+
+.ge-stop-marker:active,
+.ge-stop-marker.ge-stop-marker-active {
+  cursor: grabbing;
+  box-shadow:
+    0 0 0 2px var(--bg-panel),
+    0 0 0 4px color-mix(in srgb, var(--accent, #2563eb) 72%, transparent);
+}
+
+.ge-stops-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ge-stop-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 4px;
+  padding: 2px;
+  margin: -2px;
+}
+
+.ge-stop-row.ge-stop-row-active {
+  background: color-mix(in srgb, var(--accent, #2563eb) 10%, transparent);
+}
+
+.ge-stop-swatch-label {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.ge-stop-color-input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ge-stop-swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.ge-stop-hex {
+  width: 64px;
+  font-size: 10px;
+  padding: 2px 4px;
+  border: 1px solid var(--manual-edit-field-border);
+  border-radius: 3px;
+  background: var(--manual-edit-field-bg);
+  color: var(--text);
+}
+
+.ge-stop-pos {
+  width: 32px;
+  font-size: 10px;
+  text-align: center;
+  padding: 2px 4px;
+  border: 1px solid var(--manual-edit-field-border);
+  border-radius: 3px;
+  background: var(--manual-edit-field-bg);
+  color: var(--text);
+}
+
+.ge-stop-remove {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ge-stop-remove:hover {
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #ef4444;
+}
+
+.ge-add-stop {
+  font-size: 10px;
+  padding: 3px 0;
+  border: 1px dashed color-mix(in srgb, var(--text) 20%, transparent);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.ge-add-stop:hover {
+  border-color: color-mix(in srgb, var(--text) 40%, transparent);
+  color: var(--text);
+}

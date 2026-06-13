@@ -1,0 +1,74 @@
+/* GrapesJS sidebar container — holds the Figma-style StylePanel.
+ * The old tab structure (Inspect/Style/Layers) has been replaced by a single
+ * StylePanel React component; these rules just frame the sidebar itself.
+ *
+ * Two layouts:
+ * - Default (floating): absolutely positioned over the canvas's right edge
+ *   inside .viewer-body. Used when no editPortalId is provided.
+ * - Portal: rendered into ProjectView's right-panel Edit tab host; the
+ *   `.grapesjs-sidebar-portal` modifier drops the absolute positioning
+ *   so the sidebar fills the tab content area naturally. */
+.grapesjs-sidebar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg, #ffffff);
+  border-left: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.04);
+  z-index: 5;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.grapesjs-sidebar.grapesjs-sidebar-portal {
+  position: static;
+  width: 100%;
+  height: 100%;
+  border-left: 0;
+  box-shadow: none;
+  z-index: auto;
+}
+
+
+/* ── GrapesJS canvas chrome theme overrides ──
+   The built-in per-component toolbar (.gjs-toolbar) and hover badge
+   (.gjs-badge) are disabled at the source (showToolbar:false + custom hover
+   spot in GrapesjsEditor.tsx), so we no longer restyle them. What remains:
+   the selection / hover outline (accent) and the DnD insertion line. */
+
+/* Selection + hover highlight use the theme accent. */
+.gjs-selected,
+.gjs-sm-sector.gjs-sm-open,
+.gjs-hovered {
+  outline-color: var(--accent) !important;
+}
+
+/* ── DnD insertion line ──
+   GrapesJS renders the drag insertion indicator as `.gjs-placeholder`
+   (+ `.horizontal` / `.vertical`) wrapping a `.gjs-placeholder-int` fill.
+   By default it's a two-tone triangle-capped line in green, with a CSS
+   transition that makes it lag the cursor (the internal 100ms moveLimiter
+   compounds this). We:
+     • recolour it to the theme accent;
+     • flatten the triangle end-caps (border trick → plain line);
+     • drop the transition so each throttled update snaps instantly,
+       removing the perceived lag without patching the runtime throttle. */
+.gjs-placeholder {
+  --gjs-placeholder-background-color: var(--accent);
+  transition: none !important;
+}
+
+.gjs-placeholder.horizontal,
+.gjs-placeholder.vertical {
+  border-width: 0 !important;
+  margin: 0 !important;
+}
+
+.gjs-placeholder-int {
+  background-color: var(--accent) !important;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.15);
+}

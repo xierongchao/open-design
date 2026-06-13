@@ -1,0 +1,43 @@
+- main [ref=e2]:
+  - img "直播画面" [ref=e3]
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: 9:41
+      - generic [ref=e7]:
+        - img [ref=e8]
+        - img [ref=e10]
+    - generic [ref=e14]:
+      - button [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+      - generic [ref=e19]: 2026 舍弗勒风电技术峰会
+      - img [ref=e21]
+    - generic [ref=e25]:
+      - generic [ref=e26]: 主论坛
+      - generic [ref=e28]: 分会场 A
+      - generic [ref=e29]: 分会场 B
+  - generic:
+    - generic:
+      - img
+  - generic:
+    - generic: 主论坛内容很扎实
+    - generic: 主轴轴承选型讲得很细
+  - complementary [ref=e30]:
+    - generic [ref=e31]:
+      - img [ref=e33]
+      - generic [ref=e35]: "686"
+    - generic [ref=e36]:
+      - img [ref=e38]
+      - generic [ref=e40]: "214"
+    - generic [ref=e41]:
+      - img [ref=e43]
+      - generic [ref=e45]: 分享
+  - generic [ref=e46]:
+    - generic [ref=e47]:
+      - generic [ref=e48]:
+        - generic [ref=e49]: 直播中
+        - generic [ref=e51]: 主论坛 · 人气 686
+      - heading "风电传动技术展望" [level=3] [ref=e52]
+      - generic [ref=e53]: 主讲：张伟 · 电驱产品高级经理
+    - generic [ref=e54]:
+      - generic [ref=e55]: 说点什么，与主播互动…
+      - button "发送" [ref=e56] [cursor=pointer]

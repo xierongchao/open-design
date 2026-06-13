@@ -1123,7 +1123,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(srcDocFrame?.srcdoc).toContain('data-od-sandbox-shim');
   });
 
-  it('reactivates the srcDoc transport after switching source back to preview', async () => {
+  it('keeps the srcDoc transport mounted while switching source and preview', async () => {
     const file = baseFile({
       name: 'page.html',
       path: 'page.html',
@@ -1145,26 +1145,30 @@ describe('FileViewer SVG artifacts', () => {
         projectKind="prototype"
         file={file}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+        defaultEditMode
       />,
     );
-
-    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
 
     await waitFor(() => {
       const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(activeFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
     });
 
+    const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const initialSrcDoc = activeFrame.srcdoc;
+
     fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
-    expect(screen.queryByTestId('artifact-preview-frame')).toBeNull();
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(activeFrame);
 
     fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
 
     await waitFor(() => {
-      const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(activeFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-      expect(activeFrame.srcdoc).toContain('data-od-edit-bridge');
-      expect(activeFrame.srcdoc).toContain('Hero');
+      const previewFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(previewFrame).toBe(activeFrame);
+      expect(previewFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(previewFrame.srcdoc).toBe(initialSrcDoc);
+      expect(previewFrame.srcdoc).toContain('data-od-edit-bridge');
+      expect(previewFrame.srcdoc).toContain('Hero');
     });
   });
 

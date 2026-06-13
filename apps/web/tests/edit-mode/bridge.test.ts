@@ -1388,6 +1388,65 @@ describe('manual edit bridge target normalization', () => {
   });
 });
 
+describe('manual edit bridge persisted DOM updates', () => {
+  it('removes an element in place after the host confirms its save', () => {
+    const dom = new JSDOM(
+      `<main><h1 data-od-id="hero">Hero</h1><p data-od-id="body">Body</p></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-selected-target', id: 'hero' },
+    }));
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-remove-element', id: 'hero' },
+    }));
+
+    expect(dom.window.document.querySelector('[data-od-id="hero"]')).toBeNull();
+    expect(dom.window.document.querySelector('[data-od-id="body"]')?.textContent).toBe('Body');
+
+    dom.window.close();
+  });
+
+  it('applies saved link, image, and attribute fields in place', () => {
+    const dom = new JSDOM(
+      `<main>
+        <a data-od-id="cta" href="/old">Old</a>
+        <img data-od-id="image" src="/old.png" alt="Old">
+        <section data-od-id="card" title="Old"></section>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-apply-link', id: 'cta', text: 'Buy now', href: '/buy' },
+    }));
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-apply-image', id: 'image', src: '/new.png', alt: 'New' },
+    }));
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-apply-attributes', id: 'card', attributes: { title: 'New', hidden: '' } },
+    }));
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-preview-style', id: 'card', styles: { left: '180px' }, version: 1 },
+    }));
+
+    const link = dom.window.document.querySelector('[data-od-id="cta"]');
+    const image = dom.window.document.querySelector('[data-od-id="image"]');
+    const card = dom.window.document.querySelector('[data-od-id="card"]');
+    expect(link?.textContent).toBe('Buy now');
+    expect(link?.getAttribute('href')).toBe('/buy');
+    expect(image?.getAttribute('src')).toBe('/new.png');
+    expect(image?.getAttribute('alt')).toBe('New');
+    expect(card?.getAttribute('title')).toBe('New');
+    expect(card?.hasAttribute('hidden')).toBe(false);
+    expect((card as HTMLElement | null)?.style.position).toBe('absolute');
+    expect((card as HTMLElement | null)?.style.left).toBe('180px');
+
+    dom.window.close();
+  });
+});
+
 // E: buttons and interactive elements without data-od-id should still be selectable via click
 describe('element selection without source mapping', () => {
   it('allows clicking a button without data-od-id to select it via the bridge', async () => {

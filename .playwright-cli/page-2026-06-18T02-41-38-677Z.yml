@@ -1,0 +1,68 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: 9:41
+      - generic [ref=e5]:
+        - img [ref=e6]
+        - img [ref=e8]
+    - banner [ref=e12]:
+      - button "返回" [ref=e13] [cursor=pointer]:
+        - img [ref=e14]
+      - generic [ref=e16]: 工业直播
+      - button "搜索" [ref=e17] [cursor=pointer]:
+        - img [ref=e18]
+    - generic [ref=e21]:
+      - img "直播封面" [ref=e22]
+      - generic [ref=e23]:
+        - generic [ref=e24]: 今日推荐
+        - heading "轴承智能制造解决方案直播" [level=1] [ref=e25]
+        - generic [ref=e26]:
+          - generic [ref=e27]: 14:00 开播 · 刘洋主讲
+          - generic [ref=e28]: 直播中
+    - navigation [ref=e29]:
+      - generic [ref=e30]: 全部
+      - generic [ref=e31]: 直播中
+      - generic [ref=e32]: 预告
+      - generic [ref=e33]: 回放
+      - generic [ref=e34]: 我的报名
+    - main [ref=e35]:
+      - article [ref=e36]:
+        - generic [ref=e37]:
+          - img "直播封面" [ref=e38]
+          - generic [ref=e39]: 直播中
+          - generic [ref=e40]: 1,286 人在线
+        - generic [ref=e41]:
+          - heading "轴承智能制造解决方案直播" [level=2] [ref=e42]
+          - generic [ref=e43]:
+            - generic [ref=e44]: 刘洋 · 工业市场部
+            - generic [ref=e46]: 已报名 3,074
+          - button "进入直播" [ref=e47] [cursor=pointer]
+      - article [ref=e48]:
+        - img "直播封面" [ref=e49]
+        - generic [ref=e50]:
+          - generic [ref=e51]:
+            - generic [ref=e52]: 预告
+            - generic [ref=e53]: 6月20日 14:00
+          - heading "新能源电驱系统技术在线研讨会" [level=2] [ref=e54]
+          - paragraph [ref=e55]: 张伟、李娜、王强 等 3 位主讲
+          - button "预约直播" [ref=e56] [cursor=pointer]
+      - article [ref=e57]:
+        - img "直播封面" [ref=e58]
+        - generic [ref=e59]:
+          - generic [ref=e60]:
+            - generic [ref=e61]: 回放
+            - generic [ref=e62]: 回放剩余 90 天
+          - heading "高速球轴承润滑与密封结构解析" [level=2] [ref=e63]
+          - paragraph [ref=e64]: 2,148 次观看 · 资料可下载
+          - button "查看回放" [ref=e65] [cursor=pointer]
+  - contentinfo [ref=e66]:
+    - generic [ref=e67]:
+      - generic [ref=e68]:
+        - img [ref=e69]
+        - generic [ref=e71]: 直播
+      - generic [ref=e72]:
+        - img [ref=e73]
+        - generic [ref=e76]: 报名
+      - generic [ref=e77]:
+        - img [ref=e78]
+        - generic [ref=e81]: 我的

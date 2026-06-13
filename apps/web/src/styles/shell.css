@@ -35,11 +35,17 @@
   overflow: hidden;
   height: 100vh;
 }
-.workspace-shell[data-client-type="desktop"] .workspace-shell__body {
-  padding-top: 36px;
-}
-.workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .workspace-shell__body {
-  padding-top: 0;
+/* The 36px top padding for macOS traffic-light space is handled by the
+ * Electron-injected MAC_WINDOW_CHROME_CSS (runtime.ts) so that Windows
+ * desktop builds (which have a native title bar) do not get a blank gap.
+ * The fullscreen override is also moved there. */
+.macos-drag-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  z-index: 9999;
 }
 .workspace-shell__body > .app,
 .workspace-shell__body > .entry-shell {

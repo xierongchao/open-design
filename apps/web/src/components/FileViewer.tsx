@@ -4501,7 +4501,14 @@ function HtmlViewer({
   const manualEditStyleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualEditPreviewVersionRef = useRef(0);
   const sourceRef = useRef<string | null>(source);
+  const manualEditExpectedSourceRef = useRef<string | null>(null);
+  const manualEditExternalSourceRef = useRef<string | null>(null);
   const sourceFileKeyRef = useRef<string | null>(null);
+  const manualEditResetFileKeyRef = useRef(`${projectId}\0${file.name}`);
+  useEffect(() => {
+    manualEditExpectedSourceRef.current = null;
+    manualEditExternalSourceRef.current = null;
+  }, [defaultEditMode, projectId, file.name]);
   const templateNameId = useId();
   const templateDescriptionId = useId();
   const imageExportTitleId = useId();
@@ -4850,31 +4857,37 @@ function HtmlViewer({
   const effectiveDeck = isDeck || looksLikeDeck;
   const livePreviewSource = inlinedSource ?? source;
   // Freeze the iframe input on the snapshot taken at Edit-mode entry. Any
-  // source rewrite during edit (1.5s debounced set-style patches) stays
+  // debounced source rewrites during edit stay
   // invisible to the iframe — live updates flow through od-edit-preview-style
   // postMessage instead, so the canvas never has to reload.
   useEffect(() => {
     if (manualEditMode && manualEditFrozenSource === null && livePreviewSource != null) {
+      manualEditExpectedSourceRef.current = sourceRef.current;
+      manualEditExternalSourceRef.current = null;
       setManualEditFrozenSource(livePreviewSource);
     }
   }, [manualEditMode, manualEditFrozenSource, livePreviewSource]);
-  // When an external source change arrives while in edit mode (e.g. AI agent
-  // rewrites the file via the daemon), unfreeze the preview so the srcDoc
-  // iframe rebuilds with the latest content instead of staying on the stale
-  // snapshot taken at edit-mode entry.
-  // Exception: move-element patches apply optimistically in the bridge, so
-  // the file-re-fetch after save must NOT rebuild srcDoc (that would flash).
-  // The flag persists across multiple livePreviewSource changes (source
-  // update → inlining update) and is cleared only by a non-move patch,
-  // undo/redo, or edit-mode exit.
+  // Local edits update the iframe optimistically and save in the background.
+  // Keep their source-state and mtime round trips away from srcDoc so the
+  // active document, selection, and scroll position survive. Only a source
+  // value that differs from the latest locally saved snapshot is treated as
+  // an external rewrite and allowed to advance the frozen document.
   useEffect(() => {
     if (!manualEditMode || manualEditFrozenSource == null || livePreviewSource == null) return;
-    if (livePreviewSource !== manualEditFrozenSource) {
-      if (skipSrcDocRebuildForMoveRef.current) {
-        return;
-      }
-      setManualEditFrozenSource(livePreviewSource);
+    if (livePreviewSource === manualEditFrozenSource) return;
+    const currentSource = sourceRef.current;
+    if (
+      currentSource === manualEditExpectedSourceRef.current
+      && manualEditExternalSourceRef.current !== currentSource
+    ) {
+      return;
     }
+    if (currentSource !== manualEditExpectedSourceRef.current) {
+      manualEditExpectedSourceRef.current = currentSource;
+      manualEditExternalSourceRef.current = currentSource;
+      skipSrcDocRebuildForMoveRef.current = false;
+    }
+    setManualEditFrozenSource(livePreviewSource);
   }, [manualEditMode, manualEditFrozenSource, livePreviewSource]);
   const previewSource = (manualEditMode && manualEditFrozenSource !== null)
     ? manualEditFrozenSource
@@ -4901,8 +4914,11 @@ function HtmlViewer({
     [source],
   );
   const [urlSelectionBridgeReady, setUrlSelectionBridgeReady] = useState(false);
+  // The preview tree stays mounted while the source editor is visible. Keep
+  // its transport decision stable too, otherwise switching tabs would still
+  // blank the URL iframe and rebuild the srcDoc iframe behind the hidden UI.
   const useUrlLoadPreview = shouldUrlLoadHtmlPreview({
-    mode,
+    mode: 'preview',
     isDeck: effectiveDeck,
     commentMode: boardMode,
     urlCommentBridge: urlSelectionBridgeReady,
@@ -5252,6 +5268,39 @@ function HtmlViewer({
     if (ids.length <= 1) win.postMessage({ type: 'od-edit-selected-target', id: ids[0] ?? null }, '*');
   }
 
+  function removeManualEditElementFromIframe(id: string, target: HTMLIFrameElement | null = iframeRef.current) {
+    target?.contentWindow?.postMessage({ type: 'od-edit-remove-element', id }, '*');
+  }
+
+  function applyManualEditFieldsToIframe(
+    patch: Extract<ManualEditPatch, { kind: 'set-link' | 'set-image' | 'set-attributes' }>,
+    target: HTMLIFrameElement | null = iframeRef.current,
+  ) {
+    const win = target?.contentWindow;
+    if (!win) return;
+    if (patch.kind === 'set-link') {
+      win.postMessage({
+        type: 'od-edit-apply-link',
+        id: patch.id,
+        text: patch.text,
+        href: patch.href,
+      }, '*');
+    } else if (patch.kind === 'set-image') {
+      win.postMessage({
+        type: 'od-edit-apply-image',
+        id: patch.id,
+        src: patch.src,
+        alt: patch.alt,
+      }, '*');
+    } else {
+      win.postMessage({
+        type: 'od-edit-apply-attributes',
+        id: patch.id,
+        attributes: patch.attributes,
+      }, '*');
+    }
+  }
+
   function syncBridgeModes(target: HTMLIFrameElement | null = iframeRef.current) {
     const win = target?.contentWindow;
     if (!win) return;
@@ -5333,6 +5382,9 @@ function HtmlViewer({
   }, [inspectMode, boardMode, file.name, isOurPreviewIframeSource]);
 
   useEffect(() => {
+    const resetFileKey = `${projectId}\0${file.name}`;
+    const fileChanged = manualEditResetFileKeyRef.current !== resetFileKey;
+    manualEditResetFileKeyRef.current = resetFileKey;
     // Save current file's history to cache before switching
     const prevKey = sourceFileKeyRef.current;
     if (prevKey) {
@@ -5352,7 +5404,7 @@ function HtmlViewer({
     setInspectError(null);
     setQueuedBoardNotes([]);
     setStrokePoints([]);
-    setManualEditFrozenSource(null);
+    if (fileChanged) setManualEditFrozenSource(null);
     setManualEditTargets([]);
     setSelectedManualEditTarget(null);
     setManualEditPanelPosition(null);
@@ -5366,8 +5418,10 @@ function HtmlViewer({
     setManualEditError(null);
     manualEditFlushAfterSaveRef.current = false;
     manualEditPendingStyleRef.current = null;
+    manualEditExpectedSourceRef.current = null;
+    manualEditExternalSourceRef.current = null;
     clearManualEditStyleTimer();
-  }, [file.name]);
+  }, [projectId, file.name]);
 
   // Selecting a new file or turning inspect/comment-inspect off resets the panel target.
   useEffect(() => {
@@ -5627,6 +5681,8 @@ function HtmlViewer({
       setManualEditError(null);
       manualEditFlushAfterSaveRef.current = false;
       manualEditPendingStyleRef.current = null;
+      manualEditExpectedSourceRef.current = null;
+      manualEditExternalSourceRef.current = null;
       if (manualEditStyleTimerRef.current) {
         clearTimeout(manualEditStyleTimerRef.current);
         manualEditStyleTimerRef.current = null;
@@ -6410,6 +6466,15 @@ function HtmlViewer({
         afterSource: result.source,
         createdAt: Date.now(),
       };
+      manualEditExpectedSourceRef.current = result.source;
+      manualEditExternalSourceRef.current = null;
+      const persistedDomPatchInPlace = manualEditRequiresSrcDoc && (
+        patch.kind === 'remove-element'
+        || patch.kind === 'set-link'
+        || patch.kind === 'set-image'
+        || patch.kind === 'set-attributes'
+        || patch.kind === 'align-elements'
+      );
       // For move-element, the bridge already applied the change optimistically
       // in the iframe DOM. Skip React state updates that would rebuild srcDoc
       // (which causes a flash and loses the bridge's selection state).
@@ -6423,11 +6488,34 @@ function HtmlViewer({
         skipSrcDocRebuildForMoveRef.current = false;
         setSource(result.source);
         setInlinedSource(null);
-        if (patch.kind !== 'set-style' && patch.kind !== 'set-text') {
+        if (
+          patch.kind !== 'set-style'
+          && patch.kind !== 'set-style-batch'
+          && patch.kind !== 'set-text'
+          && !persistedDomPatchInPlace
+        ) {
           setManualEditFrozenSource(result.source);
         }
       }
       sourceRef.current = result.source;
+      if (persistedDomPatchInPlace) {
+        if (patch.kind === 'remove-element') removeManualEditElementFromIframe(patch.id);
+        else if (patch.kind === 'align-elements') {
+          for (const id of patch.ids) {
+            previewStyleToIframe(
+              id,
+              readManualEditStyles(result.source, id),
+              ++manualEditPreviewVersionRef.current,
+            );
+          }
+        } else if (
+          patch.kind === 'set-link'
+          || patch.kind === 'set-image'
+          || patch.kind === 'set-attributes'
+        ) {
+          applyManualEditFieldsToIframe(patch);
+        }
+      }
       setManualEditHistory((current) => {
         const next = [entry, ...current];
         return next.length > MAX_MANUAL_EDIT_HISTORY ? next.slice(0, MAX_MANUAL_EDIT_HISTORY) : next;
@@ -6519,6 +6607,8 @@ function HtmlViewer({
       }
       setSource(latest.beforeSource);
       sourceRef.current = latest.beforeSource;
+      manualEditExpectedSourceRef.current = latest.beforeSource;
+      manualEditExternalSourceRef.current = null;
       setInlinedSource(null);
       setManualEditFrozenSource(latest.beforeSource);
       setManualEditHistory(rest);
@@ -6552,6 +6642,8 @@ function HtmlViewer({
       }
       setSource(latest.afterSource);
       sourceRef.current = latest.afterSource;
+      manualEditExpectedSourceRef.current = latest.afterSource;
+      manualEditExternalSourceRef.current = null;
       setInlinedSource(null);
       setManualEditFrozenSource(latest.afterSource);
       setManualEditUndone(rest);
@@ -8045,9 +8137,9 @@ function HtmlViewer({
   // element (click its hover affordance / a container) or opens page styles by
   // clicking the empty canvas.
   const manualEditPageCardActive =
-    manualEditMode && !selectedManualEditTarget && manualEditPageStylesOpen;
+    mode === 'preview' && manualEditMode && !selectedManualEditTarget && manualEditPageStylesOpen;
   const manualEditPanelActive =
-    manualEditMode && (!!selectedManualEditTarget || manualEditPageCardActive);
+    mode === 'preview' && manualEditMode && (!!selectedManualEditTarget || manualEditPageCardActive);
   const activeViewportSizeOverride =
     previewViewport === 'desktop' ? customViewportSize ?? undefined : undefined;
   // The effective viewport dimensions shown in the PageInspector canvas
@@ -8081,6 +8173,8 @@ function HtmlViewer({
         if (current == null) return;
         const updated = writeCanvasSizeToSource(current, size);
         if (updated !== current) {
+          manualEditExpectedSourceRef.current = updated;
+          manualEditExternalSourceRef.current = null;
           void writeProjectTextFileDetailed(projectId, file.name, updated, {
             artifactManifest: file.artifactManifest,
           });
@@ -8212,7 +8306,7 @@ function HtmlViewer({
   ) : null;
   const boardPreviewImage =
     boardPreviewIndex !== null ? boardImagePreviews[boardPreviewIndex] ?? null : null;
-  const boardImagePreviewModal = boardPreviewImage
+  const boardImagePreviewModal = mode === 'preview' && boardPreviewImage
     ? createPortal(
         <div
           className="staged-preview-modal"
@@ -8243,7 +8337,7 @@ function HtmlViewer({
         document.body,
       )
     : null;
-  const commentSidePanel = commentPanelOpen ? (
+  const commentSidePanel = mode === 'preview' && commentPanelOpen ? (
     <CommentSideDock
       comments={visibleSideComments}
       projectId={projectId}
@@ -8848,13 +8942,16 @@ function HtmlViewer({
       <div className="viewer-body" ref={previewBodyRef}>
         {source === null ? (
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
-        ) : mode === 'preview' ? (
+        ) : (
+          <>
           <div
             className={`${manualEditMode ? `manual-edit-workspace${manualEditPanelDockedInCanvas ? ' pp-dock-active' : ''}` : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
             data-testid={manualEditMode ? undefined : 'comment-preview-layout'}
+            aria-hidden={mode === 'preview' ? undefined : true}
             style={{
               ...previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions, activeViewportSizeOverride),
               ...(manualEditMode && manualEditSpaceHeld ? { cursor: manualEditPanning ? 'grabbing' : 'grab' } : {}),
+              ...(mode === 'preview' ? {} : { display: 'none' }),
             }}
             onMouseLeave={manualEditMode ? clearManualEditHover : undefined}
             onWheel={manualEditMode ? handleManualEditCanvasWheel : undefined}
@@ -9061,7 +9158,7 @@ function HtmlViewer({
               ) : null}
               {/* Portaled to <body> so the screenshot/export toast escapes the
                   preview pane's transform + overflow:hidden. */}
-              {exportToast
+              {mode === 'preview' && exportToast
                 ? createPortal(
                     <Toast
                       message={exportToast.message}
@@ -9208,10 +9305,10 @@ function HtmlViewer({
               />
             ) : null}
           </div>
-        ) : source !== null ? (
-          <EditableCodeViewer text={source} onChange={setSource} onSave={handleCodeSave} onDirtyChange={setCodeDirty} />
-        ) : (
-          <div className="viewer-empty">{t('fileViewer.loading')}</div>
+          {mode === 'source' ? (
+            <EditableCodeViewer text={source} onChange={setSource} onSave={handleCodeSave} onDirtyChange={setCodeDirty} />
+          ) : null}
+          </>
         )}
       </div>
       {inTabPresent && source && typeof document !== 'undefined' ? createPortal(

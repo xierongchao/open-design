@@ -1,0 +1,104 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - img "直播画面" [ref=e4]
+    - generic [ref=e7]:
+      - generic [ref=e8]:
+        - button [ref=e9] [cursor=pointer]:
+          - img [ref=e10]
+        - generic [ref=e12]: 直播中
+        - generic [ref=e14]:
+          - img [ref=e15]
+          - text: 1,286
+      - generic [ref=e17]:
+        - generic [ref=e18]: HD 高清
+        - button [ref=e19] [cursor=pointer]:
+          - img [ref=e20]
+    - generic:
+      - generic:
+        - img
+    - generic [ref=e23]: 第二话题：高速球轴承的润滑与密封
+  - generic [ref=e24]:
+    - generic [ref=e25]:
+      - generic [ref=e26]: 刘
+      - generic [ref=e27]:
+        - generic [ref=e28]:
+          - generic [ref=e29]: 刘洋
+          - generic [ref=e30]: 主讲
+        - generic [ref=e31]: 工业市场部 · 轴承产品技术专家
+      - button "关注" [ref=e32] [cursor=pointer]:
+        - img [ref=e33]
+        - text: 关注
+    - heading "轴承智能制造解决方案直播" [level=1] [ref=e35]
+    - generic [ref=e36]:
+      - generic [ref=e37]:
+        - img [ref=e38]
+        - text: 观看 3,074
+      - generic [ref=e42]:
+        - img [ref=e43]
+        - text: 点赞 2,148
+      - generic [ref=e45]: 回放剩余 90 天
+  - navigation [ref=e46]:
+    - generic [ref=e47]: 介绍
+    - generic [ref=e48]: 聊天186
+    - generic [ref=e49]: 问答
+    - generic [ref=e50]: 资料
+  - main [ref=e51]:
+    - generic [ref=e52]:
+      - img [ref=e53]
+      - generic [ref=e55]: 抽奖进行中：Xlife 选型手册，点击参与
+      - generic [ref=e56]: 参与 ›
+    - generic [ref=e57]: —— 直播开始，欢迎进入直播间 ——
+    - generic [ref=e58]:
+      - generic [ref=e59]: 刘
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - generic [ref=e62]: 刘洋
+          - generic [ref=e63]: 主播
+        - generic [ref=e64]: 大家好，今天第二个话题我们聚焦高速球轴承的润滑与密封结构，欢迎在聊天区提问。
+    - generic [ref=e65]: 王磊 加入了直播间
+    - generic [ref=e66]:
+      - generic [ref=e67]: 王
+      - generic [ref=e68]:
+        - generic [ref=e70]: 王磊
+        - generic [ref=e71]: 请问高速工况下润滑脂有什么选型建议？
+    - generic [ref=e72]:
+      - generic [ref=e73]: 刘
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - generic [ref=e76]: 刘洋
+          - generic [ref=e77]: 主播
+        - generic [ref=e78]: 好问题，建议参考 DN 值选型，高速场景优先低粘度合成脂，稍后我放一份选型表到资料 Tab。
+    - generic [ref=e79]: 陈晓、黄敏 等 4 人加入了直播间
+    - generic [ref=e80]:
+      - generic [ref=e81]: 陈
+      - generic [ref=e82]:
+        - generic [ref=e84]: 陈晓
+        - generic [ref=e85]: 主播讲得很清晰 👍 请问密封结构对寿命影响大吗？
+    - generic [ref=e86]:
+      - generic [ref=e87]: 黄
+      - generic [ref=e88]:
+        - generic [ref=e90]: 黄敏
+        - generic [ref=e91]: 这期干货很多，期待回放分享给同事。
+    - generic [ref=e92]:
+      - generic [ref=e93]: 刘
+      - generic [ref=e94]:
+        - generic [ref=e95]:
+          - generic [ref=e96]: 刘洋
+          - generic [ref=e97]: 主播
+        - generic [ref=e98]: 密封圈接触式与非接触式对寿命影响差异较大，具体我们结合这张图讲一下。
+    - generic [ref=e99]: —— 周伟 点赞了直播 ——
+    - generic [ref=e100]:
+      - generic [ref=e101]: 周
+      - generic [ref=e102]:
+        - generic [ref=e104]: 周伟
+        - generic [ref=e105]: 能讲讲 NVH 优化吗？
+  - contentinfo [ref=e106]:
+    - generic [ref=e107]:
+      - button "更多" [ref=e108] [cursor=pointer]:
+        - img [ref=e109]
+      - generic [ref=e113]: 和大伙聊点什么…
+      - button "表情" [ref=e114] [cursor=pointer]:
+        - img [ref=e115]
+      - button "发送" [ref=e118] [cursor=pointer]:
+        - img [ref=e119]
+        - text: 发送

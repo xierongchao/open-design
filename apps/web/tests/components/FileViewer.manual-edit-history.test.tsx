@@ -2,7 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ComponentProps } from 'react';
+import { useState, type ComponentProps } from 'react';
 import { emptyManualEditStyles, type ManualEditTarget } from '../../src/edit-mode/types';
 import type { ProjectFile } from '../../src/types';
 
@@ -151,6 +151,154 @@ describe('FileViewer manual edit history regressions', () => {
       expect(previewFrame.srcdoc).toContain('Hero');
       expect(previewFrame.srcdoc).toContain('data-od-edit-bridge');
     });
+  });
+
+  it('keeps the edit iframe document stable while style changes save in the background', async () => {
+    const initialSource = '<!doctype html><html><body><main data-od-id="hero" style="height: 120px">Hero</main></body></html>';
+    let persistedSource = initialSource;
+    let rawReads = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const payload = JSON.parse(String(init.body)) as { content: string };
+        persistedSource = payload.content;
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/raw/preview.html')) {
+        rawReads += 1;
+        return new Response(persistedSource, { status: 200 });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    function MtimeRefreshHarness() {
+      const [mtime, setMtime] = useState(htmlPreviewFile().mtime);
+      return (
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={{ ...htmlPreviewFile(), mtime }}
+          defaultEditMode
+          onFileSaved={() => setMtime((current) => current + 1)}
+        />
+      );
+    }
+
+    render(<MtimeRefreshHarness />);
+
+    await selectManualEditTarget();
+    const editFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const initialSrcDoc = editFrame.srcdoc;
+
+    act(() => {
+      panelState.props?.onStyleChange?.('hero', { height: '240px' }, 'Style: Hero');
+    });
+
+    await waitFor(() => expect(persistedSource).toContain('height: 240px'));
+    await waitFor(() => expect(rawReads).toBeGreaterThanOrEqual(2));
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(editFrame);
+    expect(editFrame.srcdoc).toBe(initialSrcDoc);
+  });
+
+  it('keeps the edit iframe document stable while canvas size saves in the background', async () => {
+    const initialSource = '<!doctype html><html><head></head><body><main data-od-id="hero">Hero</main></body></html>';
+    const savedSources: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const payload = JSON.parse(String(init.body)) as { content: string };
+        savedSources.push(payload.content);
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(initialSource, { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={initialSource}
+        defaultEditMode
+      />,
+    );
+
+    const editFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const initialSrcDoc = editFrame.srcdoc;
+
+    act(() => {
+      panelState.props?.onViewportSizeChange?.({ width: 1440, height: 1600 });
+    });
+
+    await waitFor(() => expect(savedSources).toHaveLength(1));
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(editFrame);
+    expect(editFrame.srcdoc).toBe(initialSrcDoc);
+  });
+
+  it('refreshes the edit iframe when the file changes outside manual edit', async () => {
+    const initialSource = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+    const externalSource = '<!doctype html><html><body><main data-od-id="hero">Agent update</main></body></html>';
+    let persistedSource = initialSource;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/raw/preview.html')) {
+        return new Response(persistedSource, { status: 200 });
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const initialFile = htmlPreviewFile();
+    const { rerender } = render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={initialFile}
+        defaultEditMode
+      />,
+    );
+
+    const editFrame = await waitFor(() => {
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(frame.srcdoc).toContain('>Hero</main>');
+      return frame;
+    });
+    const initialSrcDoc = editFrame.srcdoc;
+
+    persistedSource = externalSource;
+    rerender(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={{ ...initialFile, mtime: initialFile.mtime + 1 }}
+        defaultEditMode
+      />,
+    );
+
+    await waitFor(() => expect(editFrame.srcdoc).toContain('>Agent update</main>'));
+    expect(editFrame.srcdoc).not.toBe(initialSrcDoc);
   });
 
   it('uses the undone source snapshot for a follow-up edit after undo', async () => {
@@ -556,10 +704,10 @@ describe('FileViewer manual edit history regressions', () => {
     render(
       <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
         liveHtml={initialSource}
+        defaultEditMode
       />,
     );
 
-    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
     await selectManualEditTarget();
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     const postMessageSpy = vi.spyOn(frame.contentWindow!, 'postMessage');
@@ -577,6 +725,12 @@ describe('FileViewer manual edit history regressions', () => {
     await waitFor(() => expect(savedSources).toHaveLength(1));
     expect(savedSources[0]).not.toContain('data-od-id="hero"');
     expect(savedSources[0]).toContain('data-od-id="body"');
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.srcdoc).toContain('data-od-id="hero"');
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { type: 'od-edit-remove-element', id: 'hero' },
+      '*',
+    );
     // Clearing the selection closes the inspector: edit mode returns to a clean
     // canvas (no docked/pinned panel) and the iframe selection marker is reset.
     await waitFor(() => expect(screen.queryByTestId('mock-manual-edit-panel')).toBeNull());
@@ -584,10 +738,87 @@ describe('FileViewer manual edit history regressions', () => {
       expect.objectContaining({ type: 'od-edit-selected-target', id: null }),
       '*',
     );
-    await waitFor(() => {
-      expect((screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement).srcdoc)
-        .not.toContain('data-od-id="hero"');
+  });
+
+  it('keeps the edit iframe stable while saved attributes update in place', async () => {
+    const initialSource = '<!doctype html><html><body><h1 data-od-id="hero" title="Old">Hero</h1><p data-od-id="body">Body</p></body></html>';
+    let persistedSource = initialSource;
+    const savedSources: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/files') && init?.method === 'POST') {
+        const payload = JSON.parse(String(init.body)) as { content: string };
+        persistedSource = payload.content;
+        savedSources.push(payload.content);
+        return new Response(JSON.stringify({ file: htmlPreviewFile() }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(persistedSource, { status: 200 });
     });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}
+        liveHtml={initialSource}
+        defaultEditMode
+      />,
+    );
+
+    await selectManualEditTarget();
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const initialSrcDoc = frame.srcdoc;
+    const postMessageSpy = vi.spyOn(frame.contentWindow!, 'postMessage');
+
+    act(() => {
+      panelState.props?.onApplyPatch(
+        { id: 'hero', kind: 'set-attributes', attributes: { title: 'New' } },
+        'Attributes: Hero',
+      );
+    });
+
+    await waitFor(() => expect(savedSources).toHaveLength(1));
+    expect(savedSources[0]).toContain('title="New"');
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.srcdoc).toBe(initialSrcDoc);
+    expect(postMessageSpy).toHaveBeenCalledWith({
+      type: 'od-edit-apply-attributes',
+      id: 'hero',
+      attributes: { title: 'New' },
+    }, '*');
+    await waitFor(() => expect(panelState.props?.busy).toBe(false));
+
+    postMessageSpy.mockClear();
+    act(() => {
+      panelState.props?.onApplyPatch({
+        kind: 'align-elements',
+        ids: ['hero', 'body'],
+        mode: 'right',
+        rects: {
+          hero: { x: 0, y: 0, width: 120, height: 40 },
+          body: { x: 200, y: 50, width: 100, height: 30 },
+        },
+      }, 'Align right');
+    });
+
+    await waitFor(() => expect(savedSources).toHaveLength(2));
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.srcdoc).toBe(initialSrcDoc);
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'od-edit-preview-style',
+        id: 'hero',
+        styles: expect.objectContaining({ left: '180px' }),
+      }),
+      '*',
+    );
   });
 
   it('persists iframe drag reorders as DOM tree moves instead of margin edits', async () => {

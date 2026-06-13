@@ -99,6 +99,7 @@ import type {
   PluginShareProjectOutcome,
 } from './state/projects';
 import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
+import { getOpenDesignHost } from '@open-design/host';
 import { useI18n } from './i18n';
 import { liveArtifactTabId } from './types';
 import type {
@@ -337,6 +338,10 @@ function AppInner() {
   const { t } = useI18n();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
   const clientType = useMemo(() => detectClientType(), []);
+  const isMacDesktop = useMemo(
+    () => clientType === 'desktop' && getOpenDesignHost()?.client?.platform === 'darwin',
+    [clientType],
+  );
   const [desktopFullscreen, setDesktopFullscreen] = useState(false);
   useModalWindowDragGuard();
   // Listen for macOS native fullscreen state forwarded by the desktop
@@ -2232,6 +2237,7 @@ function AppInner() {
           onboardingCompleted={config.onboardingCompleted === true}
         />
         <div className="workspace-shell__body">
+          {isMacDesktop && !desktopFullscreen ? <div className="macos-drag-bar" aria-hidden /> : null}
           {appMain}
         </div>
       </div>

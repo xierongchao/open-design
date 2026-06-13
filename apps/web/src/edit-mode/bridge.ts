@@ -493,6 +493,13 @@ export function buildManualEditBridge(enabled: boolean): string {
     }
     var keys = Object.keys(styles || {});
     try {
+      if (
+        (Object.prototype.hasOwnProperty.call(styles || {}, 'left')
+          || Object.prototype.hasOwnProperty.call(styles || {}, 'top'))
+        && (!el.style.position || el.style.position === 'static')
+      ) {
+        el.style.position = 'absolute';
+      }
       for (var i = 0; i < keys.length; i++) {
         var key = keys[i];
         var value = styles[key];
@@ -505,6 +512,50 @@ export function buildManualEditBridge(enabled: boolean): string {
     } catch (e) {
       window.parent.postMessage({ type: 'od-edit-preview-style-applied', id: id, version: Number(version) || 0, ok: false, error: e && e.message ? String(e.message) : 'Could not apply preview styles' }, '*');
     }
+  }
+  function removePersistedElement(id){
+    var el = findById(id);
+    if (!el || el === document.body || el === document.documentElement) return;
+    if (lastHoverEl === el || el.contains(lastHoverEl)) {
+      lastHoverId = null;
+      clearHoverOutline();
+    }
+    removeResizeHandles();
+    if (el.parentNode) el.parentNode.removeChild(el);
+    postTargets();
+  }
+  function applyPersistedLink(id, text, href){
+    var el = findById(id);
+    if (!el) return;
+    if (!el.children.length) el.textContent = typeof text === 'string' ? text : '';
+    el.setAttribute('href', typeof href === 'string' ? href : '');
+    postTargets();
+  }
+  function applyPersistedImage(id, src, alt){
+    var el = findById(id);
+    if (!el) return;
+    el.setAttribute('src', typeof src === 'string' ? src : '');
+    el.setAttribute('alt', typeof alt === 'string' ? alt : '');
+    postTargets();
+  }
+  function applyPersistedAttributes(id, attributes){
+    var el = findById(id);
+    if (!el) return;
+    var protectedAttrs = {
+      'data-od-id': true,
+      'data-od-edit': true,
+      'data-od-label': true,
+      'data-od-runtime-id': true
+    };
+    var entries = Object.entries(attributes || {});
+    for (var i = 0; i < entries.length; i++) {
+      var name = entries[i][0];
+      var value = entries[i][1];
+      if (!/^[a-zA-Z_:][a-zA-Z0-9_:.-]*$/.test(name) || protectedAttrs[name]) continue;
+      if (typeof value !== 'string' || value.trim() === '') el.removeAttribute(name);
+      else el.setAttribute(name, value);
+    }
+    postTargets();
   }
   window.addEventListener('message', function(ev){
     if (!ev.data) return;
@@ -541,6 +592,22 @@ export function buildManualEditBridge(enabled: boolean): string {
     }
     if (ev.data.type === 'od-edit-preview-style') {
       applyPreviewStyles(ev.data.id, ev.data.styles || {}, ev.data.version);
+      return;
+    }
+    if (ev.data.type === 'od-edit-remove-element') {
+      removePersistedElement(ev.data.id);
+      return;
+    }
+    if (ev.data.type === 'od-edit-apply-link') {
+      applyPersistedLink(ev.data.id, ev.data.text, ev.data.href);
+      return;
+    }
+    if (ev.data.type === 'od-edit-apply-image') {
+      applyPersistedImage(ev.data.id, ev.data.src, ev.data.alt);
+      return;
+    }
+    if (ev.data.type === 'od-edit-apply-attributes') {
+      applyPersistedAttributes(ev.data.id, ev.data.attributes);
       return;
     }
   });

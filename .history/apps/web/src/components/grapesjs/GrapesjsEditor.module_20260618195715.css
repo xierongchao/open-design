@@ -1,0 +1,140 @@
+.root {
+  --gjs-canvas-top: 0px;
+  --gjs-left-width: 0%;
+
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--viewer-bg, #fafaf9);
+  overflow: hidden;
+}
+
+.canvas {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.canvas :global(.gjs-editor),
+.canvas :global(.gjs-editor-cont) {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.canvas :global(.gjs-editor) {
+  border-radius: 0;
+}
+
+.canvas :global(.gjs-cv-canvas) {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--viewer-bg, #fafaf9);
+}
+
+.canvas :global(.gjs-cv-canvas__frames) {
+  width: 100%;
+  height: 100%;
+}
+
+.canvas :global(.gjs-frame-wrapper),
+.canvas :global(.gjs-frame) {
+  width: var(--od-gjs-frame-width, 100%);
+  height: var(--od-gjs-frame-height, 100%);
+}
+
+.loadingShell {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--viewer-bg, #fafaf9);
+  color: var(--muted, #6b6964);
+  font-size: 14px;
+  z-index: 2;
+}
+
+.loadingSpinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-top-color: #c96442;
+  border-radius: 50%;
+  animation: odGrapesjsSpin 0.9s linear infinite;
+}
+
+.loadingText {
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+.errorShell {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(181, 58, 42, 0.06);
+  color: #b53a2a;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 14px;
+  z-index: 2;
+}
+
+.artboardLabel {
+  position: absolute;
+  z-index: 12;
+  min-width: 28px;
+  max-width: min(320px, calc(100% - 24px));
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  color: #3b82f6;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0;
+  cursor: grab;
+  user-select: none;
+}
+
+.artboardLabel:active {
+  cursor: grabbing;
+}
+
+.artboardLabelText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artboardLabelInput {
+  width: min(220px, calc(100vw - 48px));
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  outline: 0;
+  background: #fff;
+  color: #1d4ed8;
+  font: inherit;
+  line-height: 20px;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.16);
+  cursor: text;
+  user-select: text;
+}
+
+@keyframes odGrapesjsSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}

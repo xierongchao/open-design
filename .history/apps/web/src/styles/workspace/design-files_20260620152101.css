@@ -1,0 +1,1859 @@
+/* -------- Design Files panel (full right pane) ---------------------- */
+.df-panel {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+  background: var(--bg-panel);
+}
+.df-panel.no-preview { grid-template-columns: minmax(0, 1fr); }
+.df-reloading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  backdrop-filter: blur(1px);
+}
+.df-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-right: none;
+  /* Query container so the toolbar can react to the *list column* width
+     (which depends on the chat/preview split, not the viewport). */
+  container-type: inline-size;
+}
+.df-main:last-child { border-right: none; }
+.df-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.df-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0 20px 6px;
+  font-size: 14px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+.df-breadcrumb-btn {
+  all: unset;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 14px;
+  transition: color 120ms cubic-bezier(0.23, 1, 0.32, 1), background 120ms cubic-bezier(0.23, 1, 0.32, 1);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.df-breadcrumb-btn:hover { color: var(--text); background: var(--bg-subtle); }
+.df-breadcrumb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.df-breadcrumb-segment { display: inline-flex; align-items: center; min-width: 0; }
+.df-breadcrumb-sep { padding: 0 2px; color: var(--text-faint); font-size: 12px; user-select: none; }
+.df-breadcrumb-current {
+  padding: 2px 4px;
+  color: var(--text-strong);
+  font-weight: 600;
+  font-size: 14px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Single-line path bar above the unified file tree. */
+.df-topbar {
+  margin: 0 20px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* Stay on a single row: the breadcrumb (min-width:0 + ellipsis) shrinks
+     and the actions hold their place on the right, instead of the actions
+     wrapping below the breadcrumb. */
+  flex-wrap: nowrap;
+}
+.df-topbar-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.df-topbar-left .df-breadcrumbs {
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+.df-topbar-right {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.df-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  /* Keep the action cluster intact on one row; the breadcrumb yields space
+     instead. Combined with the icon-only collapse below, the toolbar never
+     wraps to a second line. */
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+.df-actions button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  font-size: 14px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.df-actions button:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.df-actions button.danger { color: var(--red); }
+.df-actions button.danger:hover:not(:disabled) {
+  background: var(--red-bg);
+  color: var(--red);
+}
+/* When the list column is too narrow to fit labelled actions beside the
+   breadcrumb (~180px breadcrumb basis + ~243px of action text), drop the
+   button text to icons-only so the toolbar stays on a single row instead
+   of wrapping below the breadcrumb. The `title`/tooltip on each button is
+   kept for hover + a11y. */
+@container (max-width: 620px) {
+  .df-actions button > span { display: none; }
+  .df-actions button { padding: 6px; }
+}
+/* Upload error banner. */
+.df-upload-banner {
+  margin: 0 20px 8px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--red-border, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--red-bg);
+  color: var(--red);
+  font-size: 12px;
+}
+.df-upload-banner button {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/* Batch-selection action bar. Shown above the list when any row is selected. */
+.df-batch-bar {
+  margin: 5px;
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius-sm);
+  background: var(--accent-tint);
+  animation: df-batch-enter 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes df-batch-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.df-batch-count {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-strong);
+}
+.df-batch-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.df-batch-actions button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 5px 10px;
+  font-size: 12.5px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.df-batch-actions button:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.df-batch-actions button.danger { color: var(--red); }
+.df-batch-actions button.danger:hover:not(:disabled) {
+  background: var(--red-bg);
+  color: var(--red);
+}
+.df-batch-clear { color: var(--text-faint); }
+.df-section { display: flex; flex-direction: column; gap: 0; }
+.df-section + .df-section { margin-top: 0; }
+.df-section-label {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  font-weight: 600;
+  padding: 8px 20px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-soft);
+}
+.df-section-count {
+  margin-left: 8px;
+  color: var(--text-faint);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.df-file-row {
+  transition: background 120ms ease;
+}
+.df-file-row.active:not(.selected) { background: var(--accent-tint);color:var(--accent-strong) }
+.df-file-row.active:not(.selected):hover { background: var(--accent-tint);color:var(--accent-strong) }
+.df-file-row.active.selected { background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel)); }
+.df-file-row.active:not(.selected) .df-row-name { color: var(--text-strong); }
+.df-file-row.selected { background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel)); }
+
+.df-cell-check {
+  text-align: center;
+  vertical-align: middle;
+}
+.df-cell-icon {
+  text-align: center;
+  vertical-align: middle;
+}
+.df-cell-name {
+  padding: 10px 12px 10px 0;
+  vertical-align: middle;
+  /* Force ellipsis truncation in auto-layout tables (#3260). Without
+     `max-width: 0` and `min-width: 0`, a long `f.name` would expand
+     this td and push the kind / mtime / menu cells off-screen — even
+     though `.df-row-name` already has `text-overflow: ellipsis`. The
+     `:not(.no-preview)` overrides in `routines.css` already pin the
+     row's children to `width: 100%` when a preview pane is open; this
+     baseline rule covers the no-preview state the issue reports. */
+  max-width: 0;
+  min-width: 0;
+}
+.df-cell-openable {
+  cursor: pointer;
+}
+
+.df-row-name-btn {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.df-row-name-btn:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+}
+
+.df-row-openable { cursor: pointer; }
+
+.df-row {
+  display: grid;
+  grid-template-columns: 28px 36px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 11px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  position: relative;
+  transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.df-row-live-artifact {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+}
+.df-row-plugin-folder {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, auto);
+  cursor: default;
+}
+.df-row-folder-main {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.df-plugin-install {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+.df-plugin-install:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.df-plugin-install:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.df-plugin-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.df-inline-notice {
+  margin: 0 20px 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.df-inline-notice a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.df-row:hover { background: var(--blue-bg); }
+.df-row.active:not(.selected) { background: var(--blue-bg); color: var(--text); }
+.df-row.active:not(.selected) .df-row-name { color: var(--text-strong); }
+.df-row.selected { background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel)); }
+.df-row.selected .df-row-name { color: var(--text-strong); }
+.df-row.selected .df-row-sub,
+.df-row.selected .df-row-time { color: var(--text-muted); }
+.df-row.selected .df-row-check { color: var(--accent-strong); }
+
+.df-row-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 17px;
+  color: var(--text-muted);
+  user-select: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1), background 120ms ease, color 120ms ease;
+}
+.df-row:hover .df-row-check,
+.df-row-check:focus-visible,
+.df-row-check[aria-checked="true"],
+.df-panel.has-selection .df-row-check { opacity: 1; }
+.df-row-check:hover { background: var(--border); color: var(--text); }
+.df-row.selected .df-row-check:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent-strong); }
+.df-row-check[aria-checked="true"] { color: var(--accent-strong); }
+.df-dir-row .df-row-check { cursor: default; }
+
+.df-row-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 14px;
+  position: relative;
+}
+.df-row-icon[data-kind="folder"] { background: var(--bg-muted); color: var(--text-soft); }
+.df-row-icon[data-kind="html"] { background: var(--accent-tint); color: var(--accent-strong); }
+.df-row-icon[data-kind="image"] { background: var(--green-bg); color: var(--green); }
+.df-row-icon[data-kind="code"] { background: #fff7d8; color: #8c6700; }
+.df-row-icon[data-kind="text"] { background: var(--bg-subtle); color: var(--text-muted); }
+.df-row-icon[data-kind="sketch"] { background: var(--purple-bg); color: var(--purple); }
+.df-row-icon[data-kind="stylesheet"] { background: var(--blue-bg); color: var(--blue, var(--accent-strong)); }
+.df-row-name-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  /* Constrain the wrap to the cell's content box so the ellipsis on
+     `.df-row-name` engages even in the auto-layout table state
+     (#3260). */
+  max-width: 100%;
+}
+.df-row-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* `max-width: 100%` on a flex child pairs with the wrap's
+     `min-width: 0` so the long filename collapses to the cell width
+     instead of pushing the kind / mtime / menu columns off-screen
+     (#3260). */
+  max-width: 100%;
+  min-width: 0;
+}
+.df-rename-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+  padding: 3px 6px;
+}
+.df-row-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  line-height: 1.35;
+}
+.df-row-sub > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.df-row-sub-kind,
+.df-row-sub-time {
+  display: none;
+}
+.df-row-time {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.df-row-menu {
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  color: var(--text-muted);
+  font-size: 16px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.df-row:hover .df-row-menu { opacity: 1; }
+.df-row-menu:focus { opacity: 1; }
+.df-row-menu:hover { background: var(--border); color: var(--text); }
+.df-row-menu:disabled {
+  cursor: progress;
+  opacity: 0.45;
+}
+.df-row-menu-placeholder {
+  pointer-events: none;
+  visibility: hidden;
+}
+.df-dir-row {
+  transition:
+    background 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.df-dir-row.is-drop-target {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.df-dir-row.is-busy {
+  opacity: 0.68;
+  cursor: progress;
+}
+.df-folder-create-row {
+  cursor: default;
+  background: var(--bg-panel);
+}
+.df-folder-create-row:hover {
+  background: var(--bg-panel);
+}
+.df-folder-create-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.df-folder-create-actions button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.df-folder-create-actions button:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  color: var(--text);
+}
+.df-folder-create-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.df-section-more {
+  margin: 6px 20px 10px;
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+.df-section-more:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--text);
+}
+.df-row-collapse {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 0;
+  width: 18px;
+  text-align: center;
+  font-size: 12px;
+  cursor: pointer;
+}
+.df-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+  min-height: 320px;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(to right, var(--border-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-soft) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: -1px -1px;
+}
+.df-empty-pill {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow:
+    0 1px 0 rgba(15, 15, 15, 0.02),
+    0 8px 24px -12px rgba(15, 15, 15, 0.08);
+  max-width: min(420px, 92%);
+  text-align: center;
+}
+.df-empty-title {
+  font-size: 16px;
+  color: var(--text-strong);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.3;
+}
+.df-empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.df-empty-cta:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+}
+.df-empty-cta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.df-browser {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, var(--df-tree-pane-width, 280px)) 1px minmax(0, 1fr);
+  border-top: 0;
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--bg-panel) 92%, var(--border));
+}
+.df-browser--tree-collapsed {
+  --df-tree-pane-width: 68px;
+}
+.df-browser--tree-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.df-tree-pane {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--bg-subtle) 78%, var(--bg-panel));
+  border-right: 0;
+  overflow: hidden;
+  transition:
+    width 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.df-tree-resize-handle {
+  grid-column: 2;
+  grid-row: 1;
+  position: relative;
+  width: 1px;
+  min-width: 1px;
+  cursor: col-resize;
+  touch-action: none;
+  background: none;
+  z-index: 2;
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.df-tree-resize-handle::before {
+  content: "";
+  position: absolute;
+  inset: 0 -7px;
+  cursor: col-resize;
+}
+.df-tree-resize-handle:hover,
+.df-tree-resize-handle.is-resizing {
+  background: color-mix(in srgb, var(--accent) 70%, var(--border));
+}
+
+.df-tree-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 10px 0 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  background: color-mix(in srgb, var(--bg-subtle) 78%, var(--bg-panel));
+}
+
+.df-tree-head-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.df-sidebar-chrome {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.df-sidebar-chrome-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.df-sidebar-chrome-btn:hover,
+.df-sidebar-chrome-btn[aria-pressed='true'] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.df-tree-head-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.df-tree-toolbar {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 4px 8px 5px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+  background: color-mix(in srgb, var(--bg-subtle) 70%, var(--bg-panel));
+}
+
+.df-tree-toolbar-path {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.df-tree-toolbar-path:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+
+.df-tree-toolbar-path span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.df-tree-create-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.df-browser--tree-collapsed .df-tree-head {
+  justify-content: center;
+  padding-inline: 0;
+}
+.df-browser--tree-collapsed .df-tree-head-main {
+  gap: 0;
+}
+.df-browser--tree-collapsed .df-sidebar-chrome {
+  flex-direction: row;
+  gap: 4px;
+}
+.df-browser--tree-collapsed .df-sidebar-back {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.df-browser--tree-collapsed .df-tree-pane {
+  position: relative;
+  z-index: 24;
+  width: var(--df-tree-pane-width, 68px);
+}
+.df-browser--tree-collapsed .df-tree-toolbar,
+.df-browser--tree-collapsed .df-tree-scroll {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px);
+  transition:
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.df-browser--tree-collapsed .df-tree-pane:hover,
+.df-browser--tree-collapsed .df-tree-pane:focus-within {
+  width: min(var(--df-tree-overlay-width, 280px), calc(100vw - 24px));
+  box-shadow: 16px 0 34px color-mix(in srgb, var(--shadow-color, #000) 14%, transparent);
+}
+.df-browser--tree-collapsed .df-tree-pane:hover .df-sidebar-back,
+.df-browser--tree-collapsed .df-tree-pane:focus-within .df-sidebar-back {
+  width: 28px;
+  opacity: 1;
+  pointer-events: auto;
+}
+.df-browser--tree-collapsed .df-tree-pane:hover .df-tree-toolbar,
+.df-browser--tree-collapsed .df-tree-pane:focus-within .df-tree-toolbar,
+.df-browser--tree-collapsed .df-tree-pane:hover .df-tree-scroll,
+.df-browser--tree-collapsed .df-tree-pane:focus-within .df-tree-scroll {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+.df-tree-batch-toggle {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.df-tree-batch-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.df-tree-batch-toggle.is-active {
+  background: var(--accent-tint);
+  border-color: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.df-tree-add {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.df-create-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 20;
+  width: 176px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-md);
+}
+
+.df-create-menu button {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.df-create-menu button:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+
+
+
+.df-create-menu button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.df-tree-add:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+/* Expand / collapse tree toggle. Shares the same 26×26 chip base as the
+   batch-toggle and add buttons. A single button (folder icon) that flips
+   between expand-all and collapse-all depending on whether every folder is
+   already open; `.is-active` marks the "fully expanded" state. */
+.df-tree-action {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.df-tree-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.df-tree-action:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.df-tree-action.is-active {
+  background: var(--accent-tint);
+  border-color: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* ------------------------------------------------------------------------
+   Dark tooltip for the file-tree action chips (expand / collapse toggle /
+   batch-select / create). Style parity with `[data-tooltip]::after` in
+   entry-layout.css: black background, white text, CSS-only (no JS layer).
+   Reuse this `.df-tree-action[data-tooltip]` / `.df-tree-batch-toggle…`
+   pattern for future chips that need the same dark tooltip — keep it as the
+   canonical "dark tooltip on a small icon button" recipe in this panel.
+   ------------------------------------------------------------------------ */
+.df-tree-action[data-tooltip],
+.df-tree-batch-toggle[data-tooltip],
+.df-tree-add[data-tooltip] {
+  position: relative;
+}
+.df-tree-action[data-tooltip]::after,
+.df-tree-batch-toggle[data-tooltip]::after,
+.df-tree-add[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  /* Default placement is "bottom" (bubble below the trigger) so the tree-head
+     chips — which sit at the very top of the panel under the app nav — never
+     get clipped by the top navigation bar. */
+  top: calc(100% + 7px);
+  transform: translateX(-50%) translateY(-4px);
+  padding: 5px 9px;
+  font-size: 12px;
+  height: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--bg-panel, #fff);
+  background: var(--text-strong, #111);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.12));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  z-index: 60;
+}
+.df-tree-action[data-tooltip]:hover::after,
+.df-tree-action[data-tooltip]:focus-visible::after,
+.df-tree-batch-toggle[data-tooltip]:hover::after,
+.df-tree-batch-toggle[data-tooltip]:focus-visible::after,
+.df-tree-add[data-tooltip]:hover::after,
+.df-tree-add[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+/* placement="top" flips the bubble above the trigger. */
+.df-tree-action[data-tooltip-placement='top']::after,
+.df-tree-batch-toggle[data-tooltip-placement='top']::after,
+.df-tree-add[data-tooltip-placement='top']::after {
+  top: auto;
+  bottom: calc(100% + 7px);
+  transform: translateX(-50%) translateY(4px);
+}
+.df-tree-action[data-tooltip-placement='top']:hover::after,
+.df-tree-action[data-tooltip-placement='top']:focus-visible::after,
+.df-tree-batch-toggle[data-tooltip-placement='top']:hover::after,
+.df-tree-batch-toggle[data-tooltip-placement='top']:focus-visible::after,
+.df-tree-add[data-tooltip-placement='top']:hover::after,
+.df-tree-add[data-tooltip-placement='top']:focus-visible::after {
+  transform: translateX(-50%) translateY(0);
+}
+/* placement="right" flips the bubble to the right of the trigger (used by the
+   create button so it clears the panel edge). */
+.df-tree-action[data-tooltip-placement='right']::after,
+.df-tree-batch-toggle[data-tooltip-placement='right']::after,
+.df-tree-add[data-tooltip-placement='right']::after {
+  left: calc(100% + 7px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+}
+.df-tree-action[data-tooltip-placement='right']:hover::after,
+.df-tree-action[data-tooltip-placement='right']:focus-visible::after,
+.df-tree-batch-toggle[data-tooltip-placement='right']:hover::after,
+.df-tree-batch-toggle[data-tooltip-placement='right']:focus-visible::after,
+.df-tree-add[data-tooltip-placement='right']:hover::after,
+.df-tree-add[data-tooltip-placement='right']:focus-visible::after {
+  transform: translateY(-50%) translateX(0);
+}
+
+.df-tree-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 7px 12px;
+}
+
+.df-tree-footer {
+  flex: 0 0 auto;
+  padding: 10px 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+  background: color-mix(in srgb, var(--bg-subtle) 78%, var(--bg-panel));
+}
+.df-tree-footer .entry-settings-menu {
+  display: flex;
+  width: 100%;
+}
+.df-tree-footer .settings-icon-btn {
+  width: 100%;
+  height: 36px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  border-color: transparent;
+  background: transparent;
+}
+.app .df-tree-footer .settings-icon-btn {
+  width: 100%;
+  height: 36px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border-color: transparent;
+  background: transparent;
+}
+.df-tree-footer .settings-icon-btn:hover:not(:disabled),
+.app .df-tree-footer .settings-icon-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-color: transparent;
+}
+.df-tree-footer .settings-icon-btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.df-tree-footer .entry-settings-menu__popover {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: auto;
+}
+.df-browser--tree-collapsed .df-tree-footer {
+  padding-inline: 8px;
+}
+.df-browser--tree-collapsed .df-tree-footer .settings-icon-btn {
+  justify-content: center;
+  padding: 0;
+}
+.df-browser--tree-collapsed .df-tree-footer .settings-icon-btn-label {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition:
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    width 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.df-browser--tree-collapsed .df-tree-pane:hover .df-tree-footer .settings-icon-btn,
+.df-browser--tree-collapsed .df-tree-pane:focus-within .df-tree-footer .settings-icon-btn {
+  justify-content: flex-start;
+  padding: 0 10px;
+}
+.df-browser--tree-collapsed .df-tree-pane:hover .df-tree-footer .settings-icon-btn-label,
+.df-browser--tree-collapsed .df-tree-pane:focus-within .df-tree-footer .settings-icon-btn-label {
+  width: auto;
+  opacity: 1;
+}
+
+.df-tree-node,
+.df-tree-children {
+  min-width: 0;
+}
+
+.df-tree-row {
+  display: grid;
+  grid-template-columns: calc(var(--df-tree-depth, 0) * 16px) 18px 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: auto;
+  position: relative;
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1), color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.df-tree-file-row {
+  /* Indent = folder toggle (18) + one gap (2) = 20px, so the file icon sits
+     under the folder icon and the file name aligns with the folder name. */
+  grid-template-columns:
+    calc(var(--df-tree-depth, 0) * 16px + 20px)
+    22px
+    minmax(0, 1fr)
+    26px;
+}
+.df-tree-file-row .df-row-check {
+  display: none;
+}
+.df-panel--batch .df-tree-file-row {
+  /* Batch check (18) fills the toggle slot, so no indent offset is needed:
+     check + icon mirror the folder row's toggle + icon. */
+  grid-template-columns:
+    calc(var(--df-tree-depth, 0) * 16px)
+    18px
+    22px
+    minmax(0, 1fr)
+    26px;
+}
+.df-panel--batch .df-tree-file-row .df-row-check {
+  display: inline-flex;
+  opacity: 1;
+}
+
+.df-tree-live-row {
+  width: 100%;
+  grid-template-columns:
+    calc(var(--df-tree-depth, 0) * 16px)
+    18px
+    22px
+    minmax(0, 1fr);
+  border: 0;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.df-tree-live-label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.df-tree-file-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--text-muted) 82%, transparent);
+  cursor: pointer;
+}
+
+.df-tree-file-icon[data-ext="html"],
+.df-tree-file-icon[data-ext="htm"] { color: color-mix(in srgb, var(--accent) 82%, var(--text-muted)); }
+.df-tree-file-icon[data-ext="css"],
+.df-tree-file-icon[data-ext="scss"],
+.df-tree-file-icon[data-ext="sass"],
+.df-tree-file-icon[data-ext="less"] { color: color-mix(in srgb, var(--blue) 58%, var(--text-muted)); }
+.df-tree-file-icon[data-ext="js"],
+.df-tree-file-icon[data-ext="mjs"],
+.df-tree-file-icon[data-ext="cjs"],
+.df-tree-file-icon[data-ext="jsx"] { color: color-mix(in srgb, var(--amber) 62%, var(--text-muted)); }
+.df-tree-file-icon[data-ext="ts"],
+.df-tree-file-icon[data-ext="tsx"] { color: color-mix(in srgb, var(--accent) 72%, var(--text-muted)); }
+.df-tree-file-icon[data-ext="json"] { color: color-mix(in srgb, var(--purple) 58%, var(--text-muted)); }
+.df-tree-file-icon[data-ext="py"] { color: color-mix(in srgb, var(--green) 62%, var(--text-muted)); }
+.df-tree-file-icon[data-ext="svg"],
+.df-tree-file-icon[data-ext="png"],
+.df-tree-file-icon[data-ext="jpg"],
+.df-tree-file-icon[data-ext="jpeg"],
+.df-tree-file-icon[data-ext="gif"],
+.df-tree-file-icon[data-ext="webp"],
+.df-tree-file-icon[data-ext="ico"],
+.df-tree-file-icon[data-ext="bmp"] { color: var(--green); }
+.df-tree-file-icon[data-ext="mp4"],
+.df-tree-file-icon[data-ext="webm"],
+.df-tree-file-icon[data-ext="mov"],
+.df-tree-file-icon[data-ext="avi"],
+.df-tree-file-icon[data-ext="mkv"] { color: var(--purple); }
+.df-tree-file-icon[data-ext="mp3"],
+.df-tree-file-icon[data-ext="wav"],
+.df-tree-file-icon[data-ext="ogg"],
+.df-tree-file-icon[data-ext="flac"],
+.df-tree-file-icon[data-ext="m4a"] { color: var(--red); }
+.df-tree-file-icon[data-ext="pdf"] { color: var(--red); }
+.df-tree-file-icon[data-ext="md"],
+.df-tree-file-icon[data-ext="markdown"] { color: var(--text-muted); }
+.df-tree-file-icon[data-kind="live-artifact"] { color: color-mix(in srgb, var(--green) 68%, var(--text-muted)); }
+
+.df-tree-file-row .df-row-check {
+  width: 18px;
+  height: 18px;
+}
+
+.df-tree-file-row .df-row-menu {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+}
+
+.df-tree-file-row:hover .df-row-menu,
+.df-tree-file-row.active .df-row-menu,
+.df-tree-file-row .df-row-menu:focus-visible {
+  opacity: 1;
+}
+
+.df-tree-file-row .df-row-menu:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+.df-tree-file-row.selected {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-panel));
+  color: var(--text);
+}
+
+.df-tree-file-row.selected:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+}
+
+.df-tree-file-row.selected .df-row-check,
+.df-tree-file-row.selected .df-row-check:hover {
+  color: var(--accent-strong);
+}
+
+/* .df-tree-row[draggable="true"] {
+  cursor: grab;
+}
+
+.df-tree-row[draggable="true"]:active {
+  cursor: grabbing;
+} */
+
+.df-tree-root {
+  --df-tree-depth: 0;
+}
+
+.df-tree-row:hover,
+.df-tree-row.active {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+
+.df-tree-file-row.active:not(.selected) {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+  color: var(--text);
+}
+
+.df-tree-file-row.active:not(.selected) .df-tree-name {
+  color: var(--text-strong);
+  font-weight: 620;
+}
+
+.df-tree-row.is-drop-target {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
+.df-tree-row.is-folder-drop-inside {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 72%, transparent);
+  color: var(--text);
+}
+
+.df-tree-row.is-folder-drop-before::before,
+.df-tree-row.is-folder-drop-after::after {
+  content: '';
+  position: absolute;
+  left: calc(8px + (var(--df-tree-depth, 0) * 16px));
+  right: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.df-tree-row.is-folder-drop-before::before {
+  top: -1px;
+}
+
+.df-tree-row.is-folder-drop-after::after {
+  bottom: -1px;
+}
+
+.df-tree-row.is-folder-dragging {
+  opacity: 0.48;
+}
+
+.df-tree-row.is-busy {
+  cursor: progress;
+  opacity: 0.68;
+}
+
+.df-folder-drag-image {
+  position: fixed;
+  top: -1000px;
+  left: -1000px;
+  z-index: 9999;
+  display: inline-flex;
+  align-items: center;
+  min-width: 180px;
+  max-width: 320px;
+  height: 36px;
+  padding: 0 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 72%, #fff);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 92%, #fff);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--text) 24%, transparent);
+  pointer-events: none;
+}
+
+.df-folder-drag-image::before {
+  content: '';
+  width: 20px;
+  height: 14px;
+  margin-right: 10px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+  box-shadow: 0 -5px 0 -2px currentColor;
+  opacity: 0.95;
+}
+
+.df-tree-toggle,
+.df-tree-toggle-spacer {
+  width: 18px;
+  height: 24px;
+}
+
+.df-tree-toggle {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.df-tree-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+.df-tree-toggle:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.df-tree-folder-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--text-muted) 82%, transparent);
+}
+
+.df-tree-row.active .df-tree-folder-icon {
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-muted));
+}
+
+.df-tree-row .df-row-name-btn {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.df-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  width: fit-content;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 520;
+}
+
+.df-tree-create {
+  margin: 6px 0 8px;
+  padding: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-panel) 72%, var(--bg-subtle));
+}
+
+.df-tree-create-path {
+  display: block;
+  margin: 0 4px 5px;
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.df-tree-create .df-folder-create-row {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+}
+
+.df-tree-create .df-row-check,
+.df-tree-create .df-row-time {
+  display: none;
+}
+
+.df-tree-create .df-row-icon {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+}
+
+.df-content-pane {
+  grid-column: 3;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-top-left-radius: 14px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: -1px 0 0 color-mix(in srgb, var(--bg-panel) 82%, transparent);
+  overflow: hidden;
+}
+
+.df-content-pane.dragging {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
+}
+
+.df-inline-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.df-inline-preview > .viewer {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+
+
+.df-file-table-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.df-file-table-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.df-file-table-title > span:first-child {
+  min-width: 0;
+  max-width: min(52vw, 720px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.df-file-table-title > span:last-child {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.df-file-table {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 10px;
+}
+
+.df-file-table-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 132px 96px 132px 32px;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  padding: 0 10px 0 74px;
+  border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--bg-panel) 96%, var(--bg-subtle));
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.df-file-table .df-row {
+  grid-template-columns: 24px 38px minmax(220px, 1fr) 132px 96px 132px 32px;
+  gap: 12px;
+  min-height: 56px;
+  margin: 6px 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+}
+
+.df-file-table .df-row:nth-child(odd) {
+  background: color-mix(in srgb, var(--text) 2.6%, transparent);
+}
+
+.df-file-table .df-row:hover,
+.df-file-table .df-row.active:not(.selected) {
+  background: color-mix(in srgb, var(--text) 6.5%, transparent);
+}
+
+.df-file-table .df-row.selected {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-panel));
+}
+
+/* Hovering an already-selected row lightens slightly instead of dropping
+   back to the muted gray hover used for unselected rows. Higher specificity
+   than `.df-file-table .df-row:hover` so it wins on the selected+hover state. */
+.df-file-table .df-row.selected:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+}
+
+.df-file-table .df-row-icon {
+  width: 34px;
+  height: 34px;
+}
+
+.df-row-kind,
+.df-row-size {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.df-row-size,
+.df-row-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.df-table-empty {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.df-live-strip,
+.df-plugin-strip {
+  flex: 0 0 auto;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.df-content-pane > .df-empty {
+  min-height: 0;
+}
+
+.df-content-pane .df-row-plugin-folder {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@container (max-width: 620px) {
+  .df-browser {
+    grid-template-columns: minmax(0, var(--df-tree-pane-width, 280px)) 1px minmax(0, 1fr);
+  }
+
+  .df-empty {
+    padding: 24px 10px;
+  }
+
+  .df-empty-pill {
+    width: calc(100% - 12px);
+    padding: 20px 12px;
+  }
+
+  .df-empty-title {
+    font-size: 13.5px;
+  }
+}
+
+/* Row context menu */
+.df-row-popover {
+  position: fixed;
+  z-index: 200;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+}
+.df-row-popover button {
+  background: transparent;
+  border: none;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  text-align: left;
+  border-radius: 4px;
+  color: var(--text);
+}
+.df-row-popover button:hover { background: var(--bg-subtle); }
+.df-row-popover button.danger { color: var(--red); }
+.df-row-popover button.danger:hover { background: var(--red-bg); }
+
+/* Inline rename input rendered in place of a tree folder's name button. */
+.df-tree-rename-input {
+  width: 100%;
+  min-width: 4em;
+}
+
+/* "Add to folder" move dialog — modal overlay with folder tree. */
+.df-move-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.df-move-dialog {
+  width: min(380px, 90vw);
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+.df-move-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.df-move-dialog-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.df-move-dialog-close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.df-move-dialog-close:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+.df-move-dialog-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.df-move-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.df-move-tree-row:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.df-move-tree-row.selected {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+}
+
+.df-move-tree-node-btn {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.df-move-tree-node-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+.df-move-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.df-move-dialog-btn-cancel,
+.df-move-dialog-btn-confirm {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 16px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.df-move-dialog-btn-cancel {
+  background: var(--bg-panel);
+  color: var(--text-muted);
+}
+
+.df-move-dialog-btn-cancel:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+.df-move-dialog-btn-confirm {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.df-move-dialog-btn-confirm:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.df-move-dialog-btn-confirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

@@ -1,0 +1,68 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 9:41
+      - generic [ref=e6]:
+        - img [ref=e7]
+        - img [ref=e9]
+    - generic [ref=e13]:
+      - button [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+      - heading "直播场次" [level=1] [ref=e17]
+      - img [ref=e19]
+    - navigation [ref=e26]:
+      - generic [ref=e27]: 全部场次
+      - generic [ref=e28]: 直播中
+      - generic [ref=e29]: 回放
+  - generic [ref=e30]:
+    - img "封面" [ref=e31]
+    - generic [ref=e32]:
+      - generic [ref=e33]: 2026 舍弗勒风电技术峰会
+      - generic [ref=e34]: 公开 · 7月10日 · 共 3 场
+    - generic [ref=e35]: 选择多场可合并报名
+  - main [ref=e36]:
+    - article [ref=e37]:
+      - generic [ref=e38]:
+        - img "封面" [ref=e39]
+        - generic [ref=e40]: 直播中
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: 07-10 09:00 — 11:30
+          - generic [ref=e44]: 已报名
+        - heading "主论坛：风电传动技术展望" [level=2] [ref=e45]
+        - generic [ref=e46]: 张伟 · 主轴轴承选型
+        - generic [ref=e47]:
+          - button "进入直播间" [ref=e48] [cursor=pointer]
+          - button "分享" [ref=e49] [cursor=pointer]:
+            - img [ref=e50]
+            - text: 分享
+    - article [ref=e52]:
+      - generic [ref=e53]:
+        - img "封面" [ref=e54]
+        - generic [ref=e55]: 预告
+        - img [ref=e57]
+      - generic [ref=e59]:
+        - generic [ref=e60]:
+          - generic [ref=e61]: 07-10 13:30 — 15:00
+          - generic [ref=e62]: 已选 · 待报名
+        - heading "分会场 A：齿轮箱轴承应用" [level=2] [ref=e63]
+        - generic [ref=e64]: 李娜 · 齿轮箱润滑与密封
+        - button "开播前可进入" [ref=e65] [cursor=pointer]
+    - article [ref=e66]:
+      - generic [ref=e67]:
+        - img "封面" [ref=e68]
+        - generic [ref=e69]: 回放
+      - generic [ref=e70]:
+        - generic [ref=e71]:
+          - generic [ref=e72]: 07-10 15:30 — 17:00
+          - generic [ref=e73]: 已报名
+        - heading "分会场 B：变桨与偏航轴承" [level=2] [ref=e74]
+        - generic [ref=e75]: 王强 · 变桨轴承维护
+        - generic [ref=e76]:
+          - button "观看回放" [ref=e77] [cursor=pointer]
+          - button "分享" [ref=e78] [cursor=pointer]:
+            - img [ref=e79]
+            - text: 分享
+  - contentinfo [ref=e81]:
+    - generic [ref=e84]: 已选 1 场
+    - button "合并报名（1 场）" [ref=e85] [cursor=pointer]

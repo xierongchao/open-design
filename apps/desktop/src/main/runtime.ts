@@ -676,6 +676,16 @@ const MAC_WINDOW_CHROME =
     : {};
 
 const MAC_WINDOW_CHROME_CSS = `
+  /* Reserve 36px at the top for the macOS traffic-light zone. On Windows the
+   * native title bar already provides this space, so the rule only lives in
+   * this macOS-only injected stylesheet. */
+  .workspace-shell[data-client-type="desktop"] .workspace-shell__body {
+    padding-top: 36px !important;
+    position: relative !important;
+  }
+  .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .workspace-shell__body {
+    padding-top: 0 !important;
+  }
   .app-chrome-header {
     --app-chrome-traffic-space: 96px !important;
     --app-chrome-traffic-margin: 12px !important;
@@ -788,6 +798,13 @@ const MAC_WINDOW_CHROME_CSS = `
   .workspace-tabs-popover,
   .workspace-tabs-popover * {
     -webkit-app-region: no-drag;
+  }
+  /* Dedicated drag bar for macOS: covers the 36px traffic-light zone so the
+   * empty area to the right of the red/yellow/green buttons is draggable.
+   * Implemented as a real DOM element because -webkit-app-region: drag does
+   * not work reliably on pseudo-elements. Hidden in fullscreen. */
+  .macos-drag-bar {
+    -webkit-app-region: drag;
   }
 `;
 
