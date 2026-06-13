@@ -3,6 +3,7 @@ import { useAnalytics } from '../analytics/provider';
 import { trackFileManagerClick } from '../analytics/events';
 import { useT } from '../i18n';
 import { projectFileUrl } from '../providers/registry';
+import { displayNameForPath, type FileAliasMap } from '../runtime/file-aliases';
 import type { LiveArtifactWorkspaceEntry, ProjectFile, ProjectFileKind, ProjectFolder } from '../types';
 import {
   createFileSystemReadError,
@@ -43,7 +44,17 @@ interface Props {
   activeFileName?: string | null;
   previewContent?: ReactNode;
   onCopyFile?: (name: string) => Promise<ProjectFile | null> | ProjectFile | null;
-  onRenameFile: (from: string, to: string) => Promise<ProjectFile | null> | ProjectFile | null;
+  // Display alias map (file path -> alias) the tree renders in place of the
+  // real base name. Optional so a panel mounted without alias support keeps
+  // working.
+  fileAliases?: FileAliasMap;
+  // Sets a display alias for a file. The real on-disk path never changes, so
+  // HTML/asset references inside the file keep resolving. Returning the
+  // (unchanged) file lets the inline rename editor resolve cleanly.
+  onSetFileAlias?: (
+    name: string,
+    alias: string,
+  ) => Promise<ProjectFile | null> | ProjectFile | null;
   onDeleteFile: (name: string) => void;
   onDeleteFiles: (names: string[]) => Promise<void> | void;
   onCreateFolder?: (path: string) => Promise<ProjectFolder | null> | ProjectFolder | null;
@@ -165,7 +176,8 @@ export function DesignFilesPanel({
   activeFileName,
   previewContent,
   onCopyFile,
-  onRenameFile,
+  fileAliases,
+  onSetFileAlias,
   onDeleteFile,
   onDeleteFiles,
   onCreateFolder,
@@ -430,8 +442,10 @@ export function DesignFilesPanel({
   function startRename(name: string) {
     setMenuPos(null);
     setActiveFile(name);
-    const draft = currentDir === '' ? name : name.slice(currentDir.length + 1);
-    setRenaming({ name, draft, saving: false });
+    // Seed the editor with the label the row is actually showing (alias if
+    // set, otherwise the base name) so renaming an aliased file doesn't
+    // discard the alias and flash the real name.
+    setRenaming({ name, draft: displayNameForPath(name, fileAliases), saving: false });
   }
 
   function startRenameFolder(path: string) {
@@ -523,28 +537,27 @@ export function DesignFilesPanel({
   }
 
   async function commitRename(name: string, draft: string) {
-    const nextBasename = draft.trim();
-    if (!nextBasename) {
+    if (!onSetFileAlias) {
       setRenaming(null);
       return;
     }
-    const nextName = currentDir === '' ? nextBasename : `${currentDir}/${nextBasename}`;
-    if (nextName === name) {
+    const nextAlias = draft.trim();
+    if (!nextAlias) {
+      setRenaming(null);
+      return;
+    }
+    // No-op when the typed value matches the label already shown — rename is
+    // a display-only alias, so nothing on disk changes either way.
+    if (nextAlias === displayNameForPath(name, fileAliases)) {
       setRenaming(null);
       return;
     }
     setRenaming({ name, draft, saving: true });
     try {
-      const renamed = await onRenameFile(name, nextName);
-      if (!renamed) throw new Error('Rename failed');
-      setActiveFile((curr) => (curr === name ? renamed.name : curr));
-      setSelected((prev) => {
-        if (!prev.has(name)) return prev;
-        const next = new Set(prev);
-        next.delete(name);
-        next.add(renamed.name);
-        return next;
-      });
+      const updated = await onSetFileAlias(name, nextAlias);
+      if (!updated) throw new Error('Rename failed');
+      // The real path is unchanged (rename only updates the display alias),
+      // so active-file / selection keys stay valid — no re-keying needed.
       setRenaming(null);
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -974,7 +987,7 @@ export function DesignFilesPanel({
     const active = resolvedActiveFile === file.name;
     const isSelected = selected.has(file.name);
     const renameState = renaming?.name === file.name ? renaming : null;
-    const label = basenameForPath(file.name);
+    const label = displayNameForPath(file.name, fileAliases);
     return (
       <div
         key={`file:${file.name}`}
@@ -1772,15 +1785,17 @@ export function DesignFilesPanel({
               {t('fileViewer.copy')}
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              startRename(menuPos.name);
-            }}
-          >
-            {t('common.rename')}
-          </button>
+          {onSetFileAlias ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                startRename(menuPos.name);
+              }}
+            >
+              {t('common.rename')}
+            </button>
+          ) : null}
           <a
             href={projectFileUrl(projectId, menuPos.name)}
             download={menuPos.name}

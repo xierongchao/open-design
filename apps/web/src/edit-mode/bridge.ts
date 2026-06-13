@@ -821,6 +821,15 @@ export function buildManualEditBridge(enabled: boolean): string {
         window.parent.postMessage({ type: 'od-edit-deselect' }, '*');
       }
     }
+    if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      var tag = ev.target && ev.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (ev.target && ev.target.isContentEditable)) return;
+      var selEl = document.querySelector('[data-od-edit-selected]');
+      if (selEl) {
+        ev.preventDefault();
+        window.parent.postMessage({ type: 'od-edit-delete', id: stableId(selEl) }, '*');
+      }
+    }
     // Arrow keys: swap position with siblings in flex containers
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp' || ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
       var selEl = document.querySelector('[data-od-edit-selected]');

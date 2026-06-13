@@ -177,12 +177,17 @@ export function PreviewDrawOverlay({
     const cvs = canvasRef.current;
     if (!wrap || !cvs) return;
     const resize = () => {
-      const rect = wrap.getBoundingClientRect();
+      // offsetWidth/offsetHeight returns the pre-transform layout dimensions,
+      // whereas getBoundingClientRect() returns the post-transform visual size.
+      // The canvas CSS size must match the layout dimensions so it fully covers
+      // the iframe when the parent shell applies `transform: scale(...)`.
+      const w = wrap.offsetWidth;
+      const h = wrap.offsetHeight;
       const dpr = window.devicePixelRatio || 1;
-      cvs.width = Math.max(1, Math.floor(rect.width * dpr));
-      cvs.height = Math.max(1, Math.floor(rect.height * dpr));
-      cvs.style.width = `${rect.width}px`;
-      cvs.style.height = `${rect.height}px`;
+      cvs.width = Math.max(1, Math.floor(w * dpr));
+      cvs.height = Math.max(1, Math.floor(h * dpr));
+      cvs.style.width = `${w}px`;
+      cvs.style.height = `${h}px`;
       redraw();
     };
     resize();
@@ -759,6 +764,11 @@ export function PreviewDrawOverlay({
           style={{
             position: 'absolute',
             inset: 0,
+            // Canvas is a replaced element: `inset: 0` alone does not stretch it
+            // like a non-replaced element. Explicit width/height ensures the canvas
+            // fills its container even before the resize callback sets pixel values.
+            width: '100%',
+            height: '100%',
             pointerEvents: overlayPointer,
             cursor: active ? 'crosshair' : 'default',
             visibility: chromeHidden ? 'hidden' : 'visible',

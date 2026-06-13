@@ -525,10 +525,31 @@ export function desktopEditAutoFitTransform(
   userScale: number,
   panOffset: ManualEditViewportTransform,
 ): { zoom: number; translateX: number; translateY: number } {
+  return manualEditAutoFitTransform(
+    containerWidth,
+    containerHeight,
+    contentWidth,
+    contentHeight,
+    userScale,
+    panOffset,
+  );
+}
+
+export function manualEditAutoFitTransform(
+  containerWidth: number,
+  containerHeight: number,
+  contentWidth: number,
+  contentHeight: number,
+  userScale: number,
+  panOffset: ManualEditViewportTransform,
+  canvasPadding = 0,
+): { zoom: number; translateX: number; translateY: number } {
   if (containerWidth <= 0 || containerHeight <= 0 || contentWidth <= 0 || contentHeight <= 0) {
     return { zoom: 1, translateX: 0, translateY: 0 };
   }
-  const fitScale = Math.min(1, containerWidth / contentWidth, containerHeight / contentHeight);
+  const availableWidth = Math.max(1, containerWidth - canvasPadding);
+  const availableHeight = Math.max(1, containerHeight - canvasPadding);
+  const fitScale = Math.min(1, availableWidth / contentWidth, availableHeight / contentHeight);
   const effectiveZoom = fitScale * userScale;
   const scaledWidth = contentWidth * effectiveZoom;
   const scaledHeight = contentHeight * effectiveZoom;
@@ -548,6 +569,7 @@ export function manualEditZoomPanAtPoint({
   nextUserScale,
   container,
   content,
+  canvasPadding = 0,
 }: {
   anchor: ManualEditViewportTransform;
   currentPan: ManualEditViewportTransform;
@@ -555,22 +577,25 @@ export function manualEditZoomPanAtPoint({
   nextUserScale: number;
   container: { width: number; height: number };
   content: { width: number; height: number };
+  canvasPadding?: number;
 }): ManualEditViewportTransform {
-  const current = desktopEditAutoFitTransform(
+  const current = manualEditAutoFitTransform(
     container.width,
     container.height,
     content.width,
     content.height,
     currentUserScale,
     currentPan,
+    canvasPadding,
   );
-  const nextBase = desktopEditAutoFitTransform(
+  const nextBase = manualEditAutoFitTransform(
     container.width,
     container.height,
     content.width,
     content.height,
     nextUserScale,
     { x: 0, y: 0 },
+    canvasPadding,
   );
   if (current.zoom <= 0 || nextBase.zoom <= 0) return currentPan;
   const contentX = (anchor.x - current.translateX) / current.zoom;
@@ -600,60 +625,57 @@ export function manualEditPreviewShellStyle(
   overrideSize?: { width: number; height: number },
   rasterScale = previewScale,
 ): CSSProperties & Record<string, string | number> {
-  if (viewport === 'desktop') {
-    const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
-    const contentWidth = overrideSize?.width ?? preset?.width ?? 1920;
-    const contentHeight = overrideSize?.height ?? preset?.height ?? 1080;
-    const safeRasterScale =
-      Number.isFinite(rasterScale) && rasterScale > 0
-        ? rasterScale
-        : previewScale;
-    const liveLayout = canvasSize?.width && canvasSize.height
-      ? desktopEditAutoFitTransform(
-          canvasSize.width,
-          canvasSize.height,
-          contentWidth,
-          contentHeight,
-          previewScale,
-          viewportTransform,
-        )
-      : null;
-    const rasterLayout = canvasSize?.width && canvasSize.height
-      ? desktopEditAutoFitTransform(
-          canvasSize.width,
-          canvasSize.height,
-          contentWidth,
-          contentHeight,
-          safeRasterScale,
-          { x: 0, y: 0 },
-        )
-      : null;
-    if (liveLayout && rasterLayout) {
-      const rasterZoom = rasterLayout.zoom > 0 ? rasterLayout.zoom : liveLayout.zoom;
-      return {
-        width: 'var(--preview-viewport-width)',
-        height: 'var(--preview-viewport-height)',
-        zoom: rasterZoom,
-        transform: `translate(${liveLayout.translateX / rasterZoom}px, ${liveLayout.translateY / rasterZoom}px) scale(${liveLayout.zoom / rasterZoom})`,
-        transformOrigin: '0 0',
-        willChange: 'transform',
-      };
-    }
-    const rasterZoom = safeRasterScale > 0 ? safeRasterScale : 1;
+  const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
+  const contentWidth = viewport === 'desktop'
+    ? overrideSize?.width ?? preset?.width ?? 1920
+    : preset?.width ?? 390;
+  const contentHeight = viewport === 'desktop'
+    ? overrideSize?.height ?? preset?.height ?? 1080
+    : preset?.height ?? 844;
+  const canvasPadding = viewport === 'desktop' ? 0 : 48;
+  const safeRasterScale =
+    Number.isFinite(rasterScale) && rasterScale > 0
+      ? rasterScale
+      : previewScale;
+  const liveLayout = canvasSize?.width && canvasSize.height
+    ? manualEditAutoFitTransform(
+        canvasSize.width,
+        canvasSize.height,
+        contentWidth,
+        contentHeight,
+        previewScale,
+        viewportTransform,
+        canvasPadding,
+      )
+    : null;
+  const rasterLayout = canvasSize?.width && canvasSize.height
+    ? manualEditAutoFitTransform(
+        canvasSize.width,
+        canvasSize.height,
+        contentWidth,
+        contentHeight,
+        safeRasterScale,
+        { x: 0, y: 0 },
+        canvasPadding,
+      )
+    : null;
+  if (liveLayout && rasterLayout) {
+    const rasterZoom = rasterLayout.zoom > 0 ? rasterLayout.zoom : liveLayout.zoom;
     return {
       width: 'var(--preview-viewport-width)',
       height: 'var(--preview-viewport-height)',
       zoom: rasterZoom,
-      transform: `translate(${viewportTransform.x / rasterZoom}px, ${viewportTransform.y / rasterZoom}px) scale(${previewScale / rasterZoom})`,
+      transform: `translate(${liveLayout.translateX / rasterZoom}px, ${liveLayout.translateY / rasterZoom}px) scale(${liveLayout.zoom / rasterZoom})`,
       transformOrigin: '0 0',
       willChange: 'transform',
     };
   }
-  const transform = `scale(${previewScale})`;
+  const rasterZoom = safeRasterScale > 0 ? safeRasterScale : 1;
   return {
     width: 'var(--preview-viewport-width)',
     height: 'var(--preview-viewport-height)',
-    transform,
+    zoom: rasterZoom,
+    transform: `translate(${viewportTransform.x / rasterZoom}px, ${viewportTransform.y / rasterZoom}px) scale(${previewScale / rasterZoom})`,
     transformOrigin: '0 0',
     willChange: 'transform',
   };

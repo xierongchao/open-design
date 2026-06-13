@@ -303,7 +303,7 @@ function renderDesignFilesPanel(overrides: Partial<React.ComponentProps<typeof D
     onRefreshFiles: vi.fn(),
     onOpenFile: vi.fn(),
     onOpenLiveArtifact: vi.fn(),
-    onRenameFile: vi.fn(),
+    onSetFileAlias: vi.fn(),
     onDeleteFile: vi.fn(),
     onDeleteFiles: vi.fn(),
     onUpload: vi.fn(),
@@ -1861,7 +1861,7 @@ describe('DesignFilesPanel plugin folders', () => {
         onOpenLiveArtifact={vi.fn()}
         onDeleteFile={vi.fn()}
         onDeleteFiles={vi.fn()}
-        onRenameFile={vi.fn()}
+        onSetFileAlias={vi.fn()}
         onUpload={vi.fn()}
         onUploadFiles={vi.fn()}
         onPaste={vi.fn()}

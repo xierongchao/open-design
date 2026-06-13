@@ -1340,7 +1340,6 @@ a.avatar-item:visited {
   flex: 0 0 auto;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-subtle);
 }
 .workspace-side-tab {
   display: inline-flex;

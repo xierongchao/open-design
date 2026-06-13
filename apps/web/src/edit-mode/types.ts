@@ -205,7 +205,8 @@ export type ManualEditBridgeMessage =
   | { type: 'od-edit-space-held' }
   | { type: 'od-edit-space-released' }
   | { type: 'od-edit-undo' }
-  | { type: 'od-edit-redo' };
+  | { type: 'od-edit-redo' }
+  | { type: 'od-edit-delete'; id: string };
 
 export const MANUAL_EDIT_STYLE_PROPS: readonly (keyof ManualEditStyles)[] = [
   'left', 'top',

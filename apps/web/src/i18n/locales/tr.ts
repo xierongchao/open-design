@@ -955,6 +955,9 @@ export const tr: Dict = {
 
   'workspace.designFiles': 'Tasarım Dosyaları',
   'workspace.closeTab': 'Sekmeyi kapat',
+  'workspace.closeTabsToRight': 'Sağdaki sekmeleri kapat',
+  'workspace.closeOtherTabs': 'Diğer sekmeleri kapat',
+  'workspace.closeAllTabs': 'Tüm sekmeleri kapat',
   'workspace.deleteFileConfirm': '"{name}"ı proje klasöründen sil?',
   'workspace.deleteSelectedFilesConfirm': 'Seçili {n} dosya proje klasöründen silinsin mi?',
   'workspace.deleteSelectedFilesPartial': '{n} dosya silinemedi.',

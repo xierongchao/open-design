@@ -69,7 +69,7 @@ describe('desktopEditAutoFitTransform', () => {
   });
 });
 
-describe('manualEditPreviewShellStyle (desktop)', () => {
+describe('manualEditPreviewShellStyle', () => {
   it('uses CSS zoom for settled raster quality without multiplying screen-space panning', () => {
     const result = manualEditPreviewShellStyle(
       'desktop', 1.0, { x: 0, y: 0 }, { width: 1263, height: 800 },
@@ -127,12 +127,19 @@ describe('manualEditPreviewShellStyle (desktop)', () => {
     expect(result.transformOrigin).toBe('0 0');
   });
 
-  it('keeps existing behavior for non-desktop viewports', () => {
-    const result = manualEditPreviewShellStyle('tablet', 1.0, { x: 0, y: 0 });
+  it('scales the complete mobile device shell relative to its fitted size', () => {
+    const result = manualEditPreviewShellStyle(
+      'mobile',
+      1.5,
+      { x: 0, y: 0 },
+      { width: 1000, height: 800 },
+      { width: 1920, height: 12605 },
+    );
+    const fittedScale = Math.min(1, (1000 - 48) / 390, (800 - 48) / 844);
     expect(result.width).toBe('var(--preview-viewport-width)');
     expect(result.height).toBe('var(--preview-viewport-height)');
-    expect(result.transform).toContain('scale');
-    expect(result.zoom).toBeUndefined();
+    expect(result.zoom).toBeCloseTo(fittedScale * 1.5, 8);
+    expect(result.transform).toContain('scale(1)');
   });
 });
 

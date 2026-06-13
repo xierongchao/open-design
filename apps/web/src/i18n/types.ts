@@ -2381,6 +2381,9 @@ export interface Dict {
   'workspace.focusMode': string;
   'workspace.showChat': string;
   'workspace.closeTab': string;
+  'workspace.closeTabsToRight': string;
+  'workspace.closeOtherTabs': string;
+  'workspace.closeAllTabs': string;
   'workspace.deleteFileConfirm': string;
   'workspace.deleteSelectedFilesConfirm': string;
   'workspace.deleteSelectedFilesPartial': string;

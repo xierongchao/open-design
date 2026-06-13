@@ -7,6 +7,7 @@ import {
   type DragEvent as ReactDragEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from '@open-design/components';
 import type { TrackingProjectKind } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
@@ -35,6 +36,12 @@ import {
   writeProjectTextFile,
 } from '../providers/registry';
 import { deriveFileOps, type FileOpEntry } from '../runtime/file-ops';
+import {
+  displayNameForPath,
+  fetchFileAliases,
+  saveFileAliases,
+  type FileAliasMap,
+} from '../runtime/file-aliases';
 import { latestTodosFromEvents, type TodoItem } from '../runtime/todos';
 import { deliverableSlideNavForActiveFile, isSlideNavDeliverableNow } from '../runtime/slide-nav';
 import { buildSrcdoc } from '../runtime/srcdoc';
@@ -247,6 +254,8 @@ const BROWSER_KEEPALIVE_CAP = 3;
 // Stable empty folder list so the render-phase project-switch reset is
 // idempotent (passing a fresh `[]` each render would re-trigger the reset).
 const EMPTY_PROJECT_FOLDERS: ProjectFolder[] = [];
+// Stable empty alias map for the same idempotent project-switch reset.
+const EMPTY_FILE_ALIASES: FileAliasMap = {};
 type TabDropEdge = 'before' | 'after';
 type BrowserWorkspaceTab = ProjectBrowserWorkspaceTab;
 type WorkspaceOrderedTab =
@@ -509,6 +518,27 @@ export function FileWorkspace({
     projectFoldersProjectIdRef.current = projectId;
     setProjectFolders(EMPTY_PROJECT_FOLDERS);
   }
+  // Per-project display aliases for files (file path -> alias). The real
+  // on-disk path is never changed by renaming — only this label is — so
+  // HTML/asset references keep resolving. Persisted to a project-side
+  // `.open-design/aliases.json` so aliases travel with the project folder
+  // (cloud share / multi-user). Loaded asynchronously on project switch,
+  // mirroring projectFolders' render-phase clear + effect fetch pattern.
+  const [fileAliases, setFileAliases] = useState<FileAliasMap>(EMPTY_FILE_ALIASES);
+  // False until the async load for the current project resolves; gates the
+  // persist effect so the empty initial state is never written over real data.
+  const [fileAliasesLoaded, setFileAliasesLoaded] = useState(false);
+  // True once a user mutation occurs for the current project; gates the
+  // persist effect so simply loading a project never creates an empty
+  // aliases file. Reset on project switch alongside the state clear.
+  const fileAliasesMutatedRef = useRef(false);
+  const fileAliasesProjectIdRef = useRef(projectId);
+  if (fileAliasesProjectIdRef.current !== projectId) {
+    fileAliasesProjectIdRef.current = projectId;
+    setFileAliases(EMPTY_FILE_ALIASES);
+    setFileAliasesLoaded(false);
+    fileAliasesMutatedRef.current = false;
+  }
   const [browserTabs, setBrowserTabs] = useState<BrowserWorkspaceTab[]>(
     () => browserTabsFromState(tabsState.browserTabs),
   );
@@ -519,6 +549,11 @@ export function FileWorkspace({
   // fails on the daemon side, so the click is never a silent no-op.
   const [launcherToast, setLauncherToast] = useState<string | null>(null);
   const [tabsOverflowing, setTabsOverflowing] = useState(false);
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    tabId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [draggedTabName, setDraggedTabName] = useState<string | null>(null);
   const [dragOverTab, setDragOverTab] = useState<{
     name: string;
@@ -594,6 +629,37 @@ export function FileWorkspace({
       cancelled = true;
     };
   }, [projectId]);
+
+  // Load aliases for the current project from the project-side store. The
+  // render-phase clear above already resets stale state on switch; this only
+  // fetches. Mirrors the projectFolders fetch effect.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchFileAliases(projectId).then((map) => {
+      if (cancelled) return;
+      setFileAliases(map);
+      setFileAliasesLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  // Persist aliases to the project-side store. Gated on both load completion
+  // and a user mutation so merely opening a project never creates an empty
+  // aliases file.
+  useEffect(() => {
+    if (!fileAliasesLoaded || !fileAliasesMutatedRef.current) return;
+    void saveFileAliases(projectId, fileAliases);
+  }, [projectId, fileAliases, fileAliasesLoaded]);
+
+  // Apply an alias-map mutation and mark the store dirty so the persist
+  // effect writes it. Returning the previous map unchanged (same reference)
+  // lets a no-op delete/move bail out without a redundant write.
+  const mutateFileAliases = useCallback((updater: (prev: FileAliasMap) => FileAliasMap) => {
+    fileAliasesMutatedRef.current = true;
+    setFileAliases(updater);
+  }, []);
 
   // Pull the persisted active tab in when the parent's hydration completes
   // (or on project switch). Fall back to the Design Files browser so a
@@ -987,6 +1053,84 @@ export function FileWorkspace({
     });
   }
 
+  const PINNED_TAB_IDS = useMemo(
+    () => new Set([
+      DESIGN_FILES_TAB,
+      DESIGN_SYSTEM_TAB,
+      QUESTIONS_TAB,
+    ]),
+    [],
+  );
+
+  function closeMultipleTabs(idsToClose: string[]) {
+    if (idsToClose.length === 0) return;
+
+    const closeSet = new Set(idsToClose);
+
+    // Kill terminal PTYs
+    for (const id of idsToClose) {
+      if (isTerminalTabId(id)) {
+        const originalId = terminalIdFromTabId(id);
+        const liveId = terminalLiveSessionsRef.current.get(originalId) ?? originalId;
+        void killTerminal(projectId, liveId, { keepalive: true });
+        terminalLiveSessionsRef.current.delete(originalId);
+      }
+    }
+
+    // Update persisted tabs (non-browser)
+    const nextPersistedTabs = persistedTabs.filter((n) => !closeSet.has(n));
+
+    // Update browser tabs
+    const nextBrowserTabs = browserTabs.filter((bt) => !closeSet.has(bt.id));
+    setBrowserTabs(nextBrowserTabs);
+
+    // Determine next active tab
+    const nextActive = closeSet.has(activeTab)
+      ? (nextPersistedTabs[nextPersistedTabs.length - 1] ?? defaultRootTab)
+      : activeTab;
+
+    commitTabsState(workspaceTabsState(
+      nextPersistedTabs,
+      nextActive === defaultRootTab ? null : nextActive,
+      nextBrowserTabs,
+    ));
+    setActiveTab(nextActive);
+
+    // Reset the Design Files preview so clicking a previously-previewed
+    // file after a batch close is not a no-op.
+    setDesignFilesPreview(null);
+
+    // Clean up sketches
+    setSketches((curr) => {
+      let changed = false;
+      const next = { ...curr };
+      for (const id of idsToClose) {
+        if (next[id]) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : curr;
+    });
+  }
+
+  function handleTabContextMenuCloseRight(tabId: string) {
+    const idx = workspaceTabIds.indexOf(tabId);
+    if (idx < 0) return;
+    const idsToClose = workspaceTabIds.slice(idx + 1).filter((id) => !PINNED_TAB_IDS.has(id));
+    closeMultipleTabs(idsToClose);
+  }
+
+  function handleTabContextMenuCloseOthers(tabId: string) {
+    const idsToClose = workspaceTabIds.filter((id) => id !== tabId && !PINNED_TAB_IDS.has(id));
+    closeMultipleTabs(idsToClose);
+  }
+
+  function handleTabContextMenuCloseAll() {
+    const idsToClose = workspaceTabIds.filter((id) => !PINNED_TAB_IDS.has(id));
+    closeMultipleTabs(idsToClose);
+  }
+
   function reorderPersistedTab(
     draggedName: string,
     targetName: string,
@@ -1220,7 +1364,9 @@ export function FileWorkspace({
   }, [quickSwitcherOpen]);
 
   async function handleDelete(name: string) {
-    if (!confirm(t('workspace.deleteFileConfirm', { name }))) return;
+    // Show the alias (or base name when none) in the prompt — the full path
+    // is noisy and the user identifies files by their display label.
+    if (!confirm(t('workspace.deleteFileConfirm', { name: displayNameForPath(name, fileAliases) }))) return;
     const ok = await deleteProjectFile(projectId, name);
     if (ok) {
       await onRefreshFiles();
@@ -1244,6 +1390,14 @@ export function FileWorkspace({
       }
       setSketches((curr) => {
         const next = { ...curr };
+        delete next[name];
+        return next;
+      });
+      // Drop any display alias for the deleted path so it does not linger
+      // in the shared store after the file is gone.
+      mutateFileAliases((prev) => {
+        if (!(name in prev)) return prev;
+        const next = { ...prev };
         delete next[name];
         return next;
       });
@@ -1281,45 +1435,52 @@ export function FileWorkspace({
         for (const name of deleted) delete next[name];
         return next;
       });
+      mutateFileAliases((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const name of deleted) {
+          if (name in next) {
+            delete next[name];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
     }
     if (failed.length > 0) {
       alert(t('workspace.deleteSelectedFilesPartial', { n: failed.length }));
     }
   }
 
-  async function handleRename(oldName: string, nextName: string): Promise<ProjectFile | null> {
-    const hasPendingSketchConflict = Object.entries(sketches).some(
-      ([name, sketch]) => !sketch.persisted && sameFileName(name, nextName),
-    );
-    if (nextName !== oldName && hasPendingSketchConflict) {
-      throw new Error(
-        `A pending sketch named "${nextName}" is already open. Save or close it before renaming.`,
-      );
-    }
-
-    const result = await renameProjectFile(projectId, oldName, nextName);
-    const renamed = result.file;
-    await onRefreshFiles();
-    await refreshProjectFolders();
-
-    const nextTabs = persistedTabs.map((name) => (name === oldName ? renamed.name : name));
-    const nextActive = tabsState.active === oldName ? renamed.name : tabsState.active;
-    onTabsStateChange(workspaceTabsState(nextTabs, nextActive));
-    if (activeTab === oldName) setActiveTab(renamed.name);
-    if (designFilesPreviewName === oldName) {
-      setDesignFilesPreview({ projectId, name: renamed.name });
-    }
-
-    setSketches((curr) => {
-      const entry = curr[oldName];
-      if (!entry) return curr;
-      const next = { ...curr };
-      delete next[oldName];
-      next[renamed.name] = entry;
-      return next;
+  // Renaming a file in the Design Files tree only sets a display alias —
+  // the real on-disk path is untouched so HTML/asset references keep
+  // resolving. Typing the real base name (or empty) clears the alias.
+  async function handleSetFileAlias(name: string, alias: string): Promise<ProjectFile | null> {
+    const trimmed = alias.trim();
+    const realBasename = displayNameForPath(name, undefined);
+    mutateFileAliases((prev) => {
+      const hasAlias = name in prev;
+      const clears = !trimmed || trimmed === realBasename;
+      if (clears) {
+        if (!hasAlias) return prev;
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      }
+      if (hasAlias && prev[name] === trimmed) return prev;
+      return { ...prev, [name]: trimmed };
     });
-
-    return renamed;
+    // The file itself is unchanged; return it so the tree's rename editor
+    // resolves. Fall back to a minimal stub if it isn't loaded yet.
+    return (
+      visibleFiles.find((file) => file.name === name) ?? {
+        name,
+        size: 0,
+        mtime: Date.now(),
+        kind: 'text',
+        mime: 'text/plain',
+      }
+    );
   }
 
   async function handleCopy(name: string): Promise<ProjectFile | null> {
@@ -1361,6 +1522,17 @@ export function FileWorkspace({
         }
       }
       return changed ? next : curr;
+    });
+    mutateFileAliases((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const name of Object.keys(prev)) {
+        if (name.startsWith(prefix)) {
+          delete next[name];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
     });
 
     return true;
@@ -1417,6 +1589,20 @@ export function FileWorkspace({
           changed = true;
         }
         return changed ? next : curr;
+      });
+      // Migrate alias keys for files that physically moved with the folder.
+      mutateFileAliases((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const name of Object.keys(prev)) {
+          if (!name.startsWith(oldPrefix)) continue;
+          const value = next[name];
+          if (value == null) continue;
+          delete next[name];
+          next[renamePath(name)] = value;
+          changed = true;
+        }
+        return changed ? next : prev;
       });
     }
 
@@ -1491,6 +1677,19 @@ export function FileWorkspace({
             changed = true;
           }
           return changed ? next : curr;
+        });
+        // Migrate alias keys so a file's display label follows it on move.
+        mutateFileAliases((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const { oldName, newName } of renamed) {
+            const value = next[oldName];
+            if (value == null) continue;
+            delete next[oldName];
+            next[newName] = value;
+            changed = true;
+          }
+          return changed ? next : prev;
         });
       }
     }
@@ -2041,6 +2240,7 @@ export function FileWorkspace({
               tabIndex={0}
               data-testid="design-system-project-tab"
               onClick={() => setPersistedActive(DESIGN_SYSTEM_TAB)}
+              onContextMenu={(e) => { e.preventDefault(); setTabContextMenu({ tabId: DESIGN_SYSTEM_TAB, x: e.clientX, y: e.clientY }); }}
               title="Design System"
             >
               <span className="tab-icon" aria-hidden>
@@ -2057,6 +2257,7 @@ export function FileWorkspace({
             tabIndex={0}
             data-testid="design-files-tab"
             onClick={() => setPersistedActive(DESIGN_FILES_TAB)}
+            onContextMenu={(e) => { e.preventDefault(); setTabContextMenu({ tabId: DESIGN_FILES_TAB, x: e.clientX, y: e.clientY }); }}
             title={t('workspace.designFiles')}
           >
             <span className="tab-icon" aria-hidden>
@@ -2073,6 +2274,7 @@ export function FileWorkspace({
               tabIndex={0}
               data-testid="questions-tab"
               onClick={() => setActiveTab(QUESTIONS_TAB)}
+              onContextMenu={(e) => { e.preventDefault(); setTabContextMenu({ tabId: QUESTIONS_TAB, x: e.clientX, y: e.clientY }); }}
               title={t('questions.tabLabel')}
             >
               <span className="tab-icon" aria-hidden>
@@ -2098,6 +2300,7 @@ export function FileWorkspace({
                   active={activeTab === browserTab.id}
                   onActivate={() => setPersistedActive(browserTab.id)}
                   onClose={() => closeBrowserTab(browserTab.id)}
+                  onContextMenu={(e) => { e.preventDefault(); setTabContextMenu({ tabId: browserTab.id, x: e.clientX, y: e.clientY }); }}
                   kind="browser"
                 />
               );
@@ -2128,7 +2331,10 @@ export function FileWorkspace({
               );
               label = conv?.title?.trim() || t('workspace.sideChatDefaultTitle');
             } else {
-              label = `${liveArtifact?.title ?? name}${dirtyMark}`;
+              // Show the file's display alias when set, otherwise just the
+              // base name — never the full folder path, since tab width is
+              // limited and the path would truncate the meaningful part.
+              label = `${liveArtifact?.title ?? displayNameForPath(name, fileAliases)}${dirtyMark}`;
             }
             const iconNameOverride: IconName | undefined = isTerminal
               ? 'terminal'
@@ -2145,6 +2351,7 @@ export function FileWorkspace({
                   isPending ? activatePending(name) : setPersistedActive(name)
                 }
                 onClose={() => closeTab(name)}
+                onContextMenu={(e) => { e.preventDefault(); setTabContextMenu({ tabId: name, x: e.clientX, y: e.clientY }); }}
                 kind={kind}
                 liveArtifact={liveArtifact}
                 draggable={persistedTabs.includes(name)}
@@ -2254,6 +2461,19 @@ export function FileWorkspace({
           onDismiss={() => setLauncherToast(null)}
         />
       ) : null}
+      {tabContextMenu ? (
+        <TabContextMenu
+          x={tabContextMenu.x}
+          y={tabContextMenu.y}
+          tabId={tabContextMenu.tabId}
+          workspaceTabIds={workspaceTabIds}
+          pinnedTabIds={PINNED_TAB_IDS}
+          onCloseRight={() => handleTabContextMenuCloseRight(tabContextMenu.tabId)}
+          onCloseOthers={() => handleTabContextMenuCloseOthers(tabContextMenu.tabId)}
+          onCloseAll={() => handleTabContextMenuCloseAll()}
+          onDismiss={() => setTabContextMenu(null)}
+        />
+      ) : null}
       <div className="ws-body">
         {/* Banner moved into DesignFilesPanel for the Design Files tab so
             single-click preview (which keeps activeTab on DESIGN_FILES_TAB)
@@ -2341,51 +2561,13 @@ export function FileWorkspace({
             onCurrentDirChange={setUploadDir}
             navState={designFilesNavRef.current}
             onNavStateChange={onDesignFilesNavStateChange}
-            onOpenFile={openDesignFilesPreview}
+            onOpenFile={openFile}
             onOpenLiveArtifact={(tabId) => openFile(tabId)}
             activeFileName={designFilesPreviewName}
-            previewContent={
-              designFilesPreviewFile ? (
-                <FileViewer
-                  key={`${projectId}:${designFilesPreviewFile.name}`}
-                  projectId={projectId}
-                  projectKind={projectKind}
-                  file={designFilesPreviewFile}
-                  filesRefreshKey={filesRefreshKey}
-                  isDeck={isDeck}
-                  onExportAsPptx={onExportAsPptx}
-                  streaming={streaming}
-                  commentQueueOnSend={commentQueueOnSend}
-                  commentSendDisabled={commentSendDisabled}
-                  previewComments={previewComments.filter(
-                    (comment) => comment.filePath === designFilesPreviewFile.name,
-                  )}
-                  onSavePreviewComment={onSavePreviewComment}
-                  onRemovePreviewComment={onRemovePreviewComment}
-                  onSendBoardCommentAttachments={onSendBoardCommentAttachments}
-                  onFileSaved={onRefreshFiles}
-                  onOpenFileReplacing={(openName) => openDesignFilesPreview(openName)}
-                  commentPortalId={commentPortalId}
-                  onCommentModeChange={onCommentModeChange}
-                  editPortalId={editPortalId}
-                  onEditSelectionChange={onEditSelectionChange}
-                  shareRequest={
-                    shareRequest && shareRequest.name === designFilesPreviewFile.name
-                      ? { nonce: shareRequest.nonce }
-                      : null
-                  }
-                  slideNavRequest={deliverableSlideNavForActiveFile(
-                    slideNavRequest,
-                    designFilesPreviewFile.name,
-                    slideNavDeliverableNonce,
-                  )}
-                  onEditModeChange={handleEditModeChange}
-                  defaultEditMode
-                />
-              ) : null
-            }
+            previewContent={null}
             onCopyFile={handleCopy}
-            onRenameFile={handleRename}
+            fileAliases={fileAliases}
+            onSetFileAlias={handleSetFileAlias}
             onDeleteFile={(name) => {
               trackFileManagerClick(analytics.track, {
                 page_name: 'file_manager',
@@ -2522,6 +2704,7 @@ export function FileWorkspace({
               slideNavDeliverableNonce,
             )}
             onEditModeChange={handleEditModeChange}
+            defaultEditMode={activeFile.kind === 'html'}
           />
         ) : (
           <div className="viewer-empty">
@@ -4378,6 +4561,7 @@ function Tab({
   onDragLeave,
   onDrop,
   onDragEnd,
+  onContextMenu,
 }: {
   label: string;
   meta?: string;
@@ -4398,6 +4582,7 @@ function Tab({
   onDragLeave?: () => void;
   onDrop?: (event: ReactDragEvent<HTMLDivElement>) => void;
   onDragEnd?: () => void;
+  onContextMenu?: (event: React.MouseEvent<HTMLDivElement>) => void;
 }) {
   const t = useT();
   const iconName = iconNameOverride ?? kindIconName(kind);
@@ -4433,6 +4618,7 @@ function Tab({
       onDragLeave={draggable ? onDragLeave : undefined}
       onDrop={draggable ? onDrop : undefined}
       onDragEnd={draggable ? onDragEnd : undefined}
+      onContextMenu={onContextMenu}
     >
       {iconName ? (
         <span className="tab-icon" aria-hidden>
@@ -4468,6 +4654,99 @@ function Tab({
         </button>
       ) : null}
     </div>
+  );
+}
+
+function TabContextMenu({
+  x,
+  y,
+  tabId,
+  workspaceTabIds,
+  pinnedTabIds,
+  onCloseRight,
+  onCloseOthers,
+  onCloseAll,
+  onDismiss,
+}: {
+  x: number;
+  y: number;
+  tabId: string;
+  workspaceTabIds: string[];
+  pinnedTabIds: Set<string>;
+  onCloseRight: () => void;
+  onCloseOthers: () => void;
+  onCloseAll: () => void;
+  onDismiss: () => void;
+}) {
+  const t = useT();
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const closeableTabs = workspaceTabIds.filter((id) => !pinnedTabIds.has(id));
+  const tabIndex = workspaceTabIds.indexOf(tabId);
+  const tabsToRight = tabIndex >= 0
+    ? workspaceTabIds.slice(tabIndex + 1).filter((id) => !pinnedTabIds.has(id))
+    : [];
+  const otherTabs = closeableTabs.filter((id) => id !== tabId);
+
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      onDismiss();
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onDismiss();
+    }
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onDismiss]);
+
+  // Clamp position so the menu stays within the viewport.
+  const menuWidth = 200;
+  const menuHeight = 120;
+  const left = Math.min(x, window.innerWidth - menuWidth - 8);
+  const top = Math.min(y, window.innerHeight - menuHeight - 8);
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="tab-context-menu"
+      style={{ left, top }}
+      role="menu"
+      data-testid="tab-context-menu"
+    >
+      <button
+        type="button"
+        className="tab-context-menu-item"
+        role="menuitem"
+        disabled={tabsToRight.length === 0}
+        onClick={() => { onCloseRight(); onDismiss(); }}
+      >
+        {t('workspace.closeTabsToRight')}
+      </button>
+      <button
+        type="button"
+        className="tab-context-menu-item"
+        role="menuitem"
+        disabled={otherTabs.length === 0}
+        onClick={() => { onCloseOthers(); onDismiss(); }}
+      >
+        {t('workspace.closeOtherTabs')}
+      </button>
+      <button
+        type="button"
+        className="tab-context-menu-item"
+        role="menuitem"
+        disabled={closeableTabs.length === 0}
+        onClick={() => { onCloseAll(); onDismiss(); }}
+      >
+        {t('workspace.closeAllTabs')}
+      </button>
+    </div>,
+    document.body,
   );
 }
 

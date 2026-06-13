@@ -148,28 +148,132 @@ describe('FileViewer manual edit viewport interactions', () => {
     expect(after.x - before.x).toBeCloseTo(32, 8);
     expect(after.y - before.y).toBeCloseTo(30, 8);
   });
+
+  it('moves the mobile device shell upward even when the workspace was scrolled down', async () => {
+    mockPreviewRect(100, 50, 1000, 800);
+    renderViewer();
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+    await selectViewport('Mobile');
+    const shell = previewShell(canvas);
+    canvas.scrollTop = 1200;
+    const before = visualViewportTransform(shell);
+
+    fireEvent.keyDown(window, { key: ' ', code: 'Space' });
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      buttons: 1,
+      clientX: 500,
+      clientY: 600,
+      pointerId: 1,
+    });
+    fireEvent.pointerMove(canvas, {
+      buttons: 1,
+      clientX: 500,
+      clientY: 200,
+      pointerId: 1,
+    });
+
+    const after = visualViewportTransform(shell);
+    expect(after.y - before.y).toBeCloseTo(-400, 8);
+  });
+
+  it('zooms the complete mobile device shell instead of only its HTML content', async () => {
+    mockPreviewRect(100, 50, 1000, 800);
+    renderViewer();
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+    await selectViewport('Mobile');
+    const shell = previewShell(canvas);
+    const initialRasterScale = Number(shell.style.zoom);
+
+    fireEvent.wheel(canvas, {
+      clientX: 500,
+      clientY: 400,
+      deltaY: -80,
+      metaKey: true,
+    });
+
+    await waitFor(() => {
+      expect(Number(shell.style.zoom)).toBeGreaterThan(initialRasterScale);
+      expect(transformScale(shell)).toBeCloseTo(1, 8);
+    });
+    expect(canvas.style.transform).toBe('');
+  });
+
+  it('restores the file canvas size after switching from mobile back to desktop', async () => {
+    const source = '<!doctype html><html><head><meta name="od-canvas" content="width=1920,height=12605"></head><body>Long page</body></html>';
+    renderViewer({
+      source,
+      useLiveHtml: false,
+      projectId: 'canvas-project',
+      fileName: 'admin-components.html',
+    });
+    const canvas = await screen.findByTestId('manual-edit-canvas');
+    const workspace = canvas.closest('.preview-viewport');
+    if (!(workspace instanceof HTMLElement)) throw new Error('preview workspace not found');
+    await waitFor(() => {
+      expect(workspace.style.getPropertyValue('--preview-viewport-height')).toBe('12605px');
+    });
+
+    await selectViewport('Mobile');
+    expect(workspace.style.getPropertyValue('--preview-viewport-width')).toBe('390px');
+    expect(workspace.style.getPropertyValue('--preview-viewport-height')).toBe('844px');
+
+    await selectViewport('Desktop');
+    expect(workspace.style.getPropertyValue('--preview-viewport-width')).toBe('1920px');
+    expect(workspace.style.getPropertyValue('--preview-viewport-height')).toBe('12605px');
+  });
 });
 
-function renderViewer() {
-  const source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>';
+function renderViewer({
+  source = '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>',
+  useLiveHtml = true,
+  projectId = 'project-1',
+  fileName = 'preview.html',
+}: {
+  source?: string;
+  useLiveHtml?: boolean;
+  projectId?: string;
+  fileName?: string;
+} = {}) {
   vi.stubGlobal('fetch', vi.fn(async () =>
     new Response(source, { status: 200, headers: { 'Content-Type': 'text/html' } }),
   ));
   render(
     <FileViewer
-      projectId="project-1"
+      projectId={projectId}
       projectKind="prototype"
-      file={htmlPreviewFile()}
-      liveHtml={source}
+      file={htmlPreviewFile(fileName)}
+      liveHtml={useLiveHtml ? source : undefined}
       defaultEditMode
     />,
   );
 }
 
 function previewShell(canvas: HTMLElement): HTMLElement {
-  const shell = canvas.querySelector(':scope > div > div');
+  const shell = canvas.querySelector('.manual-edit-frame-shell, :scope > div > div');
   if (!(shell instanceof HTMLElement)) throw new Error('manual edit preview shell not found');
   return shell;
+}
+
+async function selectViewport(name: 'Desktop' | 'Tablet' | 'Mobile') {
+  fireEvent.click(screen.getByRole('button', { name: 'Preview viewport' }));
+  fireEvent.click(screen.getByRole('option', { name }));
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'Preview viewport' }).textContent).toContain(name);
+  });
+}
+
+function mockPreviewRect(left: number, top: number, width: number, height: number) {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (
+      this.classList.contains('viewer-body')
+      || this.classList.contains('manual-edit-canvas')
+      || this.classList.contains('preview-viewport')
+    ) {
+      return rect(left, top, width, height);
+    }
+    return rect(0, 0, 0, 0);
+  });
 }
 
 function transformScale(shell: HTMLElement): number {
@@ -203,10 +307,10 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   } as DOMRect;
 }
 
-function htmlPreviewFile(): ProjectFile {
+function htmlPreviewFile(name = 'preview.html'): ProjectFile {
   return {
-    name: 'preview.html',
-    path: 'preview.html',
+    name,
+    path: name,
     type: 'file',
     size: 1024,
     mtime: 1710000000,
@@ -216,7 +320,7 @@ function htmlPreviewFile(): ProjectFile {
       version: 1,
       kind: 'html',
       title: 'Preview',
-      entry: 'preview.html',
+      entry: name,
       renderer: 'html',
       exports: ['html'],
     },

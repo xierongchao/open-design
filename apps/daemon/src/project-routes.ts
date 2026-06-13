@@ -21,7 +21,7 @@ import { connectorService } from './connectors/service.js';
 import type { RouteDeps } from './server-context.js';
 import { readAnalyticsContext } from './analytics.js';
 import { listSkills } from './skills.js';
-import { isSafeId } from './projects.js';
+import { isSafeId, readProjectAliases, writeProjectAliases } from './projects.js';
 import {
   BUILT_IN_PROJECT_LOCATION_ID,
   allProjectLocations,
@@ -2106,6 +2106,35 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       (_match, attr: string, quote: string) => `${attr}=${quote}dist/assets/`,
     );
   }
+
+  // Per-project display aliases (real path -> cosmetic label). Backed by a
+  // project-side `.open-design/aliases.json` so the map travels with the
+  // folder; direct fs, not the generic file endpoints (those cannot target
+  // the dot-prefixed metadata dir). See projects.ts readProjectAliases.
+  app.get('/api/projects/:id/aliases', async (req, res) => {
+    try {
+      const project = getProject(db, req.params.id);
+      const aliases = await readProjectAliases(PROJECTS_DIR, req.params.id, project?.metadata);
+      res.json({ aliases });
+    } catch (err: any) {
+      sendApiError(res, 400, 'BAD_REQUEST', String(err));
+    }
+  });
+
+  app.put('/api/projects/:id/aliases', async (req, res) => {
+    try {
+      const project = getProject(db, req.params.id);
+      const aliases = await writeProjectAliases(
+        PROJECTS_DIR,
+        req.params.id,
+        req.body?.aliases,
+        project?.metadata,
+      );
+      res.json({ aliases });
+    } catch (err: any) {
+      sendApiError(res, 400, 'BAD_REQUEST', String(err));
+    }
+  });
 
   // Project files. Each project owns a flat folder under .od/projects/<id>/
   // containing every file the user has uploaded, pasted, sketched, or that

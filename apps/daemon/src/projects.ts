@@ -794,6 +794,52 @@ export async function readProjectFile(projectsRoot, projectId, name, metadata?) 
   };
 }
 
+// Per-project display aliases live in `<projectDir>/.open-design/aliases.json`
+// (a `Record<fullPath, alias>`). These use direct fs instead of the generic
+// writeProjectFile path: sanitizePath strips the leading dot from `.open-design`,
+// so the generic write would land at `_open-design/aliases.json` while reads
+// looked at `.open-design/aliases.json`. Direct I/O mirrors writeProjectManifest.
+const ALIASES_RELATIVE_PATH = path.join('.open-design', 'aliases.json');
+
+export async function readProjectAliases(projectsRoot, projectId, metadata?) {
+  const dir = resolveProjectDir(projectsRoot, projectId, metadata);
+  const file = path.join(dir, ALIASES_RELATIVE_PATH);
+  try {
+    const raw = await readFile(file, 'utf8');
+    return parseAliasMap(raw);
+  } catch (err) {
+    const e = err as { code?: string };
+    if (e.code === 'ENOENT') return {};
+    throw err;
+  }
+}
+
+export async function writeProjectAliases(projectsRoot, projectId, input, metadata?) {
+  const dir = resolveProjectDir(projectsRoot, projectId, metadata);
+  const file = path.join(dir, ALIASES_RELATIVE_PATH);
+  const aliases = sanitizeAliasMap(input);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, JSON.stringify(aliases, null, 2), 'utf8');
+  return aliases;
+}
+
+function parseAliasMap(raw) {
+  try {
+    return sanitizeAliasMap(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+function sanitizeAliasMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof k === 'string' && typeof v === 'string') result[k] = v;
+  }
+  return result;
+}
+
 // Like readProjectFile but skips loading the file content into memory.
 // Used by the media streaming endpoint so large video files are never buffered.
 export async function resolveProjectFilePath(projectsRoot, projectId, name, metadata?) {

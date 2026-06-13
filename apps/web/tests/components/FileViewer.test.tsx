@@ -225,18 +225,17 @@ describe('FileViewer preview scale', () => {
     expect(css).toContain('.viewer-action');
   });
 
-  it('keeps manual edit canvas layout aligned with comment preview on device viewports (#2960)', () => {
+  it('keeps the manual edit device canvas filling the workspace', () => {
     const css = readExpandedIndexCss();
+    const deviceCanvasBlocks = cssDeclarationBlocks(
+      css,
+      '.manual-edit-workspace.preview-viewport:not(.preview-viewport-desktop):not(.pp-dock-active) .manual-edit-canvas',
+    );
 
-    expect(css).toContain(
-      '.preview-viewport:not(.preview-viewport-desktop).manual-edit-workspace .manual-edit-canvas',
-    );
-    expect(css).toMatch(
-      /\.preview-viewport:not\(\.preview-viewport-desktop\) \.preview-frame-clip,\s*\n\.preview-viewport:not\(\.preview-viewport-desktop\):not\(\.comment-preview-layer-with-side-dock\) \.comment-preview-canvas,\s*\n\.preview-viewport:not\(\.preview-viewport-desktop\)\.manual-edit-workspace \.manual-edit-canvas \{\s*\n\s*width: calc\(var\(--preview-viewport-width\) \* var\(--preview-scale, 1\)\);/,
-    );
-    expect(css).toMatch(
-      /\.preview-viewport:not\(\.preview-viewport-desktop\) \.preview-frame-clip,\s*\n\.preview-viewport:not\(\.preview-viewport-desktop\)\.manual-edit-workspace \.manual-edit-canvas \{\s*\n\s*position: relative;/,
-    );
+    expect(deviceCanvasBlocks.some((block) => block.includes('position: absolute;'))).toBe(true);
+    expect(deviceCanvasBlocks.some((block) => block.includes('inset: 0;'))).toBe(true);
+    expect(deviceCanvasBlocks.some((block) => block.includes('width: 100%;'))).toBe(true);
+    expect(deviceCanvasBlocks.some((block) => block.includes('height: 100%;'))).toBe(true);
   });
 
   it('keeps the manual edit canvas panzoom surface scrollbar-free', () => {

@@ -165,3 +165,19 @@ export function buildProjectRawFileUrl(
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
   return `${normalizedBaseUrl}/api/projects/${encodeURIComponent(projectId)}/raw/${segments}`;
 }
+
+// Per-project display aliases: real on-disk path -> cosmetic label. Renaming
+// a file in the Design Files tree sets an alias instead of changing the real
+// path, so HTML/asset references keep resolving. Stored in the project-side
+// `.open-design/aliases.json` so the map travels with the project folder
+// (cloud share / multi-user); read/written through dedicated routes because
+// the generic file-write endpoint cannot target the dot-prefixed metadata dir.
+export type ProjectFileAliasMap = Record<string, string>;
+
+export interface ProjectFileAliasesResponse {
+  aliases: ProjectFileAliasMap;
+}
+
+export interface UpdateProjectFileAliasesRequest {
+  aliases: ProjectFileAliasMap;
+}

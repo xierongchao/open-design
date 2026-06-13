@@ -198,6 +198,7 @@ import {
   manualEditFloatingPanelStyle,
   manualEditHoverIconStyle,
   manualEditInspectorStyleValue,
+  manualEditAutoFitTransform,
   manualEditPanFromPointer,
   manualEditPersistedValueMatchesSavedSnapshot,
   manualEditPreviewShellStyle,
@@ -4146,11 +4147,6 @@ function HtmlViewer({
   useEffect(() => {
     setPreviewViewportState(htmlPreviewViewportState.get(fileViewportKey) ?? 'desktop');
   }, [fileViewportKey]);
-  // Reset custom viewport size when the preset changes so the canvas
-  // dimensions snap back to the new preset defaults.
-  useEffect(() => {
-    setCustomViewportSize(null);
-  }, [previewViewport]);
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateSaveError, setTemplateSaveError] = useState<string | null>(null);
   const [deployment, setDeployment] = useState<WebDeploymentInfo | null>(null);
@@ -4788,6 +4784,7 @@ function HtmlViewer({
       sourceFileKeyRef.current = sourceFileKey;
       setSource(liveHtml);
       sourceRef.current = liveHtml;
+      setCustomViewportSize(readCanvasSizeFromSource(liveHtml));
       return;
     }
     const fileChanged = sourceFileKeyRef.current !== sourceFileKey;
@@ -4795,6 +4792,7 @@ function HtmlViewer({
     if (fileChanged) {
       setSource(null);
       sourceRef.current = null;
+      setCustomViewportSize(null);
     }
     let cancelled = false;
     // Cache-bust the fetch on every mtime / reload / files-refresh bump.
@@ -5719,6 +5717,15 @@ function HtmlViewer({
         }
         return;
       }
+      if (data.type === 'od-edit-delete' && data.id) {
+        if (!manualEditSavingRef.current) {
+          void applyManualEdit(
+            { id: String(data.id), kind: 'remove-element' },
+            t('manualEdit.deleteElement'),
+          );
+        }
+        return;
+      }
       if (data.type === 'od-edit-text-commit') {
         void applyManualEdit({
           id: String(data.id),
@@ -5977,8 +5984,12 @@ function HtmlViewer({
   function manualEditViewportContentSize() {
     const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === previewViewport);
     return {
-      width: customViewportSize?.width ?? preset?.width ?? 1920,
-      height: customViewportSize?.height ?? preset?.height ?? 1080,
+      width: previewViewport === 'desktop'
+        ? customViewportSize?.width ?? preset?.width ?? 1920
+        : preset?.width ?? 390,
+      height: previewViewport === 'desktop'
+        ? customViewportSize?.height ?? preset?.height ?? 1080
+        : preset?.height ?? 844,
     };
   }
 
@@ -5992,7 +6003,7 @@ function HtmlViewer({
       nextScale,
       nextTransform,
       previewBodySize,
-      customViewportSize ?? undefined,
+      previewViewport === 'desktop' ? customViewportSize ?? undefined : undefined,
       rasterScale,
     );
     if (typeof style.zoom === 'number') {
@@ -6001,10 +6012,7 @@ function HtmlViewer({
       shell.style.removeProperty('zoom');
     }
     if (typeof style.transform === 'string') shell.style.transform = style.transform;
-    const canvas = manualEditCanvasRef.current;
-    if (canvas && previewViewport !== 'desktop') {
-      canvas.style.transform = `translate(${nextTransform.x}px, ${nextTransform.y}px)`;
-    }
+    manualEditCanvasRef.current?.style.removeProperty('transform');
   }
 
   function commitManualEditViewportState() {
@@ -6084,14 +6092,16 @@ function HtmlViewer({
     const oldUserScale = currentZoom / 100;
     const nextUserScale = nextZoom / 100;
     const contentSize = manualEditViewportContentSize();
-    const currentLayout = previewViewport === 'desktop' && previewBodySize?.width && previewBodySize.height
-      ? desktopEditAutoFitTransform(
+    const canvasPadding = previewViewport === 'desktop' ? 0 : 48;
+    const currentLayout = previewBodySize?.width && previewBodySize.height
+      ? manualEditAutoFitTransform(
           previewBodySize.width,
           previewBodySize.height,
           contentSize.width,
           contentSize.height,
           oldUserScale,
           manualEditViewportTransformRef.current,
+          canvasPadding,
         )
       : null;
     const effectiveOldScale = currentLayout?.zoom ?? oldUserScale;
@@ -6109,23 +6119,14 @@ function HtmlViewer({
             height: previewBodySize.height,
           },
           content: contentSize,
+          canvasPadding,
         });
-      } else if (previewViewport === 'desktop') {
-        // Non-auto-fit desktop: translate is on the inner shell.
+      } else {
         const contentX = (anchor.x - pan.x) / oldUserScale;
         const contentY = (anchor.y - pan.y) / oldUserScale;
         manualEditViewportTransformRef.current = {
           x: anchor.x - contentX * nextUserScale,
           y: anchor.y - contentY * nextUserScale,
-        };
-      } else {
-        // Non-desktop (mobile/tablet): translate is on the canvas div.
-        // getBoundingClientRect already includes the translate offset in anchor,
-        // so the zoom adjustment uses a ratio-based formula.
-        const ratio = 1 - nextUserScale / oldUserScale;
-        manualEditViewportTransformRef.current = {
-          x: pan.x + anchor.x * ratio,
-          y: pan.y + anchor.y * ratio,
         };
       }
     }
@@ -8047,11 +8048,15 @@ function HtmlViewer({
     manualEditMode && !selectedManualEditTarget && manualEditPageStylesOpen;
   const manualEditPanelActive =
     manualEditMode && (!!selectedManualEditTarget || manualEditPageCardActive);
+  const activeViewportSizeOverride =
+    previewViewport === 'desktop' ? customViewportSize ?? undefined : undefined;
   // The effective viewport dimensions shown in the PageInspector canvas
   // size inputs. Derived from the current preset unless the user has set
   // a custom size, and initialized from the preset on first entry.
   const currentViewportPreset = PREVIEW_VIEWPORT_PRESETS.find((p) => p.id === previewViewport);
-  const manualEditViewportSize = customViewportSize ?? (
+  const manualEditViewportSize = (
+    previewViewport === 'desktop' ? customViewportSize : null
+  ) ?? (
     currentViewportPreset?.width && currentViewportPreset.height
       ? { width: currentViewportPreset.width, height: currentViewportPreset.height }
       : { width: 1920, height: 1080 }
@@ -8848,7 +8853,7 @@ function HtmlViewer({
             className={`${manualEditMode ? `manual-edit-workspace${manualEditPanelDockedInCanvas ? ' pp-dock-active' : ''}` : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
             data-testid={manualEditMode ? undefined : 'comment-preview-layout'}
             style={{
-              ...previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions, customViewportSize ?? undefined),
+              ...previewViewportStyle(previewViewport, previewScale, boardPreviewCanvasSize, boardPreviewScaleOptions, activeViewportSizeOverride),
               ...(manualEditMode && manualEditSpaceHeld ? { cursor: manualEditPanning ? 'grabbing' : 'grab' } : {}),
             }}
             onMouseLeave={manualEditMode ? clearManualEditHover : undefined}
@@ -8867,11 +8872,6 @@ function HtmlViewer({
               data-testid={manualEditMode ? 'manual-edit-canvas' : 'comment-preview-canvas'}
               data-pan-active={manualEditMode && manualEditPanning ? 'true' : undefined}
               style={manualEditMode ? {
-                ...(previewViewport !== 'desktop' ? {
-                  transform: `translate(${manualEditViewportTransform.x}px, ${manualEditViewportTransform.y}px)`,
-                  transformOrigin: '0 0',
-                  willChange: 'transform' as const,
-                } : {}),
                 ...(manualEditSpaceHeld ? { cursor: manualEditPanning ? 'grabbing' : 'grab' } : {}),
               } : undefined}
               onWheel={manualEditMode ? handleManualEditCanvasWheel : undefined}
@@ -8892,12 +8892,13 @@ function HtmlViewer({
                   onPointerCancel={handleManualEditCanvasPointerUp}
                 />
               ) : null}
-              <div className={manualEditMode ? undefined : 'comment-frame-clip'} style={manualEditMode ? { height: '100%' } : undefined}>
+              <div className={manualEditMode ? 'manual-edit-frame-stage' : 'comment-frame-clip'} style={manualEditMode ? { height: '100%' } : undefined}>
                 <div
                   ref={manualEditMode ? manualEditShellRef : undefined}
+                  className={manualEditMode ? 'manual-edit-frame-shell' : undefined}
                   style={
                     manualEditMode
-                      ? manualEditPreviewShellStyle(previewViewport, previewScale, manualEditViewportTransform, previewBodySize, customViewportSize ?? undefined)
+                      ? manualEditPreviewShellStyle(previewViewport, previewScale, manualEditViewportTransform, previewBodySize, activeViewportSizeOverride)
                       : previewScaleShellStyle(previewViewport, previewScale)
                   }
                 >
