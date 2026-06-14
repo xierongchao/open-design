@@ -4,6 +4,7 @@
 @import './styles/tokens.css';
 @import './styles/base.css';
 @import '../../../packages/components/src/styles.css';
+@import 'grapesjs/dist/css/grapes.min.css';
 @import './styles/primitives.css';
 @import './styles/social-share.css';
 @import './styles/workspace/terminal.css';
@@ -28,5 +29,11 @@
 @import './styles/viewer/plugin-rail.css';
 @import './styles/viewer/plugin-inputs.css';
 @import './styles/viewer/routines.css';
+@import './styles/viewer/grapesjs-sidebar.css';
 @import './styles/modal-window-drag.css';
 @import './styles/entrance.css';
+
+.gjs-resizer-h{
+    width:12px;height:12px;
+}
+.gjs-tools .gjs-badge{display:none !important}

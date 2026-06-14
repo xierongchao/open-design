@@ -1,3 +1,15 @@
+/**
+ * @deprecated for GrapesJS path — see `apps/web/src/components/grapesjs/grapesjs-bridge-adapter.ts`.
+ *
+ * PR2 routed comment / inspect / draw / tweaks / palette modes through
+ * GrapesJS's editor events and DOM APIs directly when `useGrapesjs` is true,
+ * so the postMessage flows here are dead code on that path. Retained as
+ * fallback for the iframe path (deck / module / sandboxShim / focusGuard /
+ * runtimeScript / forceInline / React component renderer). Will be removed
+ * wholesale in PR3 once StyleManager + Layers land and the iframe path
+ * is retired for plain HTML previews.
+ */
+
 export const MANUAL_EDIT_DISCOVERY_SELECTOR = 'main, nav, section, article, aside, header, footer, div, h1, h2, h3, h4, h5, h6, p, a, button, img, strong, em, i, small, span, ul, ol, li, dl, dt, dd, blockquote, pre, code, label, form, input, select, textarea, table, thead, tbody, tfoot, tr, th, td, figure, figcaption, details, summary';
 export const MANUAL_EDIT_SOURCE_PATH_ATTR = 'data-od-source-path';
 export const MANUAL_EDIT_HOST_NODE_SELECTOR = [

@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { detectOpenDesignHostClientType } from '@open-design/host';
 import { EditableCodeViewer } from './EditableCodeViewer';
+import type { GrapesjsEditorHandle, SelectionSnapshot } from './grapesjs';
+import { StylePanel } from './grapesjs';
+import {
+  applyPreviewStyle,
+  extractInspectTarget,
+  extractInspectTargetFromComponent,
+  getNormalizedBox,
+  persistStyleOverride,
+} from './grapesjs/grapesjs-bridge-adapter';
 import {
   buildSocialSharePayload,
   OPEN_DESIGN_GITHUB_REPO_URL,
@@ -85,11 +94,14 @@ import { shouldConsumeSlideNav } from '../runtime/slide-nav';
 import { findHtmlEntriesReferencing } from '../runtime/jsx-module-refs';
 import { buildLazySrcdocTransport, buildSrcdoc, canActivateSrcDocTransport } from '../runtime/srcdoc';
 import {
+  hasTweaksTemplate,
   hasUrlModeBridge,
+  htmlHasRuntimeScript,
   htmlNeedsFocusGuard,
   htmlNeedsSandboxShim,
   parseForceInline,
   shouldUrlLoadHtmlPreview,
+  shouldUseGrapesjs,
 } from './file-viewer-render-mode';
 import { saveTemplate } from '../state/projects';
 import type {
@@ -223,6 +235,8 @@ import {
   usesStackedCommentSideDock,
   waitForIframeLoadOrTimeout,
 } from './viewer-utils';
+
+const GrapesjsEditor = lazy(() => import('./grapesjs/GrapesjsEditor').then((m) => ({ default: m.default })));
 
 function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
@@ -4194,6 +4208,23 @@ function HtmlViewer({
   const [inspectMode, setInspectMode] = useState(false);
   const [agentToolsOpen, setAgentToolsOpen] = useState(false);
   const [drawOverlayOpen, setDrawOverlayOpen] = useState(false);
+  // PR2: tweaks availability signal from GrapesjsEditor (replaces the iframe
+  // `od:tweaks-available` postMessage). Currently informational — no toolbar
+  // toggle ships in this branch — but kept here so a future toggle can read
+  // it directly without re-wiring the editor callback.
+  const [tweaksAvailable, setTweaksAvailable] = useState(false);
+  // PR3: GrapesJS sidebar tab — 'inspect' shows our computed-style snapshot,
+  // 'style' shows GrapesJS's explicit-style editor, and 'layers' shows the
+  // LayerManager tree. Default to Inspect because generated HTML usually
+  // gets its initial values from <style>/<link> rules; native StyleManager
+  // only shows explicit declarations and can look empty on first selection.
+  const [grapesjsSidebarTab, setGrapesjsSidebarTab] = useState<'layers' | 'style' | 'inspect'>('inspect');
+  const grapesjsLayersPanelRef = useRef<HTMLDivElement | null>(null);
+  const grapesjsStylePanelRef = useRef<HTMLDivElement | null>(null);
+  const [grapesjsSelectionActive, setGrapesjsSelectionActive] = useState(false);
+  // Computed-style snapshot of the currently selected element, fed by
+  // GrapesjsEditor.onSelectionChange. Drives the Figma-style StylePanel.
+  const [grapesjsSelection, setGrapesjsSelection] = useState<SelectionSnapshot | null>(null);
   const MAX_MANUAL_EDIT_HISTORY = 500;
   // for hint managing hint box state
   const [openHintBox, setOpenHintBox] = useState(true);
@@ -4207,6 +4238,13 @@ function HtmlViewer({
   const skipSrcDocRebuildForMoveRef = useRef(false);
   const [commentPortalHost, setCommentPortalHost] = useState<HTMLElement | null>(null);
   const [manualEditPortalHost, setManualEditPortalHost] = useState<HTMLElement | null>(null);
+  // PR3: GrapesJS inspect portal host. When the user activates inspect mode
+  // on the GrapesJS path, we portal the sidebar (tabs + Inspect/Style/Layers
+  // body) into the same right-panel Edit tab that the iframe manual-edit
+  // path uses. This way the "编辑" tab in ProjectView shows the GrapesJS
+  // InspectPanel instead of being empty (manualEditMode never becomes true
+  // on the GrapesJS path).
+  const [grapesjsInspectPortalHost, setGrapesjsInspectPortalHost] = useState<HTMLElement | null>(null);
   const [previewBodyRef, previewBodySize] = usePreviewCanvasSize<HTMLDivElement>();
   const manualEditCanvasRef = useRef<HTMLDivElement | null>(null);
   const manualEditShellRef = useRef<HTMLDivElement | null>(null);
@@ -4913,6 +4951,14 @@ function HtmlViewer({
     () => source != null && htmlNeedsFocusGuard(source),
     [source],
   );
+  const tweaksBridge = useMemo(
+    () => hasTweaksTemplate(source),
+    [source],
+  );
+  const runtimeScript = useMemo(
+    () => htmlHasRuntimeScript(source),
+    [source],
+  );
   const [urlSelectionBridgeReady, setUrlSelectionBridgeReady] = useState(false);
   // The preview tree stays mounted while the source editor is visible. Keep
   // its transport decision stable too, otherwise switching tabs would still
@@ -4926,9 +4972,207 @@ function HtmlViewer({
     urlModeBridge,
     inspectMode,
     drawMode: drawOverlayOpen,
+    tweaksBridge,
     forceInline: forceInline || needsSandboxShim,
     needsFocusGuard,
   }) && !manualEditRequiresSrcDoc;
+  // PR3: route HTML previews through the GrapesJS canvas by default. Only
+  // load-bearing cases GrapesJS cannot represent yet (deck, multi-file
+  // modules, React-component renderer, forceInline, Babel/focus guard)
+  // stay on the iframe path.
+  const useGrapesjs = shouldUseGrapesjs({
+    mode,
+    isDeck: effectiveDeck,
+    isModule: false,
+    commentMode: boardMode,
+    inspectMode,
+    drawMode: drawOverlayOpen,
+    paletteActive: false,
+    tweaksBridge,
+    isReactComponent: false,
+    runtimeScript,
+    forceInline,
+    needsSandboxShim,
+    needsFocusGuard,
+  });
+  // PR3: while the GrapesJS canvas owns the HTML preview, mark the Edit tab
+  // as available up front. The actual auto-switch still happens on element
+  // selection via onEditSelectionChange, but pre-mounting the host avoids a
+  // race where StyleManager/Layers render before the portal container exists.
+  useEffect(() => {
+    if (!useGrapesjs || mode !== 'preview') return;
+    onEditModeChange?.(true);
+    return () => {
+      onEditModeChange?.(false);
+    };
+  }, [mode, onEditModeChange, useGrapesjs]);
+  // PR3: on the GrapesJS path, treat an active GrapesJS selection as the
+  // equivalent of a manual-edit selection so ProjectView auto-switches
+  // to the right-panel Edit tab and shows the portalled sidebar.
+  useEffect(() => {
+    if (!useGrapesjs) return;
+    onEditSelectionChange?.(grapesjsSelectionActive);
+  }, [grapesjsSelectionActive, onEditSelectionChange, useGrapesjs]);
+  useEffect(() => {
+    if (useGrapesjs) return;
+    setGrapesjsSelectionActive(false);
+  }, [useGrapesjs]);
+  // PR3: locate the edit portal host for GrapesJS. Same DOM lookup pattern
+  // as the manualEdit branch, but active for the whole GrapesJS preview path
+  // so the right-panel Edit tab is ready before the first element click.
+  useEffect(() => {
+    if (!useGrapesjs || mode !== 'preview' || !editPortalId) {
+      setGrapesjsInspectPortalHost(null);
+      return;
+    }
+    let cancelled = false;
+    let raf = 0;
+    const findHost = () => {
+      if (cancelled) return;
+      const host = document.getElementById(editPortalId);
+      setGrapesjsInspectPortalHost(host);
+      if (!host) raf = window.requestAnimationFrame(findHost);
+    };
+    findHost();
+    return () => {
+      cancelled = true;
+      if (raf) window.cancelAnimationFrame(raf);
+      setGrapesjsInspectPortalHost(null);
+    };
+  }, [editPortalId, mode, useGrapesjs]);
+  // Drive the GrapesJS canvas frame when the viewport switch changes (desktop/
+  // tablet/mobile). On the non-GrapesJS path the legacy previewViewportStyle
+  // handles the frame; on the GrapesJS path we set the editor device size.
+  useEffect(() => {
+    if (!useGrapesjs || mode !== 'preview') return;
+    const sizes: Record<PreviewViewportId, [number, number]> = {
+      desktop: [1920, 1080],
+      tablet: [820, 1180],
+      mobile: [390, 844],
+    };
+    const [w, h] = sizes[previewViewport] ?? sizes.desktop;
+    grapesjsEditorRef.current?.setViewport(w, h);
+  }, [previewViewport, mode, useGrapesjs]);
+  // PR2: build a PreviewCommentSnapshot from a GrapesJS Component so the
+  // comment overlay can render markers / hover cards without the iframe
+  // postMessage bridge. Position is pixel-perfect in the canvas iframe
+  // coordinate space (scale=1 under devicePreviewMode); the overlay layer
+  // multiplies by overlayPreviewScale when drawing.
+  const buildGrapesjsCommentSnapshot = useCallback(
+    (
+      editor: NonNullable<ReturnType<GrapesjsEditorHandle['getEditor']>>,
+      odId: string,
+      filePath: string,
+    ): PreviewCommentSnapshot | null => {
+      const box = getNormalizedBox(editor, odId);
+      if (!box) return null;
+      const inspect = extractInspectTarget(editor, odId);
+      return {
+        filePath,
+        elementId: odId,
+        selector: inspect?.selector ?? '',
+        label: inspect?.label ?? '',
+        text: inspect?.text ?? '',
+        position: { x: box.x, y: box.y, width: box.width, height: box.height },
+        htmlHint: '',
+        selectionKind: 'element',
+      };
+    },
+    [],
+  );
+  const grapesjsEditorRef = useRef<GrapesjsEditorHandle | null>(null);
+  // Debounce the expensive computed-style snapshot read that runs on every
+  // GrapesJS selection. extractInspectTarget() walks the component tree and
+  // calls getComputedStyle for ~12 properties; doing that synchronously inside
+  // the component:selected callback blocked the main thread on each click and
+  // was a major source of jank. The structural UI activation
+  // (setInspectMode / onEditModeChange / sidebar tab) still runs synchronously
+  // so the click→edit affordance feels instant; only the computed snapshot is
+  // deferred to the next idle frame with a trailing debounce so rapid clicks
+  // collapse to a single read.
+  const grapesjsInspectDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Debounced auto-save for the GrapesJS canvas. When the user edits on the
+  // canvas (drag, inline text, style), onChange flips codeDirty. Without an
+  // auto-save the edits lived only in memory — closing/reloading the file
+  // showed the pre-edit source because nothing ever wrote the file. This
+  // ref holds a 1500ms trailing save (rescheduled on every onChange) so rapid
+  // edits collapse into one write; the unmount effect flushes the timer.
+  const grapesjsAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Flush pending edits when the file changes or the component unmounts.
+  // Keyed on projectId + file.name so switching files in the tree triggers
+  // the cleanup (and save) before the new file's content loads.
+  useEffect(() => {
+    return () => {
+      if (grapesjsInspectDebounceRef.current) {
+        clearTimeout(grapesjsInspectDebounceRef.current);
+      }
+      if (grapesjsAutoSaveTimerRef.current) {
+        // Flush a pending canvas auto-save instead of dropping it — otherwise
+        // the last <1500ms of edits would be lost on file switch / unmount.
+        clearTimeout(grapesjsAutoSaveTimerRef.current);
+        grapesjsAutoSaveTimerRef.current = null;
+        try {
+          const next = grapesjsEditorRef.current?.getDocument();
+          if (next && next !== sourceRef.current) {
+            sourceRef.current = next;
+            void writeProjectTextFile(projectId, file.name, next, {
+              artifactManifest: file.artifactManifest,
+            }).then(() => onFileSaved?.());
+          }
+        } catch {
+          // ignore — best-effort flush
+        }
+      }
+    };
+  }, [projectId, file.name, file.mtime]);
+  const [grapesjsViewMode, setGrapesjsViewModeState] = useState(false);
+  // Wrap setGrapesjsViewMode so that switching to interactive mode flushes any
+  // pending canvas edits before the GrapesjsEditor unmounts. Without this, the
+  // last <1500ms of edits (still in the debounce timer) are lost because the
+  // editor is destroyed before the timer fires.
+  const setGrapesjsViewMode = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    setGrapesjsViewModeState((prev) => {
+      const value = typeof next === 'function' ? next(prev) : next;
+      // Only flush when transitioning FROM edit (false) TO interactive (true).
+      if (value && !prev) {
+        if (grapesjsAutoSaveTimerRef.current) {
+          clearTimeout(grapesjsAutoSaveTimerRef.current);
+          grapesjsAutoSaveTimerRef.current = null;
+        }
+        // Sync the latest editor document to source + immediately save.
+        const doc = grapesjsEditorRef.current?.getDocument();
+        if (doc && doc !== sourceRef.current) {
+          sourceRef.current = doc;
+          setSource(doc);
+          setCodeDirty(true);
+          void writeProjectTextFile(projectId, file.name, doc, {
+            artifactManifest: file.artifactManifest,
+          }).then(() => onFileSaved?.());
+        }
+      }
+      return value;
+    });
+  }, [projectId, file.name, file.artifactManifest]);
+  // Canvas zoom from GrapesJS (0-100), drives the toolbar zoom % display on
+  // the GrapesJS preview path. The non-GrapesJS path uses the legacy `zoom` state.
+  const [grapesjsCanvasZoom, setGrapesjsCanvasZoom] = useState(100);
+  const grapesjsLiveSource = previewSource ?? source ?? '';
+  // Inject <base href> into the interactive-mode iframe srcDoc so relative CSS
+  // / asset links resolve against the project root (same as the GrapesJS
+  // editor path which calls applyCanvasHeadAssets). Without this, files that
+  // link a shared stylesheet (e.g. ../shared.css) render without styles in
+  // the plain interactive iframe.
+  const interactiveSrcDoc = useMemo(() => {
+    const raw = grapesjsLiveSource;
+    if (!raw) return raw;
+    const base = projectRawUrl(projectId, baseDirFor(file.name));
+    if (!base) return raw;
+    const baseTag = `<base href="${base}" data-od-interactive-base="true">`;
+    // Insert right after <head> (or at the start of <html> / document if none).
+    if (/<head[^>]*>/i.test(raw)) return raw.replace(/<head[^>]*>/i, (m) => `${m}${baseTag}`);
+    if (/<html[^>]*>/i.test(raw)) return raw.replace(/<html[^>]*>/i, (m) => `${m}<head>${baseTag}</head>`);
+    return `${baseTag}${raw}`;
+  }, [grapesjsLiveSource, projectId, file.name, file.mtime]);
   const basePreviewSrcUrl = useMemo(
     () => `${projectRawUrl(projectId, file.name)}?v=${Math.round(file.mtime)}&r=${reloadKey}&odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot`,
     [projectId, file.name, file.mtime, reloadKey],
@@ -5485,6 +5729,10 @@ function HtmlViewer({
       setStrokePoints((current) => (current.length > 0 ? [] : current));
       return;
     }
+    // PR2: GrapesJS path drives comment selection via GrapesjsEditor callbacks
+    // (onSelectTargets / onHoverTarget) and the live-targets scan effect, so
+    // skip the iframe postMessage listener entirely on that path.
+    if (useGrapesjs) return;
     const snapshotFromData = (data: Partial<PreviewCommentSnapshot>): PreviewCommentSnapshot => ({
       filePath: file.name,
       elementId: String(data.elementId || ''),
@@ -5657,7 +5905,7 @@ function HtmlViewer({
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, scheduleHoverCardDismiss]);
+  }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, scheduleHoverCardDismiss, useGrapesjs]);
 
   useEffect(() => {
     if (!boardMode || !activeCommentTarget || activeCommentTarget.selectionKind === 'pod') return;
@@ -6676,6 +6924,8 @@ function HtmlViewer({
   // Keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z = redo
   useEffect(() => {
     if (!manualEditMode) return;
+    // GrapesJS owns the undo stack when its canvas is mounted.
+    if (useGrapesjs) return;
     function onKeyDown(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
       // Delete/Backspace: remove selected elements (skip when typing in inputs)
@@ -6734,6 +6984,9 @@ function HtmlViewer({
   // can show real starting values for color / typography / spacing / radius.
   useEffect(() => {
     if (!inspectMode) return;
+    // PR2: GrapesJS path drives selection via GrapesjsEditor.onSelectTargets
+    // and extractInspectTarget — no iframe message to listen for.
+    if (useGrapesjs) return;
     function onMessage(ev: MessageEvent) {
       if (!isOurPreviewIframeSource(ev.source)) return;
       const data = ev.data as
@@ -6769,7 +7022,7 @@ function HtmlViewer({
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [inspectMode, isOurPreviewIframeSource]);
+  }, [inspectMode, isOurPreviewIframeSource, useGrapesjs]);
 
   function postSlide(action: 'next' | 'prev' | 'first' | 'last') {
     const win = iframeRef.current?.contentWindow;
@@ -6843,6 +7096,38 @@ function HtmlViewer({
     setSavingInspect(true);
     setInspectError(null);
     try {
+      // PR2 GrapesJS path: persist each override via editor.Css.setRule so
+      // the next getDocument() picks it up in the CSS block, then write
+      // the full GrapesJS document back. The iframe path below stays
+      // unchanged for deck / module / sandbox shim artifacts.
+      if (useGrapesjs) {
+        const editor = grapesjsEditorRef.current?.getEditor();
+        if (!editor) {
+          throw new Error('Canvas not ready');
+        }
+        for (const [elementId, decls] of Object.entries(inspectOverrides)) {
+          if (decls && typeof decls === 'object') {
+            const flat = Object.entries(decls).reduce<Record<string, string>>((acc, [k, v]) => {
+              if (typeof v === 'string') acc[k] = v;
+              return acc;
+            }, {});
+            persistStyleOverride(editor, elementId, flat);
+          }
+        }
+        const next = grapesjsEditorRef.current?.getDocument() ?? source;
+        const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: file.name, content: next }),
+        });
+        if (!resp.ok) {
+          const payload = await resp.json().catch(() => null) as { error?: string; message?: string } | null;
+          throw new Error(payload?.error || payload?.message || `Save failed (${resp.status})`);
+        }
+        setSource(next);
+        setInspectSavedAt(Date.now());
+        return;
+      }
       const css = serializeInspectOverrides(inspectOverrides).trim();
       const next = applyInspectOverridesToSource(source, css);
       const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files`, {
@@ -7314,8 +7599,21 @@ function HtmlViewer({
     }
   }
 
+  function syncGrapesjsDocumentToSource(): string | null {
+    if (!useGrapesjs) return null;
+    const next = grapesjsEditorRef.current?.getDocument();
+    if (!next) return null;
+    if (next !== sourceRef.current) {
+      sourceRef.current = next;
+      setSource(next);
+      setCodeDirty(true);
+    }
+    return next;
+  }
+
   function selectMode(nextMode: 'preview' | 'source') {
     if (nextMode === 'source') setDrawOverlayOpen(false);
+    if (nextMode === 'source') syncGrapesjsDocumentToSource();
     if (nextMode !== mode && mode === 'source' && codeDirty) {
       const proceed = window.confirm(t('fileViewer.codeUnsavedConfirm'));
       if (!proceed) return;
@@ -8469,6 +8767,21 @@ function HtmlViewer({
               </button>
             ))}
           </div>
+          {useGrapesjs && mode === 'preview' ? (
+            <>
+              <span className="viewer-divider" aria-hidden />
+              <button
+                type="button"
+                className={`viewer-tab ${grapesjsViewMode ? 'active' : ''}`}
+                onClick={() => setGrapesjsViewMode((v) => !v)}
+                aria-pressed={grapesjsViewMode}
+                data-testid="grapesjs-interactive-toggle"
+                title={t('fileViewer.interactiveMode')}
+              >
+                {t('fileViewer.interactiveMode')}
+              </button>
+            </>
+          ) : null}
           {showPreviewToolbarControls ? (
             <>
               <span className="viewer-divider" aria-hidden />
@@ -8609,7 +8922,7 @@ function HtmlViewer({
                       setZoomMenuOpen((v) => !v);
                     }}
                   >
-                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(zoom)}%</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(useGrapesjs ? grapesjsCanvasZoom : zoom)}%</span>
                   </button>
                   {zoomMenuOpen ? (
                     <div className="zoom-menu-popover" role="menu">
@@ -8620,7 +8933,11 @@ function HtmlViewer({
                           className={`zoom-menu-item${Math.round(zoom) === level ? ' active' : ''}`}
                           role="menuitem"
                           onClick={() => {
-                            setZoom(level);
+                            if (useGrapesjs) {
+                              grapesjsEditorRef.current?.getEditor()?.Canvas?.setZoom?.(level);
+                            } else {
+                              setZoom(level);
+                            }
                             setZoomMenuOpen(false);
                           }}
                         >
@@ -8657,307 +8974,238 @@ function HtmlViewer({
               >
                 <RemixIcon name="fullscreen-line" size={15} />
               </button>
-              <button
-                className={`chrome-action chrome-action-secondary chrome-action-icon present-trigger od-tooltip${!manualEditMode ? ' is-active' : ''}`}
-                aria-label={t('fileViewer.interactiveMode')}
-                data-tooltip={t('fileViewer.interactiveMode')}
-                data-tooltip-placement="bottom"
-                title={t('fileViewer.interactiveMode')}
-                onClick={() => {
-                  setManualEditMode((v) => !v);
-                }}
-              >
-                <RemixIcon name="slideshow-3-line" size={15} />
-              </button>
             </>
-          ) : null}
-          {canShare || canDownload ? (
-            <div className="chrome-file-action-menus" ref={shareRef}>
-              {canShare ? (
-                <div className="share-menu chrome-share-menu">
-                  <button
-                    type="button"
-                    className="chrome-action chrome-action-secondary chrome-action-with-label"
-                    aria-haspopup="menu"
-                    aria-expanded={deployMenuOpen}
-                    aria-label={shareMenuLabel}
-                    onClick={openDeployMenu}
-                  >
-                    <RemixIcon name="share-forward-line" size={15} />
-                    <span>{shareMenuLabel}</span>
-                  </button>
-                  {deployMenuOpen ? (
-                    <div className="share-menu-popover" role="menu">
-                      <div className="share-menu-section-label" role="presentation">
-                        {t('fileViewer.shareMenuShareLink')}
-                      </div>
-                      {sharePageUrl ? (
-                        <>
-                          <button
-                            type="button"
-                            className="share-menu-item"
-                            role="menuitem"
-                            disabled={!canCopyShareLink}
-                            title={!canCopyShareLink ? shareUnavailableHint : shareLinkStatusHint || undefined}
-                            onClick={() => {
-                              if (!canCopyShareLink || !sharePageUrl) return;
-                              fireShareExport('share_link', async () => {
-                                const ok = await copyShareLink(sharePageUrl);
-                                if (!ok) throw new Error('copy_share_link_failed');
-                              });
-                            }}
-                          >
-                            <span className="share-menu-icon"><RemixIcon name="file-copy-line" size={15} /></span>
-                            <span className="share-menu-text">
-                              <span>{copyShareLinkLabel}</span>
-                              {shareLinkStatusHint ? (
-                                <small>{shareLinkStatusHint}</small>
-                              ) : null}
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            className="share-menu-item"
-                            role="menuitem"
-                            disabled={!canOpenSharePage}
-                            title={!canOpenSharePage ? shareLinkStatusHint || shareUnavailableHint : shareLinkStatusHint || undefined}
-                            onClick={() => {
-                              if (!canOpenSharePage || !sharePageUrl) return;
-                              setDeployMenuOpen(false);
-                              fireShareExport('share_page', () => {
-                                window.open(sharePageUrl, '_blank', 'noopener');
-                              });
-                            }}
-                          >
-                            <span className="share-menu-icon"><RemixIcon name="external-link-line" size={15} /></span>
-                            <span className="share-menu-text">
-                              <span>{t('fileViewer.openSharePage')}</span>
-                              {shareLinkStatusHint ? (
-                                <small>{shareLinkStatusHint}</small>
-                              ) : null}
-                            </span>
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          className="share-menu-item share-menu-guide"
-                          role="menuitem"
-                          title={shareUnavailableHint}
-                          onClick={() => {
-                            setShareGuideToast(shareUnavailableHint);
-                          }}
-                        >
-                          <span className="share-menu-icon"><RemixIcon name="link" size={15} /></span>
-                          <span className="share-menu-text">
-                            <span>
-                              {streaming
-                                ? t('fileViewer.shareAfterGenerationComplete')
-                                : t('fileViewer.shareLinkPublishGuide')}
-                            </span>
-                          </span>
-                        </button>
-                      )}
-                      <div className="share-menu-divider" />
-                      <div className="share-menu-section-label" role="presentation">
-                        {t('fileViewer.shareMenuPublishOnline')}
-                      </div>
-                      {DEPLOY_PROVIDER_OPTIONS.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          className="share-menu-item"
-                          role="menuitem"
-                          onClick={() => {
-                            const format =
-                              option.id === 'cloudflare-pages'
-                                ? 'cloudflare_pages'
-                                : option.id === 'vercel-self'
-                                  ? 'vercel'
-                                  : 'vercel';
-                            fireShareExport(format, () => openDeployModal(option.id));
-                          }}
-                        >
-                          <span className="share-menu-icon">
-                            <RemixIcon name={deployActionIconFor(option.id)} size={15} />
-                          </span>
-                          <span>{deployActionLabelFor(option.id)}</span>
-                        </button>
-                      ))}
-                      <div className="share-menu-divider" />
-                      <div className="share-menu-section-label" role="presentation">
-                        {t('socialShare.projectSection')}
-                      </div>
-                      <button
-                        type="button"
-                        className="share-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          setDeployMenuOpen(false);
-                          fireShareExport('vercel', () => openSocialShareFlow());
-                        }}
-                      >
-                        <span className="share-menu-icon">
-                          <RemixIcon
-                            name={activeProjectSocialShare ? 'share-forward-line' : 'upload-cloud-line'}
-                            size={15}
-                          />
-                        </span>
-                        <span>{socialShareMenuLabel}</span>
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              {canDownload ? (
-                <div className="share-menu chrome-share-menu">
-                  <button
-                    type="button"
-                    className={
-                      'chrome-action chrome-action-primary chrome-action-export' +
-                      (exportReadyNudge ? ' export-ready-nudge' : '')
-                    }
-                    aria-haspopup="menu"
-                    aria-expanded={downloadMenuOpen}
-                    onClick={openDownloadMenu}
-                  >
-                    <RemixIcon name="download-line" size={15} />
-                    <span>{t('fileViewer.download')}</span>
-                  </button>
-                  {downloadMenuOpen ? (
-                    <div className="share-menu-popover" role="menu">
-                  <button
-                    type="button"
-                    className="share-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setDownloadMenuOpen(false);
-                      fireShareExport('pdf', () => exportProjectAsPdf({
-                        deck: effectiveDeck,
-                        fallbackPdf: () => exportAsPdf(source ?? '', exportTitle, {
-                          baseHref: projectRawUrl(projectId, baseDirFor(file.name)),
-                          deck: effectiveDeck,
-                        }),
-                        filePath: file.name,
-                        projectId,
-                        title: exportTitle,
-                      }));
-                    }}
-                  >
-                    <span className="share-menu-icon"><RemixIcon name="file-line" size={15} /></span>
-                    <span>{t('fileViewer.exportPdf')}</span>
-                  </button>
-                  {showPptxExport ? (
-                    <button
-                      type="button"
-                      className="share-menu-item"
-                      role="menuitem"
-                      disabled={!canPptx}
-                      title={
-                        onExportAsPptx
-                          ? streaming
-                            ? t('fileViewer.exportPptxBusy')
-                            : t('fileViewer.exportPptxHint')
-                          : t('fileViewer.exportPptxNa')
-                      }
-                      onClick={() => {
-                        setDownloadMenuOpen(false);
-                        fireShareExport('pptx', () => {
-                          if (onExportAsPptx) onExportAsPptx(file.name);
-                        });
-                      }}
-                    >
-                      <span className="share-menu-icon"><RemixIcon name="file-ppt-line" size={15} /></span>
-                      <span>{t('fileViewer.exportPptx')}</span>
-                    </button>
-                  ) : null}
-                  {showImageExport ? (
-                    <button
-                      type="button"
-                      className="share-menu-item"
-                      role="menuitem"
-                      onClick={openImageExportModal}
-                    >
-                      <span className="share-menu-icon"><RemixIcon name="image-line" size={15} /></span>
-                      <span>{t('fileViewer.exportImage')}</span>
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="share-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setDownloadMenuOpen(false);
-                      fireShareExport('zip', () => exportProjectAsZip({
-                        projectId,
-                        filePath: file.name,
-                        fallbackHtml: source ?? '',
-                        fallbackTitle: exportTitle,
-                      }));
-                    }}
-                  >
-                    <span className="share-menu-icon"><RemixIcon name="file-zip-line" size={15} /></span>
-                    <span>{t('fileViewer.exportZip')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="share-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setDownloadMenuOpen(false);
-                      fireShareExport('html', () => exportAsHtml(source ?? '', exportTitle));
-                    }}
-                  >
-                    <span className="share-menu-icon"><RemixIcon name="file-code-line" size={15} /></span>
-                    <span>{t('fileViewer.exportHtml')}</span>
-                  </button>
-                  {showMarkdownExport ? (
-                    <button
-                      type="button"
-                      className="share-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        setDownloadMenuOpen(false);
-                        fireShareExport('markdown', () => exportAsMd(source ?? '', exportTitle));
-                      }}
-                    >
-                      <span className="share-menu-icon"><RemixIcon name="file-line" size={15} /></span>
-                      <span>{t('fileViewer.exportMd')}</span>
-                    </button>
-                  ) : null}
-                  <div className="share-menu-divider" />
-                  <div className="share-menu-section-label" role="presentation">
-                    {t('fileViewer.shareMenuSave')}
-                  </div>
-                  <button
-                    type="button"
-                    className="share-menu-item"
-                    role="menuitem"
-                    disabled={savingTemplate}
-                    onClick={() => {
-                      fireShareExport('template', () => {
-                        openSaveAsTemplateModal();
-                      });
-                    }}
-                  >
-                    <span className="share-menu-icon"><RemixIcon name="file-copy-line" size={15} /></span>
-                    <span>
-                      {savingTemplate
-                        ? t('fileViewer.savingTemplate')
-                        : templateNote
-                          ? templateNote
-                          : t('fileViewer.saveAsTemplate')}
-                    </span>
-                  </button>
-                </div>
-                ) : null}
-              </div>
-              ) : null}
-            </div>
           ) : null}
         </>)}
       <div className="viewer-body" ref={previewBodyRef}>
-        {source === null ? (
+        {useGrapesjs && mode === 'preview' && source !== null ? (
+          <>
+          <PreviewDrawOverlay
+            active={drawOverlayOpen}
+            onActiveChange={setDrawOverlayOpen}
+            captureViewport
+            captureSnapshot={captureExportImageSnapshot}
+            captureTarget={null}
+            filePath={file.name}
+            sendDisabled={streaming}
+            sendDisabledReason={t('chat.annotationSendDisabledReason')}
+          >
+            <Suspense fallback={<div className="viewer-empty">{t('fileViewer.loading')}</div>}>
+              {grapesjsViewMode ? (
+                <iframe
+                  data-testid="grapesjs-interactive-frame"
+                  title={file.name}
+                  className="artifact-preview-grapesjs"
+                  style={{ width: '100%', height: '100%', border: 0, background: '#fff', display: 'block', overflow: 'hidden' }}
+                  srcDoc={interactiveSrcDoc}
+                />
+              ) : (
+                <GrapesjsEditor
+                ref={grapesjsEditorRef}
+                html={grapesjsLiveSource}
+                baseHref={projectRawUrl(projectId, baseDirFor(file.name))}
+                onChange={(next) => {
+                  sourceRef.current = next;
+                  setSource(next);
+                  setCodeDirty(true);
+                  // Reschedule the trailing auto-save on every canvas change
+                  // so continuous edits keep pushing the 1500ms deadline
+                  // forward (the codeDirty-flip effect only fires once).
+                  if (useGrapesjs && mode === 'preview') {
+                    if (grapesjsAutoSaveTimerRef.current) {
+                      clearTimeout(grapesjsAutoSaveTimerRef.current);
+                    }
+                    grapesjsAutoSaveTimerRef.current = setTimeout(() => {
+                      grapesjsAutoSaveTimerRef.current = null;
+                      syncGrapesjsDocumentToSource();
+                      void handleCodeSave();
+                    }, 1500);
+                  }
+                }}
+                onSave={() => {
+                  syncGrapesjsDocumentToSource();
+                  void handleCodeSave();
+                }}
+                onSelectTargets={(ids) => {
+                  const hasSelection = ids.length > 0;
+                  setGrapesjsSelectionActive(hasSelection);
+                  // PR3: a normal canvas click should feel like "click →
+                  // edit". Drive ProjectView's right panel immediately
+                  // instead of waiting for inspect state/effects to settle.
+                  onEditModeChange?.(true);
+                  onEditSelectionChange?.(hasSelection);
+
+                  const shouldDriveInspect =
+                    !boardMode && !drawOverlayOpen && (inspectMode || hasSelection);
+                  if (hasSelection && !inspectMode && !boardMode && !drawOverlayOpen) {
+                    setInspectMode(true);
+                    setGrapesjsSidebarTab('inspect');
+                  }
+                  // PR2/PR3: inspect + comment share the same selection
+                  // stream. In inspect mode we materialise an InspectTarget
+                  // for the legacy snapshot tab, while StyleManager updates
+                  // directly from GrapesJS's selected Component. The
+                  // computed-style read is deferred (debounced) so a click
+                  // doesn't block the main thread — only the structural
+                  // activation above is synchronous.
+                  if (shouldDriveInspect) {
+                    if (!hasSelection) {
+                      setActiveInspectTarget(null);
+                      return;
+                    }
+                    const selectedId = ids[0];
+                    if (!selectedId) {
+                      setActiveInspectTarget(null);
+                      return;
+                    }
+                    if (grapesjsInspectDebounceRef.current) {
+                      clearTimeout(grapesjsInspectDebounceRef.current);
+                    }
+                    grapesjsInspectDebounceRef.current = setTimeout(() => {
+                      grapesjsInspectDebounceRef.current = null;
+                      const editor = grapesjsEditorRef.current?.getEditor();
+                      if (!editor) return;
+                      // Prefer the live selected component over a by-id tree
+                      // walk. findComponentByOdId can miss a component whose
+                      // data-od-id GrapesJS stripped from the model during
+                      // setComponents (the attribute survives on the DOM, but
+                      // not always on the Component model), which left the
+                      // inspect panel empty even with a clear selection.
+                      const selected = (() => {
+                        try {
+                          return editor.getSelected?.() ?? null;
+                        } catch {
+                          return null;
+                        }
+                      })();
+                      const target = selected
+                        ? extractInspectTargetFromComponent(editor, selected as never)
+                        : extractInspectTarget(editor, selectedId);
+                      if (target) {
+                        setActiveInspectTarget(target);
+                        setInspectError(null);
+                        setInspectSavedAt(null);
+                      }
+                    }, 80);
+                    return;
+                  }
+                  // PR2 comment branch: build a PreviewCommentSnapshot from
+                  // the selected component (position relative to canvas
+                  // iframe, scale=1 in devicePreviewMode) and feed the
+                  // comment overlay.
+                  if (boardMode) {
+                    const editor = grapesjsEditorRef.current?.getEditor();
+                    if (!editor) return;
+                    if (!hasSelection) {
+                      setActiveCommentTarget((current) => (current ? null : current));
+                      return;
+                    }
+                    const selectedId = ids[0];
+                    if (!selectedId) return;
+                    const snapshot = buildGrapesjsCommentSnapshot(editor, selectedId, file.name);
+                    if (!snapshot) return;
+                    const shouldOpenComposer = boardMode || commentCreateMode;
+                    setActiveCommentTarget((current) => (shouldOpenComposer ? snapshot : current));
+                    setHoveredCommentTarget(snapshot);
+                    setLiveCommentTargets((current) => {
+                      const existing = current.get(snapshot.elementId);
+                      if (existing && commentSnapshotEqual(existing, snapshot)) return current;
+                      return new Map(current).set(snapshot.elementId, snapshot);
+                    });
+                    if (shouldOpenComposer) {
+                      setActivePreviewCommentId(null);
+                      setCommentDraft('');
+                      setQueuedBoardNotes([]);
+                      setActiveCommentExistingAttachments([]);
+                    }
+                  }
+                }}
+                onHoverTarget={(id) => {
+                  // PR2: comment overlay hover. Build a snapshot and feed the
+                  // hovered target state. Coordinate translation is identical
+                  // to the select branch — scale=1 under devicePreviewMode.
+                  if (!boardMode || !id) {
+                    if (!id) setHoveredCommentTarget((current) => (current ? null : current));
+                    return;
+                  }
+                  const editor = grapesjsEditorRef.current?.getEditor();
+                  if (!editor) return;
+                  const snapshot = buildGrapesjsCommentSnapshot(editor, id, file.name);
+                  if (!snapshot) return;
+                  setHoveredCommentTarget((current) =>
+                    current && current.elementId === snapshot.elementId && commentSnapshotEqual(current, snapshot)
+                      ? current
+                      : snapshot,
+                  );
+                  setLiveCommentTargets((current) => {
+                    const existing = current.get(snapshot.elementId);
+                    if (existing && commentSnapshotEqual(existing, snapshot)) return current;
+                    return new Map(current).set(snapshot.elementId, snapshot);
+                  });
+                }}
+                onStyleUpdate={() => {
+                  // When the user edits a style via the inspect panel we
+                  // don't need a separate signal — the panel calls adapter
+                  // helpers directly. This hook refreshes the Inspect
+                  // snapshot after direct canvas manipulation (drag / inline
+                  // edit). It fires on every styleUpdate + component:update,
+                  // which is many times per second during a drag, so we
+                  // debounce the computed-style read to a trailing call
+                  // instead of recomputing on every event.
+                  if (!inspectMode || !activeInspectTarget) return;
+                  const elementId = activeInspectTarget.elementId;
+                  if (grapesjsInspectDebounceRef.current) {
+                    clearTimeout(grapesjsInspectDebounceRef.current);
+                  }
+                  grapesjsInspectDebounceRef.current = setTimeout(() => {
+                    grapesjsInspectDebounceRef.current = null;
+                    const editor = grapesjsEditorRef.current?.getEditor();
+                    if (!editor) return;
+                    // Prefer the live selected component (see onSelectTargets
+                    // for why the by-id walk can miss).
+                    const selected = (() => {
+                      try {
+                        return editor.getSelected?.() ?? null;
+                      } catch {
+                        return null;
+                      }
+                    })();
+                    const refreshed = selected
+                      ? extractInspectTargetFromComponent(editor, selected as never)
+                      : extractInspectTarget(editor, elementId);
+                    if (refreshed) setActiveInspectTarget(refreshed);
+                  }, 120);
+                }}
+                onTweaksAvailable={(available) => {
+                  // PR2: scanTweaksAvailability in the adapter surfaces whether
+                  // the canvas document currently contains a `.tw-panel` /
+                  // `.tw-hidden` node. Mirrors the iframe `od:tweaks-available`
+                  // signal; we record it for the future toolbar toggle.
+                  setTweaksAvailable(available);
+                }}
+                onSelectionChange={(info) => {
+                  setGrapesjsSelection(info);
+                }}
+                onZoomChange={(z) => setGrapesjsCanvasZoom(z)}
+                className="artifact-preview-grapesjs"
+              />
+              )}
+            </Suspense>
+          </PreviewDrawOverlay>
+          {useGrapesjs && mode === 'preview' && !grapesjsViewMode ? (() => {
+            const sidebar = (
+              <aside className={`grapesjs-sidebar${grapesjsInspectPortalHost ? ' grapesjs-sidebar-portal' : ''}`} data-testid="grapesjs-sidebar">
+                <StylePanel editorRef={grapesjsEditorRef} selection={grapesjsSelection} />
+              </aside>
+            );
+            if (grapesjsInspectPortalHost) {
+              return createPortal(sidebar, grapesjsInspectPortalHost);
+            }
+            if (editPortalId) return null;
+            return sidebar;
+          })() : null}
+          </>
+        ) : source === null ? (
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         ) : (
           <>
@@ -9292,7 +9540,17 @@ function HtmlViewer({
                   setInspectOverrides((current) =>
                     updateInspectOverride(current, target.elementId, target.selector, prop, value),
                   );
-                  postInspectSet(target.elementId, target.selector, prop, value);
+                  if (useGrapesjs) {
+                    // PR2: skip the iframe postMessage hop and write the
+                    // override straight onto the live GrapesJS Component.
+                    const editor = grapesjsEditorRef.current?.getEditor();
+                    if (editor) {
+                      const camelKey = prop.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+                      applyPreviewStyle(editor, target.elementId, { [camelKey]: value } as Partial<Record<string, string>>);
+                    }
+                  } else {
+                    postInspectSet(target.elementId, target.selector, prop, value);
+                  }
                 }}
                 onResetElement={(elementId) => {
                   setInspectOverrides((current) => {
@@ -9301,7 +9559,13 @@ function HtmlViewer({
                     delete next[elementId];
                     return next;
                   });
-                  postInspectReset(elementId);
+                  if (useGrapesjs) {
+                    // Best-effort: there is no per-prop reset without
+                    // tracking the original values; we leave the
+                    // Component alone and let the user re-apply.
+                  } else {
+                    postInspectReset(elementId);
+                  }
                   setActiveInspectTarget((current) => current && current.elementId === elementId
                     ? current
                     : current);

@@ -100,7 +100,7 @@ input::placeholder, textarea::placeholder { color: var(--text-faint); }
 input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--selected);
-  box-shadow: 0 0 0 3px var(--selected-soft);
+  box-shadow:none !important;
 }
 /* Entry sidebar form fields keep a quieter, neutral focus so the orange
    "Create" CTA stays the loudest thing in the panel. A low-opacity black

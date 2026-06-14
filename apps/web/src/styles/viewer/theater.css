@@ -713,12 +713,9 @@
 .viewer-action,
 .viewer-tab,
 .viewer-toggle {
-  border: 1px solid transparent;
   transition: background 120ms var(--ease-out), border-color 120ms var(--ease-out), color 120ms var(--ease-out);
 }
 .viewer-action:hover:not(:disabled):not([data-coming-soon='true']),
-.viewer-tab:hover { border-color: var(--border); }
-.viewer-tab.active { border-color: var(--border); }
 
 /* ============================================================
    Composer — settings/upload icons consistent sizing + spacing

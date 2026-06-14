@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   hasTweaksTemplate,
+  htmlHasRuntimeScript,
   hasUrlModeBridge,
   htmlNeedsFocusGuard,
   htmlNeedsSandboxShim,
   parseForceInline,
   shouldUrlLoadHtmlPreview,
+  shouldUseGrapesjs,
 } from '../../src/components/file-viewer-render-mode';
 
 describe('shouldUrlLoadHtmlPreview', () => {
@@ -212,54 +214,30 @@ describe('htmlNeedsSandboxShim', () => {
     expect(htmlNeedsSandboxShim('<script>console.log("hi")</script>')).toBe(false);
   });
 
-  it('detects direct localStorage / sessionStorage references in the source', () => {
-    expect(htmlNeedsSandboxShim('<script>localStorage.getItem("k")</script>')).toBe(true);
-    expect(htmlNeedsSandboxShim('<script>sessionStorage.setItem("k","v")</script>')).toBe(true);
-    // Inside an external script tag's surrounding markup still trips the
-    // scan when the literal name appears in the document the iframe loads.
-    expect(htmlNeedsSandboxShim('// uses localStorage to persist theme')).toBe(true);
-  });
-
-  it('does not match incidental substrings that are not the storage globals', () => {
-    expect(htmlNeedsSandboxShim('Storage')).toBe(false);
+  // PR3: localStorage / sessionStorage mentions and external <script src=>
+  // no longer trigger the sandbox shim — GrapesJS is now the default path
+  // and does not execute JS inside its canvas, so storage / boot scripts
+  // don't reach a sandbox that would throw. Only `text/babel` (multi-file
+  // JSX prototypes that genuinely can't work in GrapesJS) keeps triggering.
+  it('does not flag localStorage / sessionStorage mentions (PR3: GrapesJS default)', () => {
+    expect(htmlNeedsSandboxShim('<script>localStorage.getItem("k")</script>')).toBe(false);
+    expect(htmlNeedsSandboxShim('<script>sessionStorage.setItem("k","v")</script>')).toBe(false);
+    expect(htmlNeedsSandboxShim('// uses localStorage to persist theme')).toBe(false);
     expect(htmlNeedsSandboxShim('mylocalStorageWrapper')).toBe(false);
     expect(htmlNeedsSandboxShim('SuperLocalStorage')).toBe(false);
   });
 
-  // Issue #2361 — Tweaks and animations problems
-  // Agent-emitted artifacts commonly read `localStorage` from an *external*
-  // script (e.g. `<script src="boot.js">` that initializes theme/language).
-  // The parent string scan can't see the script body, so prior to #2361 the
-  // helper returned false, the preview took the URL-load path, and the
-  // sandboxed iframe threw `SecurityError` on first read — leaving the
-  // artifact blank until the user toggled Tweaks (which forces srcDoc and
-  // pulls in `injectSandboxShim`). Conservatively route any external script
-  // through srcDoc so the shim is available from the start.
-  it('flags any external <script src=> as needing the shim (issue #2361)', () => {
-    // Plain external script — the original reporter's repro shape.
-    expect(htmlNeedsSandboxShim('<script src="boot.js"></script>')).toBe(true);
-    // ES module import.
-    expect(htmlNeedsSandboxShim('<script type="module" src="main.js"></script>')).toBe(true);
-    // Attributes between <script and src= (defer / async / nonce / crossorigin).
-    expect(htmlNeedsSandboxShim('<script defer src="./app.js"></script>')).toBe(true);
-    expect(htmlNeedsSandboxShim('<script async src="https://cdn.example.com/lib.js"></script>')).toBe(true);
-    // Single-quoted src.
-    expect(htmlNeedsSandboxShim("<script src='./bundle.js'></script>")).toBe(true);
-    // Whitespace around the equals sign.
-    expect(htmlNeedsSandboxShim('<script src = "./bundle.js"></script>')).toBe(true);
-    // Unquoted src value (HTML5 permits unquoted attrs).
-    expect(htmlNeedsSandboxShim('<script src=boot.js></script>')).toBe(true);
-    // Case-insensitive tag name.
-    expect(htmlNeedsSandboxShim('<SCRIPT SRC="boot.js"></SCRIPT>')).toBe(true);
-  });
-
-  it('does not match incidental "src=" in non-script contexts (issue #2361 regression)', () => {
-    // `<img src=>` is not an executable subresource for our purposes.
+  it('does not flag external <script src=> (PR3: GrapesJS default)', () => {
+    expect(htmlNeedsSandboxShim('<script src="boot.js"></script>')).toBe(false);
+    expect(htmlNeedsSandboxShim('<script type="module" src="main.js"></script>')).toBe(false);
+    expect(htmlNeedsSandboxShim('<script defer src="./app.js"></script>')).toBe(false);
+    expect(htmlNeedsSandboxShim('<script async src="https://cdn.example.com/lib.js"></script>')).toBe(false);
+    expect(htmlNeedsSandboxShim("<script src='./bundle.js'></script>")).toBe(false);
+    expect(htmlNeedsSandboxShim('<script src = "./bundle.js"></script>')).toBe(false);
+    expect(htmlNeedsSandboxShim('<script src=boot.js></script>')).toBe(false);
+    expect(htmlNeedsSandboxShim('<SCRIPT SRC="boot.js"></SCRIPT>')).toBe(false);
     expect(htmlNeedsSandboxShim('<img src="logo.png">')).toBe(false);
-    // `<link rel="stylesheet" href=>` similarly does not run JavaScript.
     expect(htmlNeedsSandboxShim('<link rel="stylesheet" href="styles.css">')).toBe(false);
-    // Text content mentioning `script src=` (e.g. a docs page) must not trigger.
-    expect(htmlNeedsSandboxShim('<p>Use <code>&lt;script src=&quot;app.js&quot;&gt;</code></p>')).toBe(false);
   });
 });
 
@@ -268,34 +246,29 @@ describe('htmlNeedsFocusGuard', () => {
     expect(htmlNeedsFocusGuard('<!doctype html><h1>hello</h1>')).toBe(false);
   });
 
-  it('detects window.focus() calls', () => {
+  it('detects inline .focus() calls', () => {
     expect(htmlNeedsFocusGuard('<script>window.focus();</script>')).toBe(true);
     expect(htmlNeedsFocusGuard('<script>window .focus()</script>')).toBe(true);
     expect(htmlNeedsFocusGuard('<script>WINDOW.FOCUS()</script>')).toBe(true);
-  });
-
-  it('detects document.body.focus() calls', () => {
     expect(htmlNeedsFocusGuard('<script>document.body.focus();</script>')).toBe(true);
-    expect(htmlNeedsFocusGuard('<script>document.body .focus()</script>')).toBe(true);
-  });
-
-  it('detects querySelector(...).focus() and chained focus calls', () => {
     expect(htmlNeedsFocusGuard('<script>document.querySelector("input").focus()</script>')).toBe(true);
-    expect(htmlNeedsFocusGuard('<script>document.getElementById("x").focus()</script>')).toBe(true);
     expect(htmlNeedsFocusGuard('<script>myInput.focus()</script>')).toBe(true);
   });
 
-  it('detects autofocus attributes', () => {
-    expect(htmlNeedsFocusGuard('<input autofocus>')).toBe(true);
-    expect(htmlNeedsFocusGuard('<input AUTOFOCUS>')).toBe(true);
-    expect(htmlNeedsFocusGuard('<textarea autofocus></textarea>')).toBe(true);
+  // PR3: autofocus attributes and external <script src=> no longer trip the
+  // focus guard — GrapesJS is the default path and does not execute JS, so
+  // autofocus can't grab host focus and boot scripts can't call .focus().
+  it('does not flag autofocus attributes (PR3: GrapesJS does not execute JS)', () => {
+    expect(htmlNeedsFocusGuard('<input autofocus>')).toBe(false);
+    expect(htmlNeedsFocusGuard('<input AUTOFOCUS>')).toBe(false);
+    expect(htmlNeedsFocusGuard('<textarea autofocus></textarea>')).toBe(false);
   });
 
-  it('detects external script references that may call focus at load', () => {
-    expect(htmlNeedsFocusGuard('<script src="./boot.js"></script>')).toBe(true);
-    expect(htmlNeedsFocusGuard('<script src="app.js"></script>')).toBe(true);
-    expect(htmlNeedsFocusGuard('<script defer src="./assets/init.js"></script>')).toBe(true);
-    expect(htmlNeedsFocusGuard('<SCRIPT SRC="main.js"></SCRIPT>')).toBe(true);
+  it('does not flag external <script src=> (PR3: GrapesJS does not execute JS)', () => {
+    expect(htmlNeedsFocusGuard('<script src="./boot.js"></script>')).toBe(false);
+    expect(htmlNeedsFocusGuard('<script src="app.js"></script>')).toBe(false);
+    expect(htmlNeedsFocusGuard('<script defer src="./assets/init.js"></script>')).toBe(false);
+    expect(htmlNeedsFocusGuard('<SCRIPT SRC="main.js"></SCRIPT>')).toBe(false);
   });
 
   it('does not match inline scripts without focus calls', () => {
@@ -308,5 +281,104 @@ describe('htmlNeedsFocusGuard', () => {
     expect(htmlNeedsFocusGuard('// focus the element')).toBe(false);
     expect(htmlNeedsFocusGuard(':focus')).toBe(false);
     expect(htmlNeedsFocusGuard('focus-visible')).toBe(false);
+  });
+});
+
+describe('shouldUseGrapesjs', () => {
+  const base = {
+    mode: 'preview' as const,
+    isDeck: false,
+    isModule: false,
+    commentMode: false,
+    forceInline: false,
+    needsSandboxShim: false,
+    needsFocusGuard: false,
+  };
+
+  it('routes a plain HTML preview through GrapesJS by default', () => {
+    expect(shouldUseGrapesjs(base)).toBe(true);
+  });
+
+  it('never routes the source Tab through GrapesJS', () => {
+    expect(shouldUseGrapesjs({ ...base, mode: 'source' })).toBe(false);
+  });
+
+  it('skips decks so the load-bearing framework JS survives', () => {
+    expect(shouldUseGrapesjs({ ...base, isDeck: true })).toBe(false);
+  });
+
+  it('skips multi-file module prototypes', () => {
+    expect(shouldUseGrapesjs({ ...base, isModule: true })).toBe(false);
+  });
+
+  it('routes comment mode through GrapesJS (PR2 adapter handles it)', () => {
+    expect(shouldUseGrapesjs({ ...base, commentMode: true })).toBe(true);
+  });
+
+  it('routes inspect mode through GrapesJS (PR2 adapter handles it)', () => {
+    expect(shouldUseGrapesjs({ ...base, inspectMode: true })).toBe(true);
+  });
+
+  it('routes draw mode through GrapesJS (PR2 adapter handles it)', () => {
+    expect(shouldUseGrapesjs({ ...base, drawMode: true })).toBe(true);
+  });
+
+  it('routes palette mode through GrapesJS (PR2 adapter handles it)', () => {
+    expect(shouldUseGrapesjs({ ...base, paletteActive: true })).toBe(true);
+  });
+
+  it('routes tweaks template through GrapesJS (PR2 adapter handles it)', () => {
+    expect(shouldUseGrapesjs({ ...base, tweaksBridge: true })).toBe(true);
+  });
+
+  it('still skips when a load-bearing disqualifier combines with these modes', () => {
+    // deck wins over comment
+    expect(shouldUseGrapesjs({ ...base, isDeck: true, commentMode: true })).toBe(false);
+    // sandbox shim wins over draw
+    expect(shouldUseGrapesjs({ ...base, needsSandboxShim: true, drawMode: true })).toBe(false);
+    // force inline wins over palette
+    expect(shouldUseGrapesjs({ ...base, forceInline: true, paletteActive: true })).toBe(false);
+  });
+
+  it('skips React-component renderer', () => {
+    expect(shouldUseGrapesjs({ ...base, isReactComponent: true })).toBe(false);
+  });
+
+  it('routes runtime-script HTML through GrapesJS (PR3: artifact JS preserved on save; canvas just does not execute it)', () => {
+    expect(shouldUseGrapesjs({ ...base, runtimeScript: true })).toBe(true);
+    expect(shouldUseGrapesjs({ ...base, runtimeScript: true, inspectMode: true })).toBe(true);
+  });
+
+  it('skips forceInline so the srcDoc path stays available', () => {
+    expect(shouldUseGrapesjs({ ...base, forceInline: true })).toBe(false);
+  });
+
+  it('skips Babel / Web Storage artifacts that need the sandbox shim', () => {
+    expect(shouldUseGrapesjs({ ...base, needsSandboxShim: true })).toBe(false);
+  });
+
+  it('skips artifacts that steal focus on load', () => {
+    expect(shouldUseGrapesjs({ ...base, needsFocusGuard: true })).toBe(false);
+  });
+});
+
+describe('htmlHasRuntimeScript', () => {
+  it('matches inline and external runtime scripts', () => {
+    expect(htmlHasRuntimeScript('<script>boot()</script>')).toBe(true);
+    expect(htmlHasRuntimeScript('<script type="module" src="./app.js"></script>')).toBe(true);
+    expect(htmlHasRuntimeScript('<script type=text/javascript src="./app.js"></script>')).toBe(true);
+  });
+
+  it('ignores data-only script blocks', () => {
+    expect(htmlHasRuntimeScript('<script type="application/json">{}</script>')).toBe(false);
+    expect(htmlHasRuntimeScript('<script type="application/ld+json">{}</script>')).toBe(false);
+    expect(htmlHasRuntimeScript('<script type="importmap">{ "imports": {} }</script>')).toBe(false);
+    expect(htmlHasRuntimeScript('<script type="speculationrules">{}</script>')).toBe(false);
+  });
+
+  it('returns false for empty input', () => {
+    expect(htmlHasRuntimeScript('')).toBe(false);
+    expect(htmlHasRuntimeScript(null)).toBe(false);
+    expect(htmlHasRuntimeScript(undefined)).toBe(false);
   });
 });

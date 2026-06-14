@@ -166,24 +166,134 @@ export function parseForceInline(search: string | URLSearchParams | null | undef
  * path injects `injectPreviewFocusGuard` to suppress this; URL-load has no
  * such guard, so we force the srcDoc path instead.
  *
- * Detection covers two cases:
- *
- *   1. Inline `.focus(` calls and `autofocus` attributes — directly visible
- *      in the document source.
- *   2. External `<script src=...>` references — we cannot inspect the linked
- *      file's content, so we conservatively assume it may call focus.
- *
- * False positives just route the artifact through the slightly slower srcDoc
- * path, which is the safe direction.
+ * PR3 update: GrapesJS is now the default path and does NOT execute JS
+ * inside its canvas iframe, so `.focus()` / `autofocus` / external scripts
+ * cannot steal host focus. This helper now only fires on the rare inline
+ * `<script>` that directly calls `.focus(` on `window` / `document` — kept
+ * as a defensive signal for the iframe fallback path that may still be
+ * selected by other disqualifiers (deck / module / React-component
+ * renderer). External `<script src=>` no longer trips this guard because
+ * most agent-emitted artifacts ship a boot script, and routing them all
+ * to srcDoc defeats the GrapesJS-default goal.
  */
 export function htmlNeedsFocusGuard(source: string): boolean {
+  // Only literal inline `.focus(` calls remain. `autofocus` attributes and
+  // external script references no longer trigger — GrapesJS doesn't run
+  // the artifact JS, and the iframe path's own focus guard handles the
+  // genuine focus-grabbers that slip through.
   if (/\.\s*focus\s*\(/i.test(source)) return true;
-  if (/\bautofocus\b/i.test(source)) return true;
-  if (/<script\b[^>]*\bsrc\s*=/i.test(source)) return true;
+  return false;
+}
+
+/**
+ * Decision payload for routing an HTML preview into the GrapesJS canvas
+ * instead of the legacy iframe (URL-load or srcDoc). When this returns
+ * true, FileViewer mounts <GrapesjsEditor> and skips the bridge injection
+ * path entirely. When false, every existing iframe branch (deck, Babel
+ * shim, focus guard, force inline, React-component renderer) keeps working
+ * untouched.
+ *
+ * PR2 update: comment / inspect / draw / palette / tweaks modes now route
+ * through GrapesJS when their flags are set — the host subscribes to
+ * editor events via the adapter in `grapesjs-bridge-adapter.ts`. Only the
+ * load-bearing disqualifiers (deck, module, runtime script, sandbox shim,
+ * focus guard, forceInline, React component) still fall back to the
+ * iframe path.
+ */
+export interface GrapesjsDecision {
+  /** Only the preview Tab is a candidate; source Tab never mounts a canvas. */
+  mode: 'preview' | 'source';
+  /** Decks have load-bearing JS (deck-framework.ts); GrapesJS would drop it. */
+  isDeck: boolean;
+  /** Multi-file prototypes (Babel/React) need module resolution GrapesJS can't do. */
+  isModule: boolean;
+  /** Comment mode is now driven by GrapesJS selection events. */
+  commentMode: boolean;
+  /** Inspect mode is now driven by GrapesJS selection events. */
+  inspectMode?: boolean;
+  /** Draw annotations now use the GrapesJS canvas iframe for snapshots. */
+  drawMode?: boolean;
+  /** Palette tweaks now write CSS variables on the GrapesJS canvas document. */
+  paletteActive?: boolean;
+  /** Class-based tweaks template (`.tw-panel`) — availability probed via GrapesJS. */
+  tweaksBridge?: boolean;
+  /** React-component renderer takes its own srcDoc path. */
+  isReactComponent?: boolean;
+  /** HTML contains runtime JavaScript that GrapesJS does not execute. */
+  runtimeScript?: boolean;
+  /** User opted into srcDoc via `?forceInline=1`. */
+  forceInline: boolean;
+  /** Babel / Web Storage patterns need the srcDoc sandbox shim. */
+  needsSandboxShim: boolean;
+  /** Source calls `.focus()` / has external scripts — needs srcDoc focus guard. */
+  needsFocusGuard: boolean;
+}
+
+/**
+ * Returns true when an HTML preview should mount the GrapesJS canvas
+ * instead of the legacy iframe. Pure function — caller is responsible
+ * for the non-HTML / source-mode / deck early returns.
+ *
+ * PR2: comment / inspect / draw / palette / tweaks no longer disqualify.
+ * The host adapts them to GrapesJS via `grapesjs-bridge-adapter.ts`.
+ *
+ * PR3: `runtimeScript` no longer disqualifies either. GrapesJS does not
+ * execute the artifact's own JS inside the canvas, so interactive bits
+ * (scrollspy, tab toggles, etc.) won't run in edit mode — but the saved
+ * artifact keeps its `<script>` and runs normally in the real preview /
+ * deployed page. Only load-bearing disqualifiers that GrapesJS cannot
+ * represent (deck framework, multi-file modules, Babel sandbox shim,
+ * focus guard, forceInline, React-component renderer) keep the iframe
+ * path.
+ */
+export function shouldUseGrapesjs(d: GrapesjsDecision): boolean {
+  if (d.mode !== 'preview') return false;
+  if (d.isDeck) return false;
+  if (d.isModule) return false;
+  if (d.isReactComponent) return false;
+  if (d.forceInline) return false;
+  if (d.needsSandboxShim) return false;
+  if (d.needsFocusGuard) return false;
+  return true;
+}
+
+/**
+ * Return true when an HTML document contains a visible runtime script.
+ * GrapesJS PR1 intentionally edits static-ish HTML body markup; it does
+ * not execute the artifact's own JS inside the canvas. Script-driven pages
+ * should keep the iframe path until a later PR models those runtime effects.
+ */
+export function htmlHasRuntimeScript(source: string | null | undefined): boolean {
+  if (!source) return false;
+  for (const match of source.matchAll(/<script\b([^>]*)>/gi)) {
+    const attrs = match[1] ?? '';
+    const typeMatch = attrs.match(/\stype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/i);
+    const type = (typeMatch?.[1] ?? typeMatch?.[2] ?? typeMatch?.[3] ?? '').trim().toLowerCase();
+    if (!type) return true;
+    if (
+      type === 'application/json' ||
+      type === 'application/ld+json' ||
+      type === 'importmap' ||
+      type === 'speculationrules'
+    ) {
+      continue;
+    }
+    return true;
+  }
   return false;
 }
 
 export function htmlNeedsSandboxShim(source: string): boolean {
+  // PR3 update: GrapesJS is now the default path and serves its own canvas
+  // document where storage / external scripts are irrelevant. The srcDoc
+  // path (used by deck / module / React-component fallbacks) still needs
+  // the sandbox shim for genuine multi-file Babel/JSX prototypes that
+  // fetch sibling `.jsx` files at runtime. Only the `text/babel` script
+  // type signals that case reliably; localStorage / sessionStorage mentions
+  // and external `<script src=>` no longer trip the guard — most agent-
+  // emitted artifacts ship a boot script and would otherwise never reach
+  // GrapesJS.
+  //
   // Quote-optional: HTML5 permits unquoted attribute values
   // (`<script type=text/babel src=app.jsx>`). The trailing `\b` rejects
   // same-prefix word continuations like `text/babelish`. Hyphenated variants
@@ -192,12 +302,5 @@ export function htmlNeedsSandboxShim(source: string): boolean {
   // the safe direction. Tightening to a `(?=[\s>"'])` lookahead would also
   // reject hyphenated variants if a real case ever surfaces.
   if (/<script\s[^>]*\btype\s*=\s*["']?text\/babel\b/i.test(source)) return true;
-  if (/\b(?:local|session)Storage\b/.test(source)) return true;
-  // External `<script ... src=...>` — see issue #2361. `\s[^>]*?` requires at
-  // least one whitespace after `<script` (so we don't match `<scripts>`-like
-  // text or self-closing-ish edge cases) and stays non-greedy to keep the
-  // search bounded to the tag itself. Lazy match avoids spilling into
-  // unrelated `src=` attributes on later tags in the same document.
-  if (/<script\s[^>]*?\bsrc\s*=/i.test(source)) return true;
   return false;
 }

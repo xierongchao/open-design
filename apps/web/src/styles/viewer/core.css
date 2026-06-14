@@ -396,8 +396,8 @@ html.od-export-capture-active .od-toast {
 }
 .viewer-tab:hover { background: var(--bg-subtle); color: var(--text); }
 .viewer-tab.active {
-  background: var(--bg-subtle);
-  color: var(--text);
+  background:var(--accent-tint);
+  color: var(--accent-strong);
   font-weight: 500;
 }
 .viewer-tab-dirty {
