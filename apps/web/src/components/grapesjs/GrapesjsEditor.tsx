@@ -72,6 +72,130 @@ function readElementStyles(el: HTMLElement | null): Record<string, string> {
   }
 }
 
+/**
+ * Normalize a CSS color string (rgb()/rgba()/named/#hex) to an upper-case
+ * 6-digit hex, dropping the alpha channel. Used by collectColorsFromSelection
+ * and replaceColorsInSelection so "rgb(0,0,0)" and "#000000" compare equal.
+ * Returns null for transparent / empty / unparseable values.
+ */
+function normalizeColorToHex(value: string | undefined): string | null {
+  if (!value) return null;
+  const v = value.trim().toLowerCase();
+  if (!v || v === 'transparent' || v === 'none' || v === 'initial' || v === 'inherit') return null;
+  if (/^#[0-9a-f]{6}$/.test(v)) return v.toUpperCase();
+  if (/^#[0-9a-f]{3}$/.test(v)) {
+    return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`.toUpperCase();
+  }
+  const m = v.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/);
+  if (!m) return null;
+  const to = (n: string) => Math.round(Number(n)).toString(16).padStart(2, '0');
+  const hex = `#${to(m[1] ?? '0')}${to(m[2] ?? '0')}${to(m[3] ?? '0')}`;
+  // Skip fully-transparent colors (alpha 0).
+  const alphaM = v.match(/rgba?\([^)]*,\s*([\d.]+)\s*\)/);
+  if (alphaM && Number(alphaM[1]) === 0) return null;
+  return hex.toUpperCase();
+}
+
+/**
+ * Recursively gather every color (background-color, border-*-color, color)
+ * used inside the selection's subtree. Returns de-duplicated hex strings.
+ * Reads computed style so colors from external CSS classes are included.
+ */
+function collectColorsFromSelection(editor: GrapesjsEditorInstance | null): string[] {
+  if (!editor) return [];
+  try {
+    const all = (editor.getSelectedAll?.() ?? []) as Component[];
+    if (all.length === 0) return [];
+    const found = new Set<string>();
+    const seen = new WeakSet<Element>();
+    for (const comp of all) {
+      const root = getElementFromComponent(comp);
+      if (!root) continue;
+      const win = root.ownerDocument.defaultView;
+      if (!win) continue;
+      const elements: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
+      for (const el of elements) {
+        if (seen.has(el)) continue;
+        seen.add(el);
+        let cs: CSSStyleDeclaration;
+        try { cs = win.getComputedStyle(el); } catch { continue; }
+        const candidates = [
+          cs.getPropertyValue('background-color'),
+          cs.getPropertyValue('color'),
+          cs.getPropertyValue('border-top-color'),
+        ];
+        for (const c of candidates) {
+          const hex = normalizeColorToHex(c);
+          if (hex) found.add(hex);
+        }
+      }
+    }
+    return Array.from(found);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Replace colors in the selection's subtree whose normalized hex matches a
+ * target with `replacement`. Edits each component's inline style (so the
+ * change round-trips through getDocument) and returns the edit count.
+ */
+function replaceColorsInSelection(editor: GrapesjsEditorInstance | null, targets: string[], replacement: string): number {
+  if (!editor || targets.length === 0) return 0;
+  try {
+    const targetSet = new Set(targets.map((t) => normalizeColorToHex(t) ?? t.toUpperCase()));
+    const all = (editor.getSelectedAll?.() ?? []) as Component[];
+    let count = 0;
+    const componentByEl = new Map<Element, Component>();
+    const collectComponents = (comp: Component) => {
+      const el = getElementFromComponent(comp);
+      if (el) componentByEl.set(el, comp);
+      try {
+        const children = comp.components?.();
+        if (children) for (const child of children) collectComponents(child as Component);
+      } catch { /* ignore */ }
+    };
+    for (const comp of all) collectComponents(comp);
+    const win = editor.Canvas.getDocument?.()?.defaultView ?? null;
+    for (const [el, comp] of componentByEl) {
+      if (!win) continue;
+      let cs: CSSStyleDeclaration;
+      try { cs = win.getComputedStyle(el); } catch { continue; }
+      const props: Array<[string, string]> = [
+        ['background-color', 'backgroundColor'],
+        ['color', 'color'],
+        ['border-top-color', 'borderTopColor'],
+        ['border-right-color', 'borderRightColor'],
+        ['border-bottom-color', 'borderBottomColor'],
+        ['border-left-color', 'borderLeftColor'],
+      ];
+      let changed = false;
+      const next = { ...(comp.getStyle?.() ?? {}) } as Record<string, string>;
+      for (const [cssKey, styleKey] of props) {
+        const hex = normalizeColorToHex(cs.getPropertyValue(cssKey));
+        if (hex && targetSet.has(hex)) {
+          // GrapesJS getStyle()/setStyle() use camelCase keys, so write the
+          // camelCase form (styleKey), not the kebab CSS form.
+          next[styleKey] = replacement;
+          changed = true;
+        }
+      }
+      if (changed) {
+        try { comp.setStyle?.(next); count += 1; } catch { /* ignore */ }
+      }
+    }
+    if (count > 0) {
+      // Trigger a refresh so the canvas + StylePanel re-render with the new
+      // colors (setStyle alone doesn't always fire the selection snapshot).
+      try { editor.getSelected?.()?.trigger?.('change:attributes'); } catch { /* ignore */ }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
 function toCssStyleProps(styles: Record<string, string>): Record<string, string> {
   // Convert camelCase keys to kebab-case CSS prop names for element.style assignment.
   const out: Record<string, string> = {};
@@ -169,6 +293,24 @@ export interface GrapesjsEditorHandle {
   setViewport(width: number, height: number): void;
   /** Set the canvas frame width/height in px (canvas-level W/H control). */
   setCanvasSize(width?: number, height?: number): void;
+  /** Replace the `src` attribute of every selected component (used by paste /
+   *  double-click-upload on an <img>). No-op when nothing is selected. */
+  setSelectedSrc(src: string): void;
+  /** Read the `src` of the first selected component ('' if none / not set). */
+  getSelectedSrc(): string;
+  /** Insert a new <img> component into the canvas (or into the selected
+   *  container) and select it. Used by the screenshot-paste flow. */
+  insertImageComponent(src: string): void;
+  /** Re-assert the current selection so GrapesJS redraws the selection box +
+   *  resize handles. Used after closing a host-side floating editor (color
+   *  picker), which can otherwise leave the handles stale/missing. */
+  reselectCurrent(): void;
+  /** Recursively collect every color (background/border/text) used inside the
+   *  selection's subtree, de-duplicated. Returns [] when nothing is selected. */
+  collectColorsFromSelection(): string[];
+  /** Replace any color in the selection's subtree that matches a target (by
+   *  normalized hex) with `replacement`. Returns the count of edits applied. */
+  replaceColors(targets: string[], replacement: string): number;
   /**
    * Return the underlying GrapesJS Editor instance, or null when not yet
    * ready / already destroyed. Callers must null-check before use. The
@@ -227,6 +369,12 @@ export interface GrapesjsEditorProps {
   /** Fires when the canvas zoom changes so the host can update its zoom % display. */
   onZoomChange?: (zoom: number) => void;
   /**
+   * Fires when the user double-clicks an <img> component. The host owns the
+   * upload UI (the fill panel's image tab) so we suppress GrapesJS's native
+   * asset-manager modal and hand control to the parent instead.
+   */
+  onImageEditRequest?: () => void;
+  /**
    * PR3: when provided, the editor renders its LayerManager panel into this
    * container after `load`. The host owns the container's position/visibility
    * so it can dock into a sidebar or hide it per mode.
@@ -255,6 +403,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       onTweaksAvailable,
       onSelectionChange,
       onZoomChange,
+      onImageEditRequest,
       layersPanelRef,
       stylePanelRef,
     } = props;
@@ -275,6 +424,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const onTweaksAvailableRef = useRef(onTweaksAvailable);
     const onSelectionChangeRef = useRef(onSelectionChange);
     const onZoomChangeRef = useRef(onZoomChange);
+    const onImageEditRequestRef = useRef(onImageEditRequest);
     // Refs set inside the boot effect so handle methods (useImperativeHandle,
     // which closes over a stable deps array) can reach into the live editor's
     // scheduleEmit + selection-snapshot helpers.
@@ -320,6 +470,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     useEffect(() => {
       onZoomChangeRef.current = onZoomChange;
     }, [onZoomChange]);
+    useEffect(() => {
+      onImageEditRequestRef.current = onImageEditRequest;
+    }, [onImageEditRequest]);
     // Bridge the imperative setCtxMenuRef (written by the canvas-doc
     // contextmenu handler inside the boot effect) to React state so the
     // CanvasContextMenu portal renders.
@@ -1387,6 +1540,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             if (!doc) return;
             if ((doc as unknown as { __odNestedSelect?: true }).__odNestedSelect) return;
             (doc as unknown as { __odNestedSelect?: true }).__odNestedSelect = true;
+            // The React host document (outside the canvas iframe) — used so the
+            // clipboard paste listener works even when focus is on a host UI
+            // control rather than inside the canvas frame.
+            const hostDocument = containerRef.current?.ownerDocument ?? document;
 
             // Resolve the computed `display` of a GrapesJS component's rendered
             // element. Returns '' when the element isn't materialised yet.
@@ -1484,9 +1641,15 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 editor.select(comp);
                 return;
               }
-              // Image components own their dblclick (active state) — don't
-              // intercept.
-              if (type === 'image') return;
+              // Double-click on an <img>: hand control to the host so it can
+              // open the fill panel's image tab (replace src) instead of
+              // GrapesJS's native asset-manager modal.
+              if (type === 'image') {
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+                onImageEditRequestRef.current?.();
+                return;
+              }
               // Single-click selected the outer flex ancestor; double-click
               // "enters" one level by selecting the actual component under the
               // cursor (not its first child — that would descend too far and
@@ -1540,6 +1703,71 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 doc.removeEventListener('contextmenu', onCtxMenu, true);
                 delete (doc as unknown as { __odNestedSelect?: true }).__odNestedSelect;
               } catch { /* ignore */ }
+            };
+
+            // Clipboard image paste: when the user pastes a screenshot (e.g.
+            // Ctrl/Cmd+V after a screenshot tool) while the canvas has focus,
+            // insert it as an <img> — or, if an <img> is selected, replace
+            // its src. We attach to BOTH the canvas doc and the host window so
+            // the paste works whether focus is inside the iframe or outside.
+            const handleImagePaste = async (ev: ClipboardEvent) => {
+              if (readOnlyRef.current) return;
+              const items = ev.clipboardData?.items;
+              if (!items || items.length === 0) return;
+              let imageItem: DataTransferItem | null = null;
+              for (const item of Array.from(items)) {
+                if (item.kind === 'file' && item.type.startsWith('image/')) { imageItem = item; break; }
+              }
+              if (!imageItem) return;
+              const file = imageItem.getAsFile();
+              if (!file) return;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              try {
+                const { readImageFileToDataUrl } = await import('./image-upload');
+                const { dataUrl, width, height } = await readImageFileToDataUrl(file);
+                const sel = editor.getSelected?.() as Component | undefined;
+                const isImg = sel && String(sel.get?.('type') ?? '') === 'image';
+                if (isImg) {
+                  // Pasting onto an <img> replaces its src directly.
+                  try { sel.addAttributes?.({ src: dataUrl }); } catch { /* ignore */ }
+                  refreshSelectionSnapshotRef.current?.();
+                } else {
+                  // Otherwise insert a sized <div> with the screenshot as a
+                  // background-image fill, so the user can reuse the fill
+                  // panel's image settings (size/repeat) on it afterwards.
+                  const wrapper = editor.Components.getComponents().get(0);
+                  const bgCss = `url("${dataUrl}")`;
+                  // Size the div to the image's natural dimensions (clamped)
+                  // so the pasted screenshot is visible at a sensible size.
+                  const w = width > 0 ? Math.min(width, 800) : 320;
+                  const h = height > 0 ? Math.min(height, 800) : 240;
+                  const created = (sel ?? wrapper)?.append?.({
+                    tagName: 'div',
+                    style: {
+                      width: `${w}px`,
+                      height: `${h}px`,
+                      backgroundImage: bgCss,
+                      backgroundSize: 'cover',
+                      backgroundPosition: 'center',
+                      backgroundRepeat: 'no-repeat',
+                    },
+                  } as never);
+                  const node = Array.isArray(created) ? (created[0] ?? null) : (created ?? null);
+                  if (node) { try { editor.select(node as Component); } catch { /* ignore */ } }
+                }
+                scheduleEmitRef.current?.();
+              } catch { /* ignore — invalid image or read failure */ }
+            };
+            const onDocPaste = (ev: ClipboardEvent) => { void handleImagePaste(ev); };
+            doc.addEventListener('paste', onDocPaste, true);
+            const onHostPaste = (ev: ClipboardEvent) => { void handleImagePaste(ev); };
+            hostDocument.addEventListener('paste', onHostPaste, true);
+            const prevDetach = detachNestedSelect;
+            detachNestedSelect = () => {
+              try { doc.removeEventListener('paste', onDocPaste, true); } catch { /* ignore */ }
+              try { hostDocument.removeEventListener('paste', onHostPaste, true); } catch { /* ignore */ }
+              prevDetach?.();
             };
           };
           editor.on('load', attachNestedSelect);
@@ -2068,6 +2296,67 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             scheduleEmitRef.current?.();
           } catch { /* ignore */ }
         },
+        setSelectedSrc: (src: string) => {
+          const editor = editorRef.current;
+          if (!editor) return;
+          try {
+            const all = (editor.getSelectedAll?.() ?? []) as Component[];
+            for (const c of all) {
+              try { c.addAttributes?.({ src }); } catch { /* ignore */ }
+            }
+            refreshSelectionSnapshotRef.current?.();
+          } catch { /* ignore */ }
+        },
+        getSelectedSrc: () => {
+          const editor = editorRef.current;
+          if (!editor) return '';
+          try {
+            const sel = editor.getSelected?.() as Component | undefined;
+            if (!sel) return '';
+            return String(sel.get?.('attributes')?.src ?? sel.get?.('src') ?? '');
+          } catch { return ''; }
+        },
+        insertImageComponent: (src: string) => {
+          const editor = editorRef.current;
+          if (!editor) return;
+          try {
+            const selected = editor.getSelected?.() as Component | undefined;
+            // Insert a sized <div> with the image as a background-image fill so
+            // the fill panel's image settings can be reused on it.
+            const host = (selected && selected.get?.('components') != null) ? selected : null;
+            const target = host ?? editor.Components.getComponents().get(0);
+            const created = target?.append?.({
+              tagName: 'div',
+              style: {
+                width: '320px',
+                height: '240px',
+                backgroundImage: `url("${src}")`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat',
+              },
+            } as never);
+            const node = Array.isArray(created) ? (created[0] ?? null) : (created ?? null);
+            if (node) {
+              try { editor.select(node as Component); } catch { /* ignore */ }
+            }
+            scheduleEmitRef.current?.();
+          } catch { /* ignore */ }
+        },
+        reselectCurrent: () => {
+          const editor = editorRef.current;
+          if (!editor) return;
+          try {
+            const sel = editor.getSelected?.() as Component | undefined;
+            if (!sel) return;
+            // Re-selecting with no event arg re-asserts the selection and
+            // forces the canvas to redraw the box + resize handles.
+            editor.select(sel);
+            refreshSelectionSnapshotRef.current?.();
+          } catch { /* ignore */ }
+        },
+        collectColorsFromSelection: () => collectColorsFromSelection(editorRef.current),
+        replaceColors: (targets: string[], replacement: string) => replaceColorsInSelection(editorRef.current, targets, replacement),
         getEditor: () => editorRef.current ?? null,
       }),
       [html, layersPanelRef, stylePanelRef],

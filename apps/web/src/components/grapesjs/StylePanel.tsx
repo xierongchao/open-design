@@ -30,6 +30,7 @@ import {
   AlignStartVertical,
   Columns2,
   Combine,
+  ChevronDown,
   Droplet,
   Eye,
   EyeOff,
@@ -68,6 +69,7 @@ import {
   type GradientValue,
 } from '../GradientEditor';
 import type { GrapesjsEditorHandle, SelectionSnapshot } from './GrapesjsEditor';
+import { readImageFileToDataUrl } from './image-upload';
 import {
   hexToRgb,
   rgbToHex,
@@ -88,6 +90,13 @@ import styles from './StylePanel.module.css';
 export interface StylePanelProps {
   editorRef: React.MutableRefObject<GrapesjsEditorHandle | null>;
   selection: SelectionSnapshot | null;
+  /**
+   * Incremented each time the user double-clicks an <img> in the canvas.
+   * The panel watches this counter and, when the selected element is an
+   * <img>, opens the fill panel's image tab so the uploaded image replaces
+   * the <img>'s src (instead of a background-image fill).
+   */
+  imageEditSignal?: number;
 }
 
 type StyleMap = Record<string, string>;
@@ -112,8 +121,8 @@ interface ColorEditorState {
     onModeChange: (mode: 'solid' | 'gradient' | 'image') => void;
     gradient: GradientValue;
     onGradientChange: (g: GradientValue) => void;
-    imageState: { url: string; size: string; repeat: string };
-    onImageChange: (patch: Partial<{ url: string; size: string; repeat: string }>) => void;
+    imageState: { url: string; size: string; repeat: string; position: string };
+    onImageChange: (patch: Partial<{ url: string; size: string; repeat: string; position: string }>) => void;
   };
 }
 
@@ -324,8 +333,32 @@ function replaceRotation(transform: string | undefined, degrees: number): string
   return `${base}${base ? ' ' : ''}rotate(${degrees}deg)`;
 }
 
-function dimensionMode(value: string | undefined): DimensionMode {
-  if (!value || value === 'auto' || value.includes('fit-content') || value.includes('max-content')) return 'hug';
+// Translate the fill-panel size option into the CSS background-size value
+// written to the element. "裁剪" (od-crop) shows the image at its natural size
+// (the container clips the overflow); other options map 1:1 to CSS keywords.
+function bgSizeFromOption(size: string): string {
+  if (size === 'od-crop') return 'auto';
+  return size;
+}
+
+// Inverse of bgSizeFromOption: map the element's CSS background-size back to
+// the option shown in the <select>. CSS 'auto' (natural size, clipped) is the
+// 裁剪 option.
+function optionFromBgSize(css: string): string {
+  if (css === 'auto') return 'od-crop';
+  return css;
+}
+
+function dimensionMode(value: string | undefined, tagName?: string): DimensionMode {
+  // Replaced elements like <img> resolve fit-content/max-content to a pixel
+  // length through getComputedStyle, so "auto" is the only hug value that
+  // round-trips for them. Non-replaced elements keep fit-content.
+  const isImg = (tagName ?? '').toLowerCase() === 'img';
+  if (isImg) {
+    if (!value || value === 'auto') return 'hug';
+  } else {
+    if (!value || value === 'auto' || value.includes('fit-content') || value.includes('max-content')) return 'hug';
+  }
   if (value.includes('%') || value.includes('calc(')) return 'fill';
   return 'fixed';
 }
@@ -535,9 +568,9 @@ function ColorEditor({
   /** Apply a new gradient value. */
   onGradientChange?: (g: GradientValue) => void;
   /** Current image-fill state (url/size/repeat) for image mode. */
-  imageState?: { url: string; size: string; repeat: string };
+  imageState?: { url: string; size: string; repeat: string; position: string };
   /** Apply image-fill changes. */
-  onImageChange?: (patch: Partial<{ url: string; size: string; repeat: string }>) => void;
+  onImageChange?: (patch: Partial<{ url: string; size: string; repeat: string; position: string }>) => void;
 }) {
   // Parse the incoming CSS color into HSV + alpha state.
   const [colorValue, setColorValue] = useState<ColorValue>(() => parseCssToColorValue(value));
@@ -720,44 +753,15 @@ function ColorEditor({
           <GradientEditor value={gradient} onChange={onGradientChange} />
         </div>
       ) : supportsFillModes && mode === 'image' && onImageChange ? (
-        <div className={styles.imageFillSection}>
-          <label className={styles.row}>
-            <span className={styles.subLabel}>图片地址</span>
-            <input
-              className={styles.textInput}
-              type="text"
-              placeholder="https://... 或选择文件"
-              value={imageState?.url ?? ''}
-              onChange={(e) => onImageChange({ url: e.target.value.trim() })}
-            />
-          </label>
-          <label className={styles.row}>
-            <span className={styles.subLabel}>尺寸</span>
-            <select
-              className={styles.select}
-              value={imageState?.size ?? 'cover'}
-              onChange={(e) => onImageChange({ size: e.target.value })}
-            >
-              <option value="cover">覆盖</option>
-              <option value="contain">包含</option>
-              <option value="auto">原始</option>
-              <option value="100% 100%">拉伸</option>
-            </select>
-          </label>
-          <label className={styles.row}>
-            <span className={styles.subLabel}>重复</span>
-            <select
-              className={styles.select}
-              value={imageState?.repeat ?? 'no-repeat'}
-              onChange={(e) => onImageChange({ repeat: e.target.value })}
-            >
-              <option value="no-repeat">不重复</option>
-              <option value="repeat">重复</option>
-              <option value="repeat-x">水平重复</option>
-              <option value="repeat-y">垂直重复</option>
-            </select>
-          </label>
-        </div>
+        <ImageFillControl
+          url={imageState?.url ?? ''}
+          size={imageState?.size ?? 'cover'}
+          repeat={imageState?.repeat ?? 'no-repeat'}
+          onUrlChange={(url) => onImageChange({ url })}
+          onSizeChange={(size) => onImageChange({ size: bgSizeFromOption(size) })}
+          onRepeatChange={(repeat) => onImageChange({ repeat })}
+          onCrop={(cssSize, cssPosition) => onImageChange({ size: cssSize, position: cssPosition })}
+        />
       ) : (
       <>
       {/* SV canvas — wrapped in a relative container so the marker overlay
@@ -989,22 +993,396 @@ function CompactSelect({
   );
 }
 
+/**
+ * Interactive crop editor for image fill (裁剪). Renders a fixed viewport
+ * showing the image; the user drags the image to pan and resizes a crop box
+ * (8 handles, Shift = lock aspect ratio) to choose which region is visible.
+ * The crop is committed as real CSS: background-size = natural size scaled by
+ * the chosen zoom, background-position = negative offset so the cropped region
+ * pins to the element's top-left, with the element's own overflow:hidden doing
+ * the clipping.
+ *
+ * Props:
+ *  - url: image data URL
+ *  - bgSize: current background-size CSS (px or keyword) for read-back
+ *  - bgPosition: current background-position CSS
+ *  - onChange(cssSize, cssPosition): commit the crop as CSS values
+ */
+const CROP_VIEWPORT_W = 200;
+const CROP_VIEWPORT_H = 140;
+
+function CropEditor({
+  url,
+  bgSize,
+  bgPosition,
+  onChange,
+}: {
+  url: string;
+  bgSize: string;
+  bgPosition: string;
+  onChange: (cssSize: string, cssPosition: string) => void;
+}) {
+  const [natural, setNatural] = useState({ w: 0, h: 0 });
+  // Zoom = display pixels per source pixel. Crop box is in VIEWPORT coords.
+  const [zoom, setZoom] = useState(1);
+  // Pan offset of the image layer's top-left within the viewport (px). Can be
+  // negative (image shifted up/left so a different region shows through).
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  // Crop box rect inside the viewport (the visible region). Default = full
+  // viewport so the whole viewport is the "显示区域".
+  const [crop, setCrop] = useState({ x: 0, y: 0, w: CROP_VIEWPORT_W, h: CROP_VIEWPORT_H });
+  interface CropOrig { zoom: number; panX: number; panY: number; cx: number; cy: number; cw: number; ch: number; }
+  const dragRef = useRef<{ mode: 'pan' | 'move' | 'resize'; startX: number; startY: number; orig: CropOrig; handle?: string } | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const ownerDocument = viewportRef.current?.ownerDocument ?? document;
+
+  // Load the image to read natural dimensions; seed an initial zoom that fits
+  // the image into the viewport (contain), centered.
+  useEffect(() => {
+    if (!url) return;
+    const img = ownerDocument.createElement('img');
+    img.onload = () => {
+      const nw = img.naturalWidth || 1;
+      const nh = img.naturalHeight || 1;
+      setNatural({ w: nw, h: nh });
+      const fitZoom = Math.min(CROP_VIEWPORT_W / nw, CROP_VIEWPORT_H / nh);
+      setZoom(fitZoom);
+      const dw = nw * fitZoom;
+      const dh = nh * fitZoom;
+      setPan({ x: (CROP_VIEWPORT_W - dw) / 2, y: (CROP_VIEWPORT_H - dh) / 2 });
+      // Emit the initial crop state as CSS.
+      emitCrop(fitZoom, { x: (CROP_VIEWPORT_W - dw) / 2, y: (CROP_VIEWPORT_H - dh) / 2 }, crop);
+    };
+    img.src = url;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  const emitCrop = useCallback(
+    (z: number, p: { x: number; y: number }, box: { x: number; y: number; w: number; h: number }) => {
+      // background-size: scaled image (px). background-position: shift so the
+      // crop box's top-left maps to the element's origin. The element's
+      // overflow:hidden clips everything outside its own box.
+      const sizeW = Math.round(natural.w * z);
+      // position = pan - cropBox origin (so cropBox.x becomes 0 in element space)
+      const px = Math.round(p.x - box.x);
+      const py = Math.round(p.y - box.y);
+      onChange(`${sizeW}px`, `${px}px ${py}px`);
+    },
+    [natural.w, onChange],
+  );
+
+  const onPointerDown = useCallback(
+    (mode: 'pan' | 'move' | 'resize', handle: string | undefined, e: ReactPointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragRef.current = { mode, startX: e.clientX, startY: e.clientY, orig: { zoom, panX: pan.x, panY: pan.y, cx: crop.x, cy: crop.y, cw: crop.w, ch: crop.h }, handle };
+      const move = (me: PointerEvent) => {
+        const d = dragRef.current;
+        if (!d) return;
+        const dx = me.clientX - d.startX;
+        const dy = me.clientY - d.startY;
+        if (d.mode === 'pan') {
+          const next = { x: d.orig.panX + dx, y: d.orig.panY + dy };
+          setPan(next);
+          emitCrop(zoom, next, crop);
+        } else if (d.mode === 'move') {
+          const nx = clamp(d.orig.cx + dx, 0, CROP_VIEWPORT_W - crop.w);
+          const ny = clamp(d.orig.cy + dy, 0, CROP_VIEWPORT_H - crop.h);
+          const next = { ...crop, x: nx, y: ny };
+          setCrop(next);
+          emitCrop(zoom, pan, next);
+        } else if (d.mode === 'resize' && d.handle) {
+          let { cx, cy, cw, ch } = { cx: d.orig.cx, cy: d.orig.cy, cw: d.orig.cw, ch: d.orig.ch };
+          const aspect = d.orig.cw / d.orig.ch;
+          const lock = me.shiftKey;
+          const h = d.handle;
+          const minSize = 24;
+          if (h.includes('e')) cw = Math.max(minSize, d.orig.cw + dx);
+          if (h.includes('s')) ch = Math.max(minSize, d.orig.ch + dy);
+          if (h.includes('w')) { cw = Math.max(minSize, d.orig.cw - dx); cx = d.orig.cx + (d.orig.cw - cw); }
+          if (h.includes('n')) { ch = Math.max(minSize, d.orig.ch - dy); cy = d.orig.cy + (d.orig.ch - ch); }
+          if (lock && (h === 'e' || h === 'w' || h === 'n' || h === 's' || h.length === 2)) {
+            // keep aspect: derive the other dimension from the changed one
+            if (h.includes('e') || h.includes('w')) { ch = cw / aspect; if (h.includes('n')) cy = d.orig.cy + (d.orig.ch - ch); }
+            else { cw = ch * aspect; if (h.includes('w')) cx = d.orig.cx + (d.orig.cw - cw); }
+          }
+          // clamp inside viewport
+          if (cx < 0) { cw += cx; cx = 0; }
+          if (cy < 0) { ch += cy; cy = 0; }
+          if (cx + cw > CROP_VIEWPORT_W) cw = CROP_VIEWPORT_W - cx;
+          if (cy + ch > CROP_VIEWPORT_H) ch = CROP_VIEWPORT_H - cy;
+          const next = { x: cx, y: cy, w: Math.max(minSize, cw), h: Math.max(minSize, ch) };
+          setCrop(next);
+          emitCrop(zoom, pan, next);
+        }
+      };
+      const up = () => {
+        dragRef.current = null;
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    },
+    [zoom, pan, crop, emitCrop],
+  );
+
+  const onZoom = (nextZoom: number) => {
+    const z = Math.max(0.1, Math.min(8, nextZoom));
+    setZoom(z);
+    emitCrop(z, pan, crop);
+  };
+
+  const imgLayerStyle = {
+    width: natural.w ? natural.w * zoom : 0,
+    height: natural.h ? natural.h * zoom : 0,
+    transform: `translate(${pan.x}px, ${pan.y}px)`,
+    backgroundImage: `url("${url}")`,
+    backgroundSize: '100% 100%',
+  } as CSSProperties;
+
+  return (
+    <div className={styles.cropEditor}>
+      <div
+        ref={viewportRef}
+        className={styles.cropViewport}
+        style={{ width: CROP_VIEWPORT_W, height: CROP_VIEWPORT_H }}
+        onPointerDown={(e) => onPointerDown('pan', undefined, e)}
+      >
+        <div className={styles.cropImageLayer} style={imgLayerStyle} />
+        <div
+          className={styles.cropBox}
+          style={{ left: crop.x, top: crop.y, width: crop.w, height: crop.h }}
+          onPointerDown={(e) => onPointerDown('move', undefined, e)}
+        >
+          {['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map((h) => (
+            <span
+              key={h}
+              className={`${styles.cropHandle} ${styles[`cropHandle_${h}`]}`}
+              onPointerDown={(e) => onPointerDown('resize', h, e)}
+            />
+          ))}
+        </div>
+      </div>
+      <div className={styles.cropZoomRow}>
+        <span className={styles.imageOptionLabel}>缩放</span>
+        <input
+          type="range"
+          min={10}
+          max={800}
+          value={Math.round(zoom * 100)}
+          onChange={(e) => onZoom(Number(e.target.value) / 100)}
+          aria-label="图片缩放"
+        />
+        <span className={styles.cropZoomValue}>{Math.round(zoom * 100)}%</span>
+      </div>
+      <p className={styles.cropHint}>拖动图片平移，拖动方框或四角调整显示区域，按住 Shift 等比缩放</p>
+    </div>
+  );
+}
+
+function clamp(v: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, v));
+}
+
+/**
+ * Image fill control: a preview area (thumbnail when a URL is set, placeholder
+ * otherwise) with a "点击上传图片" hover overlay. Clicking opens a hidden
+ * file picker; selecting an image reads it into a data URL and calls
+ * onUrlChange. Mirrors the editor panel's visual language (panel tokens,
+ * 3px radius, 26px control height for the size/repeat selects below).
+ */
+function ImageFillControl({
+  url,
+  size,
+  repeat,
+  onUrlChange,
+  onSizeChange,
+  onRepeatChange,
+  onCrop,
+}: {
+  url: string;
+  size: string;
+  repeat: string;
+  onUrlChange: (url: string) => void;
+  onSizeChange: (size: string) => void;
+  onRepeatChange: (repeat: string) => void;
+  /** Commit a crop as CSS background-size + background-position. */
+  onCrop?: (cssSize: string, cssPosition: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // The preview tile shows the whole image (contain) regardless of the
+  // element's chosen background-size, so the user always sees what they set.
+  const previewStyle = url
+    ? ({
+        backgroundImage: `url("${url}")`,
+        backgroundSize: 'contain',
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'center',
+      } as CSSProperties)
+    : undefined;
+
+  const onPickFile = useCallback(async (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    try {
+      const { dataUrl } = await readImageFileToDataUrl(file);
+      onUrlChange(dataUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '读取图片失败');
+    }
+  }, [onUrlChange]);
+
+  const showCrop = size === 'od-crop' && !!url;
+
+  return (
+    <div className={styles.imageFillSection}>
+      {showCrop ? (
+        <CropEditor
+          url={url}
+          bgSize={size}
+          bgPosition=""
+          onChange={(cssSize, cssPosition) => onCrop?.(cssSize, cssPosition)}
+        />
+      ) : (
+        <button
+          type="button"
+          className={styles.imagePreviewArea}
+          style={previewStyle}
+          aria-label={url ? '点击替换图片' : '点击上传图片'}
+          title={url ? '点击替换图片' : '点击上传图片'}
+          data-tooltip={url ? '点击替换图片' : '点击上传图片'}
+          onClick={() => inputRef.current?.click()}
+        >
+          {!url ? (
+            <span className={styles.imagePreviewPlaceholder}>
+              <Image size={18} aria-hidden="true" />
+              <span>点击上传图片</span>
+            </span>
+          ) : null}
+          <span className={styles.imagePreviewHover} aria-hidden="true">
+            {url ? '点击替换图片' : '点击上传图片'}
+          </span>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            className={styles.hiddenFileInput}
+            aria-label="选择图片文件"
+            onChange={(event) => {
+              void onPickFile(event.target.files?.[0]);
+              // Reset so picking the same file twice still fires change.
+              event.target.value = '';
+            }}
+          />
+        </button>
+      )}
+      {error ? <p className={styles.imageUploadError}>{error}</p> : null}
+      <label className={styles.imageOptionRow}>
+        <span className={styles.imageOptionLabel}>尺寸</span>
+        <span className={styles.selectField}>
+          <select
+            className={styles.select}
+            value={size}
+            onChange={(e) => onSizeChange(e.target.value)}
+          >
+            <option value="cover">充满</option>
+            <option value="contain">适应</option>
+            <option value="100% 100%">拉伸</option>
+            <option value="od-crop">裁剪</option>
+          </select>
+        </span>
+      </label>
+      {!showCrop ? (
+        <label className={styles.imageOptionRow}>
+          <span className={styles.imageOptionLabel}>重复</span>
+          <span className={styles.selectField}>
+            <select
+              className={styles.select}
+              value={repeat}
+              onChange={(e) => onRepeatChange(e.target.value)}
+            >
+              <option value="no-repeat">不重复</option>
+              <option value="repeat">重复</option>
+              <option value="repeat-x">水平重复</option>
+              <option value="repeat-y">垂直重复</option>
+            </select>
+          </span>
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
 function PropertySection({
   title,
   actions,
   children,
+  collapsible = false,
+  expanded = true,
+  hasContent = true,
+  onToggle,
+  onAdd,
+  onRemove,
 }: {
   title: string;
   actions?: ReactNode;
   children: ReactNode;
+  collapsible?: boolean;
+  expanded?: boolean;
+  hasContent?: boolean;
+  onToggle?: () => void;
+  onAdd?: () => void;
+  onRemove?: () => void;
 }) {
+  const sectionClass = `${styles.section}${collapsible ? ` ${styles.sectionCollapsible}` : ''}${collapsible && !expanded ? ` ${styles.sectionCollapsed}` : ''}`;
+  const headerClass = `${styles.sectionHeader}${collapsible ? ` ${styles.sectionHeaderToggle}` : ''}`;
   return (
-    <section className={styles.section} aria-labelledby={`style-panel-${title}`}>
-      <header className={styles.sectionHeader}>
-        <h3 id={`style-panel-${title}`} className={styles.sectionTitle}>{title}</h3>
-        {actions ? <div className={styles.sectionActions}>{actions}</div> : null}
+    <section className={sectionClass} aria-labelledby={`style-panel-${title}`}>
+      <header className={headerClass}>
+        {collapsible ? (
+          <button
+            type="button"
+            className={styles.sectionTitleButton}
+            aria-expanded={expanded}
+            aria-controls={`style-panel-body-${title}`}
+            onClick={() => onToggle?.()}
+          >
+            <ChevronDown
+              size={14}
+              strokeWidth={1.8}
+              aria-hidden="true"
+              className={`${styles.sectionChevron}${expanded ? ` ${styles.sectionChevronExpanded}` : ''}`}
+            />
+            <span id={`style-panel-${title}`} className={styles.sectionTitle}>{title}</span>
+          </button>
+        ) : (
+          <h3 id={`style-panel-${title}`} className={styles.sectionTitle}>{title}</h3>
+        )}
+        <div className={styles.sectionActions}>
+          {actions}
+          {collapsible && !hasContent && onAdd ? (
+            <IconButton
+              label="添加属性"
+              icon={Plus}
+              placement="left"
+              onClick={() => onAdd()}
+            />
+          ) : null}
+          {collapsible && hasContent && onRemove ? (
+            <IconButton
+              label="移除属性"
+              icon={Minus}
+              placement="left"
+              onClick={() => onRemove()}
+            />
+          ) : null}
+        </div>
       </header>
-      <div className={styles.sectionBody}>{children}</div>
+      {collapsible && !expanded ? null : (
+        <div id={`style-panel-body-${title}`} className={styles.sectionBody}>{children}</div>
+      )}
     </section>
   );
 }
@@ -1029,23 +1407,31 @@ function LabeledControl({
 function DimensionControl({
   axis,
   value,
+  tagName,
+  modeOverride,
   onValueChange,
   onModeChange,
 }: {
   axis: '宽' | '高';
   value: string;
+  tagName?: string;
+  modeOverride?: DimensionMode | null;
   onValueChange: (value: string) => void;
   onModeChange: (mode: DimensionMode) => void;
 }) {
+  // Prefer the explicit override (set when the user picks a mode) over the
+  // computed-style derivation, which resolves hug/fill to px and would snap
+  // the dropdown back to 固定.
+  const effectiveMode = modeOverride ?? dimensionMode(value, tagName);
   return (
     <div className={styles.dimensionControl}>
       <NumberScrub label={axis} prefix={axis === '宽' ? 'W' : 'H'} value={value} unit="px" min={0} onChange={onValueChange} />
       <CompactSelect
         label={`${axis}调整模式`}
-        value={dimensionMode(value)}
+        value={effectiveMode}
         options={[
           { value: 'fixed', label: '固定' },
-          { value: 'hug', label: '适应' },
+          { value: 'hug', label: '撑满' },
           { value: 'fill', label: '填充' },
         ]}
         onChange={(mode) => onModeChange(mode as DimensionMode)}
@@ -1178,7 +1564,7 @@ function SelectedColor({
   );
 }
 
-export function StylePanel({ editorRef, selection }: StylePanelProps) {
+export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanelProps) {
   const hasSelection = !!selection?.hasSelection;
   const selectedStyles = selection?.styles ?? {};
   const [canvasStyles, setCanvasStyles] = useState<StyleMap>({});
@@ -1186,6 +1572,23 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
   const [paddingLinked, setPaddingLinked] = useState(true);
   const [cornersExpanded, setCornersExpanded] = useState(false);
   const [strokeSidesExpanded, setStrokeSidesExpanded] = useState(true);
+  // Collapsible section state. Each defaults to true (expanded); the section
+  // body shows/hides based on these. hasContent drives the +/- disabled state
+  // and is recomputed each render from the live styles.
+  const [fillExpanded, setFillExpanded] = useState(true);
+  const [strokeExpanded, setStrokeExpanded] = useState(true);
+  const [effectExpanded, setEffectExpanded] = useState(true);
+  // When the selection is an <img>, this holds its current src attribute so
+  // the fill section's image tab can preview/replace it. Refreshed on every
+  // selection change + after a paste/upload writes a new src.
+  const [selectedImgSrc, setSelectedImgSrc] = useState<string>('');
+  // Explicit width/height dimension mode so the dropdown keeps the user's
+  // selection even though getComputedStyle resolves hug/fill values to px.
+  // Root of the StylePanel DOM; used to anchor the floating fill editor
+  // when the user double-clicks an <img> in the canvas.
+  const panelRootRef = useRef<HTMLDivElement | null>(null);
+  const [widthMode, setWidthMode] = useState<DimensionMode | null>(null);
+  const [heightMode, setHeightMode] = useState<DimensionMode | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [batchSelection, setBatchSelection] = useState<string[]>([]);
   const [replacementColor, setReplacementColor] = useState('#0D66D0');
@@ -1314,11 +1717,115 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
 
   const style = selectedStyles;
 
+  // Whether the current selection is an <img>. Computed up here (before the
+  // image-edit effect) so the effect and the fill section both see it.
+  const isImgElement = (selection?.tagName ?? '').toLowerCase() === 'img';
+
+  // Respond to a double-click-on-<img> request: open the floating fill
+  // editor with the image tab selected so the user uploads a replacement
+  // image. For <img> the upload writes src; for other elements it writes a
+  // background-image fill.
+  const lastImageEditSignalRef = useRef(imageEditSignal ?? 0);
+  useEffect(() => {
+    if ((imageEditSignal ?? 0) === lastImageEditSignalRef.current) return;
+    lastImageEditSignalRef.current = imageEditSignal ?? 0;
+    if (!hasSelection) return;
+    setFillMode('image');
+    setFillExpanded(true);
+    // Anchor the floating panel on the panel root (the fill swatch may not be
+    // mounted in image mode, so the root is the stable anchor).
+    const anchor = panelRootRef.current;
+    if (!anchor) return;
+    const currentSrc = editorRef.current?.getSelectedSrc() ?? '';
+    openColorEditor(
+      '填充',
+      currentSrc,
+      (value) => {
+        if (isImgElement) {
+          editorRef.current?.setSelectedSrc(value);
+          setSelectedImgSrc(value);
+        } else {
+          apply({ backgroundImage: value ? `url("${value}")` : 'none', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' });
+        }
+      },
+      anchor,
+      {
+        mode: 'image',
+        onModeChange: (nextMode) => {
+          setFillMode(nextMode);
+          setColorEditor((current) => current && current.fill
+            ? { ...current, fill: { ...current.fill, mode: nextMode } }
+            : current);
+          if (nextMode === 'solid') {
+            apply({ backgroundImage: 'none', backgroundColor: previousFill.current });
+          } else if (nextMode === 'gradient') {
+            apply({ backgroundImage: gradientToCss(gradient), backgroundColor: '' });
+          }
+        },
+        gradient,
+        onGradientChange,
+        imageState: {
+          url: isImgElement
+            ? currentSrc
+            : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? ''),
+          size: optionFromBgSize(selectedStyles.backgroundSize ?? 'cover'),
+          repeat: selectedStyles.backgroundRepeat ?? 'no-repeat',
+          position: selectedStyles.backgroundPosition ?? 'center',
+        },
+        onImageChange: (patch) => {
+          if (isImgElement) {
+            if (patch.url !== undefined) {
+              const nextUrl = patch.url;
+              editorRef.current?.setSelectedSrc(nextUrl);
+              setSelectedImgSrc(nextUrl);
+              setColorEditor((cur) => cur && cur.fill ? { ...cur, fill: { ...cur.fill, imageState: { ...cur.fill.imageState, url: nextUrl } } } : cur);
+            }
+          } else {
+            const url = patch.url !== undefined ? patch.url : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? '');
+            const size = patch.size !== undefined ? bgSizeFromOption(patch.size) : (selectedStyles.backgroundSize ?? 'cover');
+            const repeat = patch.repeat !== undefined ? patch.repeat : (selectedStyles.backgroundRepeat ?? 'no-repeat');
+            const position = patch.position !== undefined ? patch.position : (selectedStyles.backgroundPosition ?? 'center');
+            if (url) {
+              apply({ backgroundImage: `url("${url}")`, backgroundSize: size, backgroundPosition: position, backgroundRepeat: repeat });
+            } else {
+              apply({ backgroundImage: 'none' });
+            }
+          }
+        },
+      },
+    );
+  }, [imageEditSignal, hasSelection, isImgElement, selectedStyles, gradient, apply, openColorEditor, editorRef]);
+
+  // Keep the previewed <img> src in sync whenever the selection changes.
+  useEffect(() => {
+    setSelectedImgSrc(isImgElement ? (editorRef.current?.getSelectedSrc() ?? '') : '');
+    // Clear the explicit dimension-mode override so a new element starts
+    // from its computed style.
+    setWidthMode(null);
+    setHeightMode(null);
+  }, [editorRef, isImgElement, selection]);
+
+  // Colors used by the selection's whole subtree (background/border/text),
+  // collected recursively so multi-selecting a flex container surfaces the
+  // colors of every descendant. Declared before the no-selection early
+  // return so the hook order stays stable across selected/unselected renders.
+  const [selectedColors, setSelectedColors] = useState<string[]>([]);
+  useEffect(() => {
+    if (!hasSelection) { setSelectedColors([]); return; }
+    setSelectedColors(editorRef.current?.collectColorsFromSelection() ?? []);
+  }, [editorRef, hasSelection, selection]);
+
   const colorEditorPortal = colorEditor ? (
     <FloatingPanel
       title={colorEditor.label}
       position={colorEditor.position}
-      onClose={() => setColorEditor(null)}
+      onClose={() => {
+        setColorEditor(null);
+        // Re-assert the canvas selection so the resize handles redraw after
+        // the floating editor closes (closing via click-outside or the X
+        // button can otherwise leave the handles stale).
+        window.setTimeout(() => editorRef.current?.reselectCurrent(), 0);
+      }}
     >
       <ColorEditor
         label={colorEditor.label}
@@ -1410,11 +1917,8 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
   const effectVisible = !!style.boxShadow && style.boxShadow !== 'none';
   const rotation = parseRotation(style.transform);
   const isTextElement = TEXT_TAGS.has((selection?.tagName ?? '').toLowerCase());
-  const selectedColors = Array.from(new Set([
-    style.backgroundColor,
-    style.borderColor,
-    isTextElement ? style.color : '',
-  ].filter((color): color is string => !!color && !isTransparent(color))));
+  // selectedColors is declared above (before the no-selection early return)
+  // so the hook order stays stable across selected/unselected renders.
 
   const setFlow = (nextFlow: FlowValue) => {
     if (nextFlow === 'free') {
@@ -1433,8 +1937,13 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
   };
 
   const setDimensionMode = (property: 'width' | 'height', mode: DimensionMode) => {
+    const isImg = (selection?.tagName ?? '').toLowerCase() === 'img';
     if (mode === 'hug') {
-      apply({ [property]: 'fit-content' });
+      // <img> and other replaced elements resolve fit-content to a pixel
+      // length via getComputedStyle, so the hug state would read back as
+      // "fixed". auto round-trips for replaced elements and yields the
+      // intrinsic size the user expects from "适应".
+      apply({ [property]: isImg ? 'auto' : 'fit-content' });
       return;
     }
     if (mode === 'fill') {
@@ -1462,7 +1971,7 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
   };
 
   return (
-    <div className={styles.root} data-testid="grapesjs-style-panel">
+    <div ref={panelRootRef} className={styles.root} data-testid="grapesjs-style-panel">
       <div className={styles.elementHeader}>
         <strong>{selection?.tagName.toUpperCase()}</strong>
         <code className={styles.selector}>{selection?.selector}</code>
@@ -1572,14 +2081,18 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
             <DimensionControl
               axis="宽"
               value={style.width ?? 'auto'}
+              tagName={selection?.tagName}
+              modeOverride={widthMode}
               onValueChange={(value) => apply({ width: value })}
-              onModeChange={(mode) => setDimensionMode('width', mode)}
+              onModeChange={(mode) => { setWidthMode(mode); setDimensionMode('width', mode); }}
             />
             <DimensionControl
               axis="高"
               value={style.height ?? 'auto'}
+              tagName={selection?.tagName}
+              modeOverride={heightMode}
               onValueChange={(value) => apply({ height: value })}
-              onModeChange={(mode) => setDimensionMode('height', mode)}
+              onModeChange={(mode) => { setHeightMode(mode); setDimensionMode('height', mode); }}
             />
           </div>
         </LabeledControl>
@@ -1608,29 +2121,68 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
               <div className={styles.paddingRow}>
                 {paddingLinked ? (
                   <div className={styles.twoColumn}>
-                    <NumberScrub
-                      label="水平内边距"
-                      prefix="↔"
-                      value={style.paddingLeft ?? '0px'}
-                      unit="px"
-                      min={0}
-                      onChange={(value) => apply({ paddingLeft: value, paddingRight: value })}
-                    />
-                    <NumberScrub
-                      label="垂直内边距"
-                      prefix="↕"
-                      value={style.paddingTop ?? '0px'}
-                      unit="px"
-                      min={0}
-                      onChange={(value) => apply({ paddingTop: value, paddingBottom: value })}
-                    />
+                    {(() => {
+                      // Collapsed horizontal: show a single editable value when
+                      // left == right; otherwise show "left,right" as a
+                      // read-only hint the user must expand to edit.
+                      const left = style.paddingLeft ?? '0px';
+                      const right = style.paddingRight ?? '0px';
+                      const equal = fieldDisplay(left) === fieldDisplay(right);
+                      return equal ? (
+                        <NumberScrub
+                          label="水平内边距"
+                          prefix="↔"
+                          value={left}
+                          unit="px"
+                          min={0}
+                          onChange={(value) => apply({ paddingLeft: value, paddingRight: value })}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className={styles.paddingCompoundField}
+                          title="左右内边距不同，点击展开分别设置"
+                          data-tooltip="左右内边距不同，点击展开分别设置"
+                          onClick={() => setPaddingLinked(false)}
+                        >
+                          <span aria-hidden="true">↔</span>
+                          <span>{fieldDisplay(left)}, {fieldDisplay(right)}</span>
+                        </button>
+                      );
+                    })()}
+                    {(() => {
+                      const top = style.paddingTop ?? '0px';
+                      const bottom = style.paddingBottom ?? '0px';
+                      const equal = fieldDisplay(top) === fieldDisplay(bottom);
+                      return equal ? (
+                        <NumberScrub
+                          label="垂直内边距"
+                          prefix="↕"
+                          value={top}
+                          unit="px"
+                          min={0}
+                          onChange={(value) => apply({ paddingTop: value, paddingBottom: value })}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className={styles.paddingCompoundField}
+                          title="上下内边距不同，点击展开分别设置"
+                          data-tooltip="上下内边距不同，点击展开分别设置"
+                          onClick={() => setPaddingLinked(false)}
+                        >
+                          <span aria-hidden="true">↕</span>
+                          <span>{fieldDisplay(top)}, {fieldDisplay(bottom)}</span>
+                        </button>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div className={styles.fourColumn}>
+                    <NumberScrub label="左内边距" prefix="左" value={style.paddingLeft ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingLeft: value })} />
                     <NumberScrub label="上内边距" prefix="上" value={style.paddingTop ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingTop: value })} />
                     <NumberScrub label="右内边距" prefix="右" value={style.paddingRight ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingRight: value })} />
                     <NumberScrub label="下内边距" prefix="下" value={style.paddingBottom ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingBottom: value })} />
-                    <NumberScrub label="左内边距" prefix="左" value={style.paddingLeft ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingLeft: value })} />
                   </div>
                 )}
                 <IconButton
@@ -1745,34 +2297,17 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
 
       <PropertySection
         title="填充"
-        actions={(
-          <>
-            <IconButton
-              label="纯色填充"
-              icon={Square}
-              active={fillMode === 'solid'}
-              onClick={() => {
-                setFillMode('solid');
-                apply({ backgroundImage: 'none', backgroundColor: previousFill.current });
-              }}
-            />
-            <IconButton
-              label="渐变填充"
-              icon={Layers}
-              active={fillMode === 'gradient'}
-              onClick={() => {
-                setFillMode('gradient');
-                apply({ backgroundImage: gradientToCss(gradient), backgroundColor: '' });
-              }}
-            />
-            <IconButton
-              label="图片填充"
-              icon={Image}
-              active={fillMode === 'image'}
-              onClick={() => setFillMode('image')}
-            />
-          </>
-        )}
+        collapsible
+        expanded={fillExpanded}
+        onToggle={() => setFillExpanded((e) => !e)}
+        hasContent={fillVisible || isImgElement}
+        onAdd={() => {
+          setFillMode('solid');
+          apply({ backgroundColor: previousFill.current });
+        }}
+        onRemove={() => {
+          apply({ backgroundColor: 'transparent', backgroundImage: 'none', backgroundSize: '', backgroundRepeat: '' });
+        }}
       >
         {fillMode === 'solid' ? (
           <ColorProperty
@@ -1815,15 +2350,17 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
                 onGradientChange,
                 imageState: {
                   url: selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? '',
-                  size: selectedStyles.backgroundSize ?? 'cover',
+                  size: optionFromBgSize(selectedStyles.backgroundSize ?? 'cover'),
                   repeat: selectedStyles.backgroundRepeat ?? 'no-repeat',
+                  position: selectedStyles.backgroundPosition ?? 'center',
                 },
                 onImageChange: (patch) => {
                   const url = patch.url !== undefined ? patch.url : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? '');
                   const size = patch.size !== undefined ? patch.size : (selectedStyles.backgroundSize ?? 'cover');
                   const repeat = patch.repeat !== undefined ? patch.repeat : (selectedStyles.backgroundRepeat ?? 'no-repeat');
+                  const position = patch.position !== undefined ? patch.position : (selectedStyles.backgroundPosition ?? 'center');
                   if (url) {
-                    apply({ backgroundImage: `url("${url}")`, backgroundSize: size, backgroundPosition: 'center', backgroundRepeat: repeat });
+                    apply({ backgroundImage: `url("${url}")`, backgroundSize: size, backgroundPosition: position, backgroundRepeat: repeat });
                   } else {
                     apply({ backgroundImage: 'none' });
                   }
@@ -1835,62 +2372,58 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
           <div className={styles.gradientWrap}>
             <GradientEditor value={gradient} onChange={onGradientChange} />
           </div>
+        ) : isImgElement ? (
+          <ImageFillControl
+            url={selectedImgSrc}
+            size={optionFromBgSize(selectedStyles.backgroundSize ?? 'cover')}
+            repeat={selectedStyles.backgroundRepeat ?? 'no-repeat'}
+            onUrlChange={(url) => {
+              // For <img>, uploading replaces the src attribute (not a
+              // background-image fill), matching "set this image" intent.
+              editorRef.current?.setSelectedSrc(url);
+              setSelectedImgSrc(url);
+            }}
+            onSizeChange={(size) => apply({ backgroundSize: bgSizeFromOption(size) })}
+            onRepeatChange={(repeat) => apply({ backgroundRepeat: repeat })}
+            onCrop={(cssSize, cssPosition) => apply({ backgroundSize: cssSize, backgroundPosition: cssPosition })}
+          />
         ) : (
-          <div className={styles.imageFillSection}>
-            <label className={styles.row}>
-              <span className={styles.subLabel}>图片地址</span>
-              <input
-                className={styles.textInput}
-                type="text"
-                placeholder="https://... 或选择文件"
-                value={selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? ''}
-                onChange={(e) => {
-                  const url = e.target.value.trim();
-                  if (url) apply({ backgroundImage: `url("${url}")`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' });
-                  else apply({ backgroundImage: 'none' });
-                }}
-              />
-            </label>
-            <label className={styles.row}>
-              <span className={styles.subLabel}>尺寸</span>
-              <select
-                className={styles.select}
-                value={selectedStyles.backgroundSize ?? 'cover'}
-                onChange={(e) => apply({ backgroundSize: e.target.value })}
-              >
-                <option value="cover">覆盖</option>
-                <option value="contain">包含</option>
-                <option value="auto">原始</option>
-                <option value="100% 100%">拉伸</option>
-              </select>
-            </label>
-            <label className={styles.row}>
-              <span className={styles.subLabel}>重复</span>
-              <select
-                className={styles.select}
-                value={selectedStyles.backgroundRepeat ?? 'no-repeat'}
-                onChange={(e) => apply({ backgroundRepeat: e.target.value })}
-              >
-                <option value="no-repeat">不重复</option>
-                <option value="repeat">重复</option>
-                <option value="repeat-x">水平重复</option>
-                <option value="repeat-y">垂直重复</option>
-              </select>
-            </label>
-          </div>
+          <ImageFillControl
+            url={selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? ''}
+            size={optionFromBgSize(selectedStyles.backgroundSize ?? 'cover')}
+            repeat={selectedStyles.backgroundRepeat ?? 'no-repeat'}
+            onUrlChange={(url) => {
+              if (url) apply({ backgroundImage: `url("${url}")`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' });
+              else apply({ backgroundImage: 'none' });
+            }}
+            onSizeChange={(size) => apply({ backgroundSize: bgSizeFromOption(size) })}
+            onRepeatChange={(repeat) => apply({ backgroundRepeat: repeat })}
+            onCrop={(cssSize, cssPosition) => apply({ backgroundSize: cssSize, backgroundPosition: cssPosition })}
+          />
         )}
       </PropertySection>
 
       <PropertySection
         title="描边"
-        actions={(
-          <IconButton
-            label="添加描边"
-            icon={Plus}
-            placement="left"
-            onClick={() => apply({ borderWidth: '1px', borderStyle: 'solid', borderColor: previousStroke.current })}
-          />
-        )}
+        collapsible
+        expanded={strokeExpanded}
+        onToggle={() => setStrokeExpanded((e) => !e)}
+        hasContent={strokeVisible}
+        onAdd={() => apply({ borderWidth: '1px', borderStyle: 'solid', borderColor: previousStroke.current })}
+        onRemove={() => {
+          apply({
+            borderWidth: '0px',
+            borderTopWidth: '0px',
+            borderRightWidth: '0px',
+            borderBottomWidth: '0px',
+            borderLeftWidth: '0px',
+            borderStyle: 'none',
+            outline: '',
+            outlineWidth: '',
+            outlineStyle: '',
+            outlineColor: '',
+          });
+        }}
       >
         <ColorProperty
           label="描边"
@@ -1980,14 +2513,18 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
 
       <PropertySection
         title="效果"
-        actions={(
-          <IconButton
-            label="添加投影"
-            icon={Plus}
-            placement="left"
-            onClick={() => apply({ boxShadow: previousShadow.current })}
-          />
-        )}
+        collapsible
+        expanded={effectExpanded}
+        onToggle={() => setEffectExpanded((e) => !e)}
+        hasContent={effectVisible}
+        onAdd={() => {
+          setEffectType('drop-shadow');
+          apply({ boxShadow: previousShadow.current });
+        }}
+        onRemove={() => {
+          setEffectType('none');
+          apply({ boxShadow: 'none', filter: '', backdropFilter: '', WebkitBackdropFilter: '' });
+        }}
       >
         <div className={styles.effectRow}>
           <button
@@ -2109,7 +2646,16 @@ export function StylePanel({ editorRef, selection }: StylePanelProps) {
                     type="button"
                     className={styles.batchApplyButton}
                     disabled={batchSelection.length === 0}
-                    title="批量替换逻辑待开发"
+                    title="批量替换选中颜色"
+                    onClick={() => {
+                      editorRef.current?.replaceColors(batchSelection, replacementColor);
+                      setBatchSelection([]);
+                      // Refresh the collected color list so replaced colors
+                      // surface in their new form.
+                      window.setTimeout(() => {
+                        setSelectedColors(editorRef.current?.collectColorsFromSelection() ?? []);
+                      }, 0);
+                    }}
                   >
                     替换
                   </Button>

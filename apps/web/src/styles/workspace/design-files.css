@@ -786,6 +786,119 @@
   color: var(--text);
 }
 
+/* Expand / collapse tree toggle. Shares the same 26×26 chip base as the
+   batch-toggle and add buttons. A single button (folder icon) that flips
+   between expand-all and collapse-all depending on whether every folder is
+   already open; `.is-active` marks the "fully expanded" state. */
+.df-tree-action {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.df-tree-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.df-tree-action:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.df-tree-action.is-active {
+  background: var(--accent-tint);
+  border-color: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* ------------------------------------------------------------------------
+   Dark tooltip for the file-tree action chips (expand / collapse toggle /
+   batch-select / create). Style parity with `[data-tooltip]::after` in
+   entry-layout.css: black background, white text, CSS-only (no JS layer).
+   Reuse this `.df-tree-action[data-tooltip]` / `.df-tree-batch-toggle…`
+   pattern for future chips that need the same dark tooltip — keep it as the
+   canonical "dark tooltip on a small icon button" recipe in this panel.
+   ------------------------------------------------------------------------ */
+.df-tree-action[data-tooltip],
+.df-tree-batch-toggle[data-tooltip],
+.df-tree-add[data-tooltip] {
+  position: relative;
+}
+.df-tree-action[data-tooltip]::after,
+.df-tree-batch-toggle[data-tooltip]::after,
+.df-tree-add[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  /* Default placement is "bottom" (bubble below the trigger) so the tree-head
+     chips — which sit at the very top of the panel under the app nav — never
+     get clipped by the top navigation bar. */
+  top: calc(100% + 7px);
+  transform: translateX(-50%) translateY(-4px);
+  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--bg-panel, #fff);
+  background: var(--text-strong, #111);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.12));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  z-index: 60;
+}
+.df-tree-action[data-tooltip]:hover::after,
+.df-tree-action[data-tooltip]:focus-visible::after,
+.df-tree-batch-toggle[data-tooltip]:hover::after,
+.df-tree-batch-toggle[data-tooltip]:focus-visible::after,
+.df-tree-add[data-tooltip]:hover::after,
+.df-tree-add[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+/* placement="top" flips the bubble above the trigger. */
+.df-tree-action[data-tooltip-placement='top']::after,
+.df-tree-batch-toggle[data-tooltip-placement='top']::after,
+.df-tree-add[data-tooltip-placement='top']::after {
+  top: auto;
+  bottom: calc(100% + 7px);
+  transform: translateX(-50%) translateY(4px);
+}
+.df-tree-action[data-tooltip-placement='top']:hover::after,
+.df-tree-action[data-tooltip-placement='top']:focus-visible::after,
+.df-tree-batch-toggle[data-tooltip-placement='top']:hover::after,
+.df-tree-batch-toggle[data-tooltip-placement='top']:focus-visible::after,
+.df-tree-add[data-tooltip-placement='top']:hover::after,
+.df-tree-add[data-tooltip-placement='top']:focus-visible::after {
+  transform: translateX(-50%) translateY(0);
+}
+/* placement="right" flips the bubble to the right of the trigger (used by the
+   create button so it clears the panel edge). */
+.df-tree-action[data-tooltip-placement='right']::after,
+.df-tree-batch-toggle[data-tooltip-placement='right']::after,
+.df-tree-add[data-tooltip-placement='right']::after {
+  left: calc(100% + 7px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+}
+.df-tree-action[data-tooltip-placement='right']:hover::after,
+.df-tree-action[data-tooltip-placement='right']:focus-visible::after,
+.df-tree-batch-toggle[data-tooltip-placement='right']:hover::after,
+.df-tree-batch-toggle[data-tooltip-placement='right']:focus-visible::after,
+.df-tree-add[data-tooltip-placement='right']:hover::after,
+.df-tree-add[data-tooltip-placement='right']:focus-visible::after {
+  transform: translateY(-50%) translateX(0);
+}
+
 .df-tree-scroll {
   flex: 1 1 auto;
   min-height: 0;

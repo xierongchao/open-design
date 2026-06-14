@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "node ./scripts/build.mjs",
     "build:sidecar": "tsc -p tsconfig.sidecar.json",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run -c vitest.config.ts"
@@ -54,7 +54,7 @@
     "lexical": "0.36.2",
     "lucide-react": "1.16.0",
     "motion": "12.40.0",
-    "next": "16.2.6",
+    "next": "16.2.9",
     "openai": "6.38.0",
     "posthog-js": "1.374.2",
     "react": "18.3.1",

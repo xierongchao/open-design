@@ -1183,6 +1183,9 @@ export const id: Dict = {
   'designFiles.usefulInfoLabel': 'Info berguna',
   'designFiles.usefulInfoTip': 'Klik dua kali file untuk membukanya di tab penuh.',
   'designFiles.batchSelect': 'Pilihan batch',
+  'designFiles.expandAll': "Luaskan semua",
+  'designFiles.collapseAll': "Lipat semua",
+  'designFiles.copyFailed': "Gagal menyalin, coba lagi",
 
   'quickSwitcher.placeholder': 'Buka file...',
   'quickSwitcher.empty': 'Tidak ada file di proyek ini',

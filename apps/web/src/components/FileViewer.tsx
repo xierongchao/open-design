@@ -4225,6 +4225,10 @@ function HtmlViewer({
   // Computed-style snapshot of the currently selected element, fed by
   // GrapesjsEditor.onSelectionChange. Drives the Figma-style StylePanel.
   const [grapesjsSelection, setGrapesjsSelection] = useState<SelectionSnapshot | null>(null);
+  // Incremented each time the user double-clicks an <img> in the canvas; the
+  // StylePanel watches this counter and opens the fill panel's image tab to
+  // replace the selected image's src.
+  const [imageEditSignal, setImageEditSignal] = useState(0);
   const MAX_MANUAL_EDIT_HISTORY = 500;
   // for hint managing hint box state
   const [openHintBox, setOpenHintBox] = useState(true);
@@ -9186,6 +9190,7 @@ function HtmlViewer({
                 onSelectionChange={(info) => {
                   setGrapesjsSelection(info);
                 }}
+                onImageEditRequest={() => setImageEditSignal((n) => n + 1)}
                 onZoomChange={(z) => setGrapesjsCanvasZoom(z)}
                 className="artifact-preview-grapesjs"
               />
@@ -9195,7 +9200,7 @@ function HtmlViewer({
           {useGrapesjs && mode === 'preview' && !grapesjsViewMode ? (() => {
             const sidebar = (
               <aside className={`grapesjs-sidebar${grapesjsInspectPortalHost ? ' grapesjs-sidebar-portal' : ''}`} data-testid="grapesjs-sidebar">
-                <StylePanel editorRef={grapesjsEditorRef} selection={grapesjsSelection} />
+                <StylePanel editorRef={grapesjsEditorRef} selection={grapesjsSelection} imageEditSignal={imageEditSignal} />
               </aside>
             );
             if (grapesjsInspectPortalHost) {

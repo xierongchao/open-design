@@ -2524,6 +2524,9 @@ export interface Dict {
   'designFiles.usefulInfoLabel': string;
   'designFiles.usefulInfoTip': string;
   'designFiles.batchSelect': string;
+  'designFiles.expandAll': string;
+  'designFiles.collapseAll': string;
+  'designFiles.copyFailed': string;
   'quickSwitcher.placeholder': string;
   'quickSwitcher.empty': string;
   'quickSwitcher.noMatches': string;

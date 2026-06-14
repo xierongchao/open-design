@@ -1509,11 +1509,43 @@ export function DesignFilesPanel({
               <div className="df-tree-head">
                 <span>{t('designFiles.sectionFolders')}</span>
                 <div className="df-tree-create-menu-wrap">
+                  {(() => {
+                    // Single toggle: collapses every folder when the tree is
+                    // fully expanded, otherwise expands every folder. Activated
+                    // state reads as "tree is fully expanded" so the chip looks
+                    // pressed while everything is open.
+                    const allExpanded =
+                      folderPaths.length > 0 &&
+                      rootExpanded &&
+                      folderPaths.every((p) => expandedFolders.has(p));
+                    return (
+                      <button
+                        type="button"
+                        className={`df-tree-action df-tree-expand-toggle${allExpanded ? ' is-active' : ''}`}
+                        data-testid="design-files-expand-toggle"
+                        aria-label={allExpanded ? t('designFiles.collapseAll') : t('designFiles.expandAll')}
+                        aria-pressed={allExpanded}
+                        data-tooltip={allExpanded ? t('designFiles.collapseAll') : t('designFiles.expandAll')}
+                        data-tooltip-placement="bottom"
+                        disabled={folderPaths.length === 0}
+                        onClick={() => {
+                          if (allExpanded) {
+                            setExpandedFolders(new Set());
+                            setRootExpanded(false);
+                          } else {
+                            setExpandedFolders(new Set(folderPaths));
+                            setRootExpanded(true);
+                          }
+                        }}
+                      >
+                        <Icon name={allExpanded ? 'folder-filled' : 'folder'} size={13} />
+                      </button>
+                    );
+                  })()}
                   <button
                     type="button"
-                    className={`df-tree-batch-toggle od-tooltip${batchMode ? ' is-active' : ''}`}
+                    className={`df-tree-batch-toggle${batchMode ? ' is-active' : ''}`}
                     aria-label={t('designFiles.batchSelect')}
-                    title={t('designFiles.batchSelect')}
                     data-tooltip={t('designFiles.batchSelect')}
                     data-tooltip-placement="bottom"
                     onClick={() => {
@@ -1526,12 +1558,11 @@ export function DesignFilesPanel({
                   </button>
                   <button
                     type="button"
-                    className="df-tree-add od-tooltip"
+                    className="df-tree-add"
                     data-testid="design-files-create-menu-trigger"
                     aria-label={t('common.create')}
                     aria-haspopup="menu"
                     aria-expanded={createMenuOpen}
-                    title={t('common.create')}
                     data-tooltip={t('common.create')}
                     data-tooltip-placement="right"
                     onMouseDown={(event) => event.stopPropagation()}
@@ -1782,7 +1813,17 @@ export function DesignFilesPanel({
                     setFolderNotice({ message: `${t('fileViewer.copied')}: ${copied.name}` });
                   }
                 } catch (err) {
-                  setFolderNotice({ message: err instanceof Error ? err.message : String(err) });
+                  const raw = err instanceof Error ? err.message : String(err);
+                  // Surface backend origin/CSRF rejections and other low-level
+                  // failures as a friendly, localized message instead of the
+                  // raw "Cross-origin requests are not allowed" string. The
+                  // underlying cause is almost always an environment port
+                  // mismatch (web port vs daemon port), not a user error.
+                  const friendly =
+                    /cross-origin|failed to fetch|networkerror/i.test(raw)
+                      ? t('designFiles.copyFailed')
+                      : raw;
+                  setFolderNotice({ message: friendly });
                 }
               }}
             >

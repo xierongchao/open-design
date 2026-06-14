@@ -79,6 +79,47 @@
   gap: 1px;
 }
 
+/* Collapsible section header. The title is a button so the whole header row
+   is clickable to expand/collapse; the chevron rotates to signal state. */
+.sectionHeaderToggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sectionTitleButton {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sectionChevron {
+  flex: 0 0 auto;
+  color: var(--panel-muted);
+  transform: rotate(-90deg);
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.sectionChevronExpanded {
+  transform: rotate(0deg);
+}
+
+.sectionCollapsible .sectionTitle {
+  flex: 0 1 auto;
+}
+
+.sectionCollapsed {
+  /* Keep the header; only the body is unmounted in JSX. */
+}
+
 .sectionBody,
 .stack {
   display: flex;
@@ -1022,6 +1063,140 @@
   gap: 4px;
 }
 
+/* Preview/upload area for image fill — a checkerboard-backed tile that shows
+   the current image thumbnail, or a placeholder when empty. Clicking opens a
+   hidden file picker. Mirrors the panel's control height (26px selects below)
+   but taller so the thumbnail is legible. */
+.imagePreviewArea {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 96px;
+  padding: 0;
+  border: 1px dashed var(--panel-border);
+  border-radius: 3px;
+  background-color: var(--panel-control);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  /* Checkerboard so transparent PNG regions read as transparent. */
+  background-image:
+    linear-gradient(45deg, var(--panel-border-soft, #e5e7eb) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--panel-border-soft, #e5e7eb) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--panel-border-soft, #e5e7eb) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--panel-border-soft, #e5e7eb) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+}
+
+/* When a real image is set, the inline backgroundImage style overrides the
+   checkerboard; keep the checkerboard as a subtle fallback layer underneath. */
+.imagePreviewArea[style] {
+  /* style attr sets background-image; checkerboard sits behind via a wrapper
+     trick is overkill — the inline thumbnail covers the tile via contain. */
+}
+
+.imagePreviewArea:hover {
+  border-color: var(--panel-accent);
+}
+
+.imagePreviewPlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--panel-muted);
+  font-size: 11px;
+  background: var(--panel-control);
+  padding: 6px 10px;
+  border-radius: 3px;
+}
+
+.imagePreviewHover {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  pointer-events: none;
+}
+
+.imagePreviewArea:hover .imagePreviewHover,
+.imagePreviewArea:focus-visible .imagePreviewHover {
+  opacity: 1;
+}
+
+.hiddenFileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.imageUploadError {
+  margin: 0;
+  color: #dc2626;
+  font-size: 10px;
+}
+
+/* Image fill option row (尺寸/重复). Matches the panel's labeled control
+   style: label + control on one line with consistent spacing. */
+.imageOptionRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+}
+
+.imageOptionLabel {
+  flex: 0 0 auto;
+  color: var(--panel-muted);
+  font-size: 10px;
+}
+
+.imageOptionRow .selectField {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Compound collapsed padding field — shown when left≠right (or top≠bottom)
+   so the collapsed row honestly reflects two distinct values instead of
+   silently dropping one. Styled to match a regular number field. */
+.paddingCompoundField {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: var(--panel-control);
+  color: var(--panel-text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.paddingCompoundField:hover {
+  background: var(--panel-control-hover);
+}
+
 .textInput {
   flex: 1;
   min-width: 0;
@@ -1100,4 +1275,93 @@
 }
 .colorModeButton[data-tooltip]:hover::after {
   opacity: 1;
+}
+
+/* ── Crop editor (裁剪) ── */
+.cropEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cropViewport {
+  position: relative;
+  overflow: hidden;
+  border-radius: 3px;
+  border: 1px solid var(--panel-border);
+  /* checkerboard so transparent regions read as transparent */
+  background-color: var(--panel-control);
+  background-image:
+    linear-gradient(45deg, var(--panel-border-soft, #e5e7eb) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--panel-border-soft, #e5e7eb) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--panel-border-soft, #e5e7eb) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--panel-border-soft, #e5e7eb) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.cropViewport:active {
+  cursor: grabbing;
+}
+
+.cropImageLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  transform-origin: top left;
+}
+
+.cropBox {
+  position: absolute;
+  border: 1px solid #fff;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  cursor: move;
+  touch-action: none;
+}
+
+.cropHandle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 1px solid var(--panel-accent);
+  border-radius: 2px;
+}
+
+.cropHandle_nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.cropHandle_n  { left: 50%; top: -5px; transform: translateX(-50%); cursor: ns-resize; }
+.cropHandle_ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.cropHandle_e  { right: -5px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+.cropHandle_se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.cropHandle_s  { left: 50%; bottom: -5px; transform: translateX(-50%); cursor: ns-resize; }
+.cropHandle_sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.cropHandle_w  { left: -5px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+
+.cropZoomRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cropZoomRow input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.cropZoomValue {
+  flex: 0 0 auto;
+  color: var(--panel-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cropHint {
+  margin: 0;
+  color: var(--panel-muted);
+  font-size: 10px;
+  line-height: 1.4;
 }

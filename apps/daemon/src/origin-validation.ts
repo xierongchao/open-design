@@ -93,6 +93,19 @@ export function isLoopbackOrPrivateLanHost(hostname: unknown): boolean {
   );
 }
 
+// Strict loopback-only check (excludes private LAN like 192.168.x.x). Used by
+// the local-dev relaxation in isAllowedBrowserOrigin so the any-port allowance
+// only fires for genuine loopback origins, never for LAN/external hosts.
+export function isLoopbackHostname(hostname: unknown): boolean {
+  const host = String(hostname || '').toLowerCase();
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '[::1]'
+  );
+}
+
 export function isAllowedBrowserHost(
   hostHeader: unknown,
   ports: number[],
@@ -145,6 +158,21 @@ export function isAllowedBrowserOrigin(
     ]),
   );
   if (explicitOrigins.has(String(origin))) return true;
+
+  // Local-development relaxation: when BOTH the request Origin and the
+  // request Host are loopback (127.0.0.1 / localhost / ::1), accept any
+  // local port. This is the common `next dev` (web port) + daemon port
+  // split-port topology where the browser Origin carries the web port and
+  // the daemon sees its own port as Host. Without this, a copy/duplicate
+  // of a project file from the web UI 403s with "Cross-origin requests
+  // are not allowed" whenever OD_WEB_PORT is not plumbed through. The
+  // relaxation is loopback-only — private-LAN and external hostnames
+  // keep the exact-port match below so CSRF from a non-loopback origin
+  // is still blocked.
+  const originLoopback = isLoopbackHostname(parsedOrigin.hostname);
+  if (originLoopback && isLoopbackHostname(requestHost.hostname)) {
+    return true;
+  }
 
   const originPort = parsedOrigin.port || (parsedOrigin.protocol === 'https:' ? '443' : '80');
   if (!ports.map(String).includes(originPort)) return false;

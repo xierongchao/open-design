@@ -381,9 +381,20 @@ describe('daemon origin validation middleware', () => {
     expect(JSON.parse(res.body)).toEqual({ error: 'Cross-origin requests are not allowed' });
   });
 
-  it('blocks cross-origin requests from other local ports', async () => {
+  it('allows cross-port requests between loopback origins (local-dev split-port topology)', async () => {
     const res = await request(port, 'GET', '/api/projects', {
       origin: `http://127.0.0.1:9999`,
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('blocks cross-port requests from non-loopback (private LAN) origins', async () => {
+    const lanHost = `192.168.18.16:${port}`;
+    const res = await request(port, 'GET', '/api/projects', {
+      origin: `http://192.168.18.16:9999`,
+      headers: {
+        Host: lanHost,
+      },
     });
     expect(res.status).toBe(403);
   });
@@ -408,11 +419,13 @@ describe('daemon origin validation middleware', () => {
     expect(res.status).toBe(200);
   });
 
-  it('blocks requests from unknown ports even with OD_WEB_PORT set', async () => {
+  it('blocks requests from unknown LAN ports even with OD_WEB_PORT set', async () => {
     const webPort = port + 1000;
+    const lanHost = `192.168.18.16:${port}`;
     process.env.OD_WEB_PORT = String(webPort);
     const res = await request(port, 'GET', '/api/projects', {
-      origin: `http://127.0.0.1:${port + 2000}`,
+      origin: `http://192.168.18.16:${port + 2000}`,
+      headers: { Host: lanHost },
     });
     delete process.env.OD_WEB_PORT;
     expect(res.status).toBe(403);
