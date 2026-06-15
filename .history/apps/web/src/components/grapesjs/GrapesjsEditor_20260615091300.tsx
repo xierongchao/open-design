@@ -779,7 +779,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               .od-dimension-badge {
                 position: absolute;
                 left: 50%;
-                bottom: -25px;
+                bottom: -5px;
                 transform: translate(-50%, 100%);
                 padding: 1px 6px;
                 background: #000;

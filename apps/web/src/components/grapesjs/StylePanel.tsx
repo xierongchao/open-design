@@ -552,6 +552,7 @@ function ColorEditor({
   onGradientChange,
   imageState,
   onImageChange,
+  onCropModeToggle,
 }: {
   label: string;
   value: string;
@@ -571,6 +572,9 @@ function ColorEditor({
   imageState?: { url: string; size: string; repeat: string; position: string };
   /** Apply image-fill changes. */
   onImageChange?: (patch: Partial<{ url: string; size: string; repeat: string; position: string }>) => void;
+  /** Forwarded to the inline ImageFillControl so 裁剪 mode can toggle the
+   *  canvas drag/wheel handlers even from the floating editor. */
+  onCropModeToggle?: (on: boolean) => void;
 }) {
   // Parse the incoming CSS color into HSV + alpha state.
   const [colorValue, setColorValue] = useState<ColorValue>(() => parseCssToColorValue(value));
@@ -761,6 +765,7 @@ function ColorEditor({
           onSizeChange={(size) => onImageChange({ size: bgSizeFromOption(size) })}
           onRepeatChange={(repeat) => onImageChange({ repeat })}
           onCrop={(cssSize, cssPosition) => onImageChange({ size: cssSize, position: cssPosition })}
+          onCropModeChange={(on) => onCropModeToggle?.(on)}
         />
       ) : (
       <>
@@ -1008,13 +1013,24 @@ function CompactSelect({
  *  - bgPosition: current background-position CSS
  *  - onChange(cssSize, cssPosition): commit the crop as CSS values
  */
-const CROP_VIEWPORT_W = 200;
-const CROP_VIEWPORT_H = 140;
+const CROP_VIEWPORT_W = 220;
+const CROP_VIEWPORT_H = 150;
 
+/**
+ * Simplified crop editor: the viewport stands in for the element box. The user
+ * drags the image to pan (choose which region is visible) and uses the zoom
+ * slider to enlarge/shrink the displayed area. The result maps directly to the
+ * element's CSS background-size + background-position; the element's own box
+ * (with overflow hidden) does the clipping.
+ *
+ * Mapping: the image is drawn at natural size * zoom. The drag sets the
+ * top-left offset of the image relative to the viewport. We translate that into
+ * background-position in PX (negative offset = image shifted so a later region
+ * shows), and background-size = scaled natural size in PX. Because the element
+ * keeps its own width/height + overflow hidden, only the visible region shows.
+ */
 function CropEditor({
   url,
-  bgSize,
-  bgPosition,
   onChange,
 }: {
   url: string;
@@ -1023,21 +1039,25 @@ function CropEditor({
   onChange: (cssSize: string, cssPosition: string) => void;
 }) {
   const [natural, setNatural] = useState({ w: 0, h: 0 });
-  // Zoom = display pixels per source pixel. Crop box is in VIEWPORT coords.
+  // zoom = display px per source px
   const [zoom, setZoom] = useState(1);
-  // Pan offset of the image layer's top-left within the viewport (px). Can be
-  // negative (image shifted up/left so a different region shows through).
+  // pan = top-left offset of the image layer inside the viewport (px)
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  // Crop box rect inside the viewport (the visible region). Default = full
-  // viewport so the whole viewport is the "显示区域".
-  const [crop, setCrop] = useState({ x: 0, y: 0, w: CROP_VIEWPORT_W, h: CROP_VIEWPORT_H });
-  interface CropOrig { zoom: number; panX: number; panY: number; cx: number; cy: number; cw: number; ch: number; }
-  const dragRef = useRef<{ mode: 'pan' | 'move' | 'resize'; startX: number; startY: number; orig: CropOrig; handle?: string } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const ownerDocument = viewportRef.current?.ownerDocument ?? document;
 
-  // Load the image to read natural dimensions; seed an initial zoom that fits
-  // the image into the viewport (contain), centered.
+  const emit = useCallback(
+    (z: number, p: { x: number; y: number }) => {
+      if (!natural.w) return;
+      const sizeW = Math.round(natural.w * z);
+      const sizeH = Math.round(natural.h * z);
+      onChange(`${sizeW}px ${sizeH}px`, `${Math.round(p.x)}px ${Math.round(p.y)}px`);
+    },
+    [natural.w, natural.h, onChange],
+  );
+
+  // Load the image, fit it to cover the viewport, and center it as the start.
   useEffect(() => {
     if (!url) return;
     const img = ownerDocument.createElement('img');
@@ -1045,76 +1065,29 @@ function CropEditor({
       const nw = img.naturalWidth || 1;
       const nh = img.naturalHeight || 1;
       setNatural({ w: nw, h: nh });
-      const fitZoom = Math.min(CROP_VIEWPORT_W / nw, CROP_VIEWPORT_H / nh);
-      setZoom(fitZoom);
-      const dw = nw * fitZoom;
-      const dh = nh * fitZoom;
-      setPan({ x: (CROP_VIEWPORT_W - dw) / 2, y: (CROP_VIEWPORT_H - dh) / 2 });
-      // Emit the initial crop state as CSS.
-      emitCrop(fitZoom, { x: (CROP_VIEWPORT_W - dw) / 2, y: (CROP_VIEWPORT_H - dh) / 2 }, crop);
+      // cover the viewport so there's something to pan into view
+      const coverZoom = Math.max(CROP_VIEWPORT_W / nw, CROP_VIEWPORT_H / nh);
+      setZoom(coverZoom);
+      const dw = nw * coverZoom;
+      const dh = nh * coverZoom;
+      const initPan = { x: (CROP_VIEWPORT_W - dw) / 2, y: (CROP_VIEWPORT_H - dh) / 2 };
+      setPan(initPan);
+      emit(coverZoom, initPan);
     };
     img.src = url;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
-  const emitCrop = useCallback(
-    (z: number, p: { x: number; y: number }, box: { x: number; y: number; w: number; h: number }) => {
-      // background-size: scaled image (px). background-position: shift so the
-      // crop box's top-left maps to the element's origin. The element's
-      // overflow:hidden clips everything outside its own box.
-      const sizeW = Math.round(natural.w * z);
-      // position = pan - cropBox origin (so cropBox.x becomes 0 in element space)
-      const px = Math.round(p.x - box.x);
-      const py = Math.round(p.y - box.y);
-      onChange(`${sizeW}px`, `${px}px ${py}px`);
-    },
-    [natural.w, onChange],
-  );
-
-  const onPointerDown = useCallback(
-    (mode: 'pan' | 'move' | 'resize', handle: string | undefined, e: ReactPointerEvent) => {
+  const onViewportPointerDown = useCallback(
+    (e: ReactPointerEvent) => {
       e.preventDefault();
-      e.stopPropagation();
-      dragRef.current = { mode, startX: e.clientX, startY: e.clientY, orig: { zoom, panX: pan.x, panY: pan.y, cx: crop.x, cy: crop.y, cw: crop.w, ch: crop.h }, handle };
+      dragRef.current = { startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y };
       const move = (me: PointerEvent) => {
         const d = dragRef.current;
         if (!d) return;
-        const dx = me.clientX - d.startX;
-        const dy = me.clientY - d.startY;
-        if (d.mode === 'pan') {
-          const next = { x: d.orig.panX + dx, y: d.orig.panY + dy };
-          setPan(next);
-          emitCrop(zoom, next, crop);
-        } else if (d.mode === 'move') {
-          const nx = clamp(d.orig.cx + dx, 0, CROP_VIEWPORT_W - crop.w);
-          const ny = clamp(d.orig.cy + dy, 0, CROP_VIEWPORT_H - crop.h);
-          const next = { ...crop, x: nx, y: ny };
-          setCrop(next);
-          emitCrop(zoom, pan, next);
-        } else if (d.mode === 'resize' && d.handle) {
-          let { cx, cy, cw, ch } = { cx: d.orig.cx, cy: d.orig.cy, cw: d.orig.cw, ch: d.orig.ch };
-          const aspect = d.orig.cw / d.orig.ch;
-          const lock = me.shiftKey;
-          const h = d.handle;
-          const minSize = 24;
-          if (h.includes('e')) cw = Math.max(minSize, d.orig.cw + dx);
-          if (h.includes('s')) ch = Math.max(minSize, d.orig.ch + dy);
-          if (h.includes('w')) { cw = Math.max(minSize, d.orig.cw - dx); cx = d.orig.cx + (d.orig.cw - cw); }
-          if (h.includes('n')) { ch = Math.max(minSize, d.orig.ch - dy); cy = d.orig.cy + (d.orig.ch - ch); }
-          if (lock && (h === 'e' || h === 'w' || h === 'n' || h === 's' || h.length === 2)) {
-            // keep aspect: derive the other dimension from the changed one
-            if (h.includes('e') || h.includes('w')) { ch = cw / aspect; if (h.includes('n')) cy = d.orig.cy + (d.orig.ch - ch); }
-            else { cw = ch * aspect; if (h.includes('w')) cx = d.orig.cx + (d.orig.cw - cw); }
-          }
-          // clamp inside viewport
-          if (cx < 0) { cw += cx; cx = 0; }
-          if (cy < 0) { ch += cy; cy = 0; }
-          if (cx + cw > CROP_VIEWPORT_W) cw = CROP_VIEWPORT_W - cx;
-          if (cy + ch > CROP_VIEWPORT_H) ch = CROP_VIEWPORT_H - cy;
-          const next = { x: cx, y: cy, w: Math.max(minSize, cw), h: Math.max(minSize, ch) };
-          setCrop(next);
-          emitCrop(zoom, pan, next);
-        }
+        const next = { x: d.panX + (me.clientX - d.startX), y: d.panY + (me.clientY - d.startY) };
+        setPan(next);
+        emit(zoom, next);
       };
       const up = () => {
         dragRef.current = null;
@@ -1124,13 +1097,21 @@ function CropEditor({
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
     },
-    [zoom, pan, crop, emitCrop],
+    [pan.x, pan.y, zoom, emit],
   );
 
   const onZoom = (nextZoom: number) => {
+    // Zoom around the viewport centre so the visible region stays put.
     const z = Math.max(0.1, Math.min(8, nextZoom));
+    const cx = CROP_VIEWPORT_W / 2;
+    const cy = CROP_VIEWPORT_H / 2;
+    // image point under centre before zoom
+    const ix = (cx - pan.x) / zoom;
+    const iy = (cy - pan.y) / zoom;
+    const next = { x: cx - ix * z, y: cy - iy * z };
     setZoom(z);
-    emitCrop(z, pan, crop);
+    setPan(next);
+    emit(z, next);
   };
 
   const imgLayerStyle = {
@@ -1147,22 +1128,9 @@ function CropEditor({
         ref={viewportRef}
         className={styles.cropViewport}
         style={{ width: CROP_VIEWPORT_W, height: CROP_VIEWPORT_H }}
-        onPointerDown={(e) => onPointerDown('pan', undefined, e)}
+        onPointerDown={onViewportPointerDown}
       >
         <div className={styles.cropImageLayer} style={imgLayerStyle} />
-        <div
-          className={styles.cropBox}
-          style={{ left: crop.x, top: crop.y, width: crop.w, height: crop.h }}
-          onPointerDown={(e) => onPointerDown('move', undefined, e)}
-        >
-          {['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map((h) => (
-            <span
-              key={h}
-              className={`${styles.cropHandle} ${styles[`cropHandle_${h}`]}`}
-              onPointerDown={(e) => onPointerDown('resize', h, e)}
-            />
-          ))}
-        </div>
       </div>
       <div className={styles.cropZoomRow}>
         <span className={styles.imageOptionLabel}>缩放</span>
@@ -1176,15 +1144,10 @@ function CropEditor({
         />
         <span className={styles.cropZoomValue}>{Math.round(zoom * 100)}%</span>
       </div>
-      <p className={styles.cropHint}>拖动图片平移，拖动方框或四角调整显示区域，按住 Shift 等比缩放</p>
+      <p className={styles.cropHint}>拖动图片改变显示区域，滑动缩放调整大小</p>
     </div>
   );
 }
-
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v));
-}
-
 /**
  * Image fill control: a preview area (thumbnail when a URL is set, placeholder
  * otherwise) with a "点击上传图片" hover overlay. Clicking opens a hidden
@@ -1200,6 +1163,7 @@ function ImageFillControl({
   onSizeChange,
   onRepeatChange,
   onCrop,
+  onCropModeChange,
 }: {
   url: string;
   size: string;
@@ -1209,6 +1173,9 @@ function ImageFillControl({
   onRepeatChange: (repeat: string) => void;
   /** Commit a crop as CSS background-size + background-position. */
   onCrop?: (cssSize: string, cssPosition: string) => void;
+  /** Notify the host that 裁剪 mode turned on/off so it can toggle the
+   *  canvas drag-to-pan / wheel-to-scale handlers. */
+  onCropModeChange?: (on: boolean) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1236,15 +1203,18 @@ function ImageFillControl({
 
   const showCrop = size === 'od-crop' && !!url;
 
+  // Toggle canvas 裁剪 mode (drag-to-pan / wheel-to-scale on the selected
+  // element) whenever the size option flips to/from 裁剪. The actual editing
+  // happens on the canvas; the panel only shows a hint.
+  useEffect(() => {
+    onCropModeChange?.(showCrop);
+    return () => onCropModeChange?.(false);
+  }, [showCrop, onCropModeChange]);
+
   return (
     <div className={styles.imageFillSection}>
       {showCrop ? (
-        <CropEditor
-          url={url}
-          bgSize={size}
-          bgPosition=""
-          onChange={(cssSize, cssPosition) => onCrop?.(cssSize, cssPosition)}
-        />
+        <p className={styles.cropHint}>在画布上拖动选中元素可平移背景图，滚轮缩放背景图大小</p>
       ) : (
         <button
           type="button"
@@ -1336,8 +1306,14 @@ function PropertySection({
   onAdd?: () => void;
   onRemove?: () => void;
 }) {
-  const sectionClass = `${styles.section}${collapsible ? ` ${styles.sectionCollapsible}` : ''}${collapsible && !expanded ? ` ${styles.sectionCollapsed}` : ''}`;
+  // When a collapsible section has no content it is force-collapsed: the body
+  // is hidden, the chevron is suppressed (there's nothing to expand), and the
+  // header click triggers onAdd so the user must add a value before the body
+  // becomes available.
+  const isEmpty = collapsible && !hasContent;
+  const sectionClass = `${styles.section}${collapsible ? ` ${styles.sectionCollapsible}` : ''}${(collapsible && !expanded) || isEmpty ? ` ${styles.sectionCollapsed}` : ''}`;
   const headerClass = `${styles.sectionHeader}${collapsible ? ` ${styles.sectionHeaderToggle}` : ''}`;
+  const showBody = collapsible ? (!isEmpty && expanded) : true;
   return (
     <section className={sectionClass} aria-labelledby={`style-panel-${title}`}>
       <header className={headerClass}>
@@ -1345,16 +1321,18 @@ function PropertySection({
           <button
             type="button"
             className={styles.sectionTitleButton}
-            aria-expanded={expanded}
+            aria-expanded={!isEmpty && expanded}
             aria-controls={`style-panel-body-${title}`}
-            onClick={() => onToggle?.()}
+            onClick={() => (isEmpty ? onAdd?.() : onToggle?.())}
           >
-            <ChevronDown
-              size={14}
-              strokeWidth={1.8}
-              aria-hidden="true"
-              className={`${styles.sectionChevron}${expanded ? ` ${styles.sectionChevronExpanded}` : ''}`}
-            />
+            {!isEmpty ? (
+              <ChevronDown
+                size={14}
+                strokeWidth={1.8}
+                aria-hidden="true"
+                className={`${styles.sectionChevron}${expanded ? ` ${styles.sectionChevronExpanded}` : ''}`}
+              />
+            ) : null}
             <span id={`style-panel-${title}`} className={styles.sectionTitle}>{title}</span>
           </button>
         ) : (
@@ -1362,7 +1340,7 @@ function PropertySection({
         )}
         <div className={styles.sectionActions}>
           {actions}
-          {collapsible && !hasContent && onAdd ? (
+          {isEmpty && onAdd ? (
             <IconButton
               label="添加属性"
               icon={Plus}
@@ -1370,7 +1348,7 @@ function PropertySection({
               onClick={() => onAdd()}
             />
           ) : null}
-          {collapsible && hasContent && onRemove ? (
+          {!isEmpty && hasContent && onRemove ? (
             <IconButton
               label="移除属性"
               icon={Minus}
@@ -1380,9 +1358,9 @@ function PropertySection({
           ) : null}
         </div>
       </header>
-      {collapsible && !expanded ? null : (
+      {showBody ? (
         <div id={`style-panel-body-${title}`} className={styles.sectionBody}>{children}</div>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -1570,6 +1548,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   const [canvasStyles, setCanvasStyles] = useState<StyleMap>({});
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [paddingLinked, setPaddingLinked] = useState(true);
+  const [marginLinked, setMarginLinked] = useState(true);
   const [cornersExpanded, setCornersExpanded] = useState(false);
   const [strokeSidesExpanded, setStrokeSidesExpanded] = useState(true);
   // Collapsible section state. Each defaults to true (expanded); the section
@@ -1592,6 +1571,12 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   const [batchMode, setBatchMode] = useState(false);
   const [batchSelection, setBatchSelection] = useState<string[]>([]);
   const [replacementColor, setReplacementColor] = useState('#0D66D0');
+  // Tracks the current target colour during an "已选颜色" replace-drag. Each
+  // SV/hue/alpha commit re-targets replaceColors at the colour the previous
+  // tick just wrote, so a continuous drag keeps updating instead of stalling
+  // after the first commit (which would otherwise keep matching the original
+  // colour that no longer exists on the element).
+  const replaceTargetRef = useRef<string | null>(null);
   const [effectType, setEffectType] = useState<EffectType>('drop-shadow');
   const [colorEditor, setColorEditor] = useState<ColorEditorState | null>(null);
   const [strokePanelPosition, setStrokePanelPosition] = useState<FloatingPosition | null>(null);
@@ -1841,6 +1826,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
         onGradientChange={colorEditor.fill?.onGradientChange}
         imageState={colorEditor.fill?.imageState}
         onImageChange={colorEditor.fill?.onImageChange}
+        onCropModeToggle={(on) => editorRef.current?.setCropMode(on)}
       />
     </FloatingPanel>
   ) : null;
@@ -1912,7 +1898,12 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
 
   const flow = flowFromStyles(style);
   const reverseFlow = (style.flexDirection ?? '').endsWith('reverse');
-  const fillVisible = !isTransparent(style.backgroundColor) || isGradient(style.backgroundImage);
+  // A fill counts as "has content" when there's a background color, a
+  // gradient, OR a background image (url). The url case matters for pasted
+  // screenshot divs and <img>-replaced fills, otherwise the panel stays
+  // force-collapsed with only the + button.
+  const hasBackgroundImage = !!style.backgroundImage && style.backgroundImage !== 'none';
+  const fillVisible = !isTransparent(style.backgroundColor) || isGradient(style.backgroundImage) || hasBackgroundImage;
   const strokeVisible = pxToNum(style.borderTopWidth) > 0 && style.borderStyle !== 'none';
   const effectVisible = !!style.boxShadow && style.boxShadow !== 'none';
   const rotation = parseRotation(style.transform);
@@ -2020,6 +2011,78 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                 position: style.position === 'static' ? 'relative' : style.position ?? 'relative',
                 top: value,
               })}
+            />
+          </div>
+        </LabeledControl>
+        <LabeledControl label="外间距">
+          <div className={styles.paddingRow}>
+            {marginLinked ? (
+              <div className={styles.twoColumn}>
+                {(() => {
+                  const left = style.marginLeft ?? '0px';
+                  const right = style.marginRight ?? '0px';
+                  const equal = fieldDisplay(left) === fieldDisplay(right);
+                  return equal ? (
+                    <NumberScrub
+                      label="水平外间距"
+                      prefix="↔"
+                      value={left}
+                      unit="px"
+                      onChange={(value) => apply({ marginLeft: value, marginRight: value })}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.paddingCompoundField}
+                      title="左右外间距不同，点击展开分别设置"
+                      data-tooltip="左右外间距不同，点击展开分别设置"
+                      onClick={() => setMarginLinked(false)}
+                    >
+                      <span aria-hidden="true">↔</span>
+                      <span>{fieldDisplay(left)}, {fieldDisplay(right)}</span>
+                    </button>
+                  );
+                })()}
+                {(() => {
+                  const top = style.marginTop ?? '0px';
+                  const bottom = style.marginBottom ?? '0px';
+                  const equal = fieldDisplay(top) === fieldDisplay(bottom);
+                  return equal ? (
+                    <NumberScrub
+                      label="垂直外间距"
+                      prefix="↕"
+                      value={top}
+                      unit="px"
+                      onChange={(value) => apply({ marginTop: value, marginBottom: value })}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.paddingCompoundField}
+                      title="上下外间距不同，点击展开分别设置"
+                      data-tooltip="上下外间距不同，点击展开分别设置"
+                      onClick={() => setMarginLinked(false)}
+                    >
+                      <span aria-hidden="true">↕</span>
+                      <span>{fieldDisplay(top)}, {fieldDisplay(bottom)}</span>
+                    </button>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div className={styles.fourColumn}>
+                <NumberScrub label="左外间距" prefix="左" value={style.marginLeft ?? '0px'} unit="px" onChange={(value) => apply({ marginLeft: value })} />
+                <NumberScrub label="上外间距" prefix="上" value={style.marginTop ?? '0px'} unit="px" onChange={(value) => apply({ marginTop: value })} />
+                <NumberScrub label="右外间距" prefix="右" value={style.marginRight ?? '0px'} unit="px" onChange={(value) => apply({ marginRight: value })} />
+                <NumberScrub label="下外间距" prefix="下" value={style.marginBottom ?? '0px'} unit="px" onChange={(value) => apply({ marginBottom: value })} />
+              </div>
+            )}
+            <IconButton
+              label={marginLinked ? '分别设置四边外间距' : '联动水平和垂直外间距'}
+              icon={marginLinked ? Unlink2 : Link2}
+              active={!marginLinked}
+              placement="left"
+              onClick={() => setMarginLinked((linked) => !linked)}
             />
           </div>
         </LabeledControl>
@@ -2349,7 +2412,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                 gradient,
                 onGradientChange,
                 imageState: {
-                  url: selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? '',
+                  url: isImgElement ? (editorRef.current?.getSelectedSrc() ?? '') : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? ''),
                   size: optionFromBgSize(selectedStyles.backgroundSize ?? 'cover'),
                   repeat: selectedStyles.backgroundRepeat ?? 'no-repeat',
                   position: selectedStyles.backgroundPosition ?? 'center',
@@ -2386,6 +2449,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             onSizeChange={(size) => apply({ backgroundSize: bgSizeFromOption(size) })}
             onRepeatChange={(repeat) => apply({ backgroundRepeat: repeat })}
             onCrop={(cssSize, cssPosition) => apply({ backgroundSize: cssSize, backgroundPosition: cssPosition })}
+            onCropModeChange={(on) => editorRef.current?.setCropMode(on)}
           />
         ) : (
           <ImageFillControl
@@ -2399,6 +2463,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             onSizeChange={(size) => apply({ backgroundSize: bgSizeFromOption(size) })}
             onRepeatChange={(repeat) => apply({ backgroundRepeat: repeat })}
             onCrop={(cssSize, cssPosition) => apply({ backgroundSize: cssSize, backgroundPosition: cssPosition })}
+            onCropModeChange={(on) => editorRef.current?.setCropMode(on)}
           />
         )}
       </PropertySection>
@@ -2618,12 +2683,28 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                 onToggle={() => setBatchSelection((current) =>
                   current.includes(color) ? current.filter((item) => item !== color) : [...current, color]
                 )}
-                onOpenPicker={(anchor) => openColorEditor(
-                  '已选颜色',
-                  color,
-                  setReplacementColor,
-                  anchor,
-                )}
+                onOpenPicker={(anchor) => {
+                  // Seed the drag target with the swatch's current colour so
+                  // the first commit matches; subsequent commits re-target at
+                  // the just-written colour (see replaceTargetRef).
+                  replaceTargetRef.current = color;
+                  openColorEditor(
+                    '已选颜色',
+                    color,
+                    (value) => {
+                      const target = replaceTargetRef.current ?? color;
+                      setReplacementColor(value);
+                      editorRef.current?.replaceColors([target], value);
+                      // Advance the target so the next drag tick matches the
+                      // colour we just wrote, not the stale original.
+                      replaceTargetRef.current = value;
+                      window.setTimeout(() => {
+                        setSelectedColors(editorRef.current?.collectColorsFromSelection() ?? []);
+                      }, 0);
+                    },
+                    anchor,
+                  );
+                }}
               />
             ))}
             {batchMode ? (

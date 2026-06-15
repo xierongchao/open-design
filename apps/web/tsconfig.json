@@ -179,7 +179,21 @@
     "../../.tmp/tools-dev/playwright-59944/web/next/types/**/*.ts",
     "../../.tmp/tools-dev/playwright-59944/web/next/dev/types/**/*.ts",
     "../../.tmp/tools-dev/playwright-2519/web/next/types/**/*.ts",
-    "../../.tmp/tools-dev/playwright-2519/web/next/dev/types/**/*.ts"
+    "../../.tmp/tools-dev/playwright-2519/web/next/dev/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-75366/web/next/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-75366/web/next/dev/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-34967/web/next/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-34967/web/next/dev/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-49335/web/next/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-49335/web/next/dev/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-54760/web/next/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-54760/web/next/dev/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-61017/web/next/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-61017/web/next/dev/types/**/*.ts",
+    "../../.tmp/tools-dev/codex-spacing/web/next/types/**/*.ts",
+    "../../.tmp/tools-dev/codex-spacing/web/next/dev/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-90146/web/next/types/**/*.ts",
+    "../../.tmp/tools-dev/playwright-90146/web/next/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

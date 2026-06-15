@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { ensureRailOpen } from '@/playwright/rail';
 import { routeMockAgents } from '@/playwright/mock-factory';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { T } from '@/timeouts';
 
 // Verifies the GrapesJS-driven HTML canvas behaviour that the PR3 fixes
@@ -88,6 +88,41 @@ function plainHtml(): string {
     <p>Second block for resize-handle verification.</p>
   </div>
   <a href="#next-page" data-od-id="demo-link">Go to next page</a>
+</body>
+</html>`;
+}
+
+function flexSpacingHtml(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GrapesJS flex spacing</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 40px; }
+  .flex-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin: 16px;
+    padding: 18px 24px;
+    background: #f7f7fb;
+  }
+  .flex-item {
+    width: 120px;
+    height: 64px;
+    display: grid;
+    place-items: center;
+    background: #d9d9df;
+  }
+</style>
+</head>
+<body>
+  <div class="flex-row" data-od-id="flex-row">
+    <div class="flex-item" data-od-id="item-a">A</div>
+    <div class="flex-item" data-od-id="item-b">B</div>
+    <div class="flex-item" data-od-id="item-c">C</div>
+  </div>
 </body>
 </html>`;
 }
@@ -455,6 +490,130 @@ test('[P0] Delete removes the selected element, Undo restores it', async ({ page
   const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
   await page.keyboard.press(`${mod}+z`);
   await expect(heroHeading).toBeVisible({ timeout: 10_000 });
+});
+
+test('[P0] arrow keys swap a selected child through a flex row', async ({ page }) => {
+  await routeMockAgents(page);
+  const projectId = await createEmptyProject(page, 'GrapesJS flex reorder');
+  await seedHtmlArtifact(page, projectId, 'gjs-flex-reorder.html', flexSpacingHtml());
+  await openDesignFile(page, 'gjs-flex-reorder.html');
+
+  await expect(grapesjsIframe(page)).toBeVisible({ timeout: 20_000 });
+  const frame = page.frameLocator(GRAPESJS_IFRAME_SELECTOR);
+  const itemB = frame.locator('[data-od-id="item-b"]');
+  await expect(itemB).toBeVisible({ timeout: 15_000 });
+  // A plain click selects the nearest flex frame. Double-click enters that
+  // frame and selects the child, matching the editor's nested-selection model.
+  await itemB.dblclick({ force: true });
+  await expect(page.getByTestId('grapesjs-sidebar').locator('code').first()).toContainText('flex-item');
+
+  const itemOrder = () => frame.locator('.flex-item').evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute('data-od-id')),
+  );
+  await expect.poll(itemOrder).toEqual(['item-a', 'item-b', 'item-c']);
+
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(itemOrder).toEqual(['item-a', 'item-c', 'item-b']);
+
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(itemOrder).toEqual(['item-a', 'item-b', 'item-c']);
+});
+
+test('[P0] gap guides belong to a selected flex container and sit between every child', async ({ page }) => {
+  await routeMockAgents(page);
+  const projectId = await createEmptyProject(page, 'GrapesJS gap guides');
+  await seedHtmlArtifact(page, projectId, 'gjs-gap-guides.html', flexSpacingHtml());
+  await openDesignFile(page, 'gjs-gap-guides.html');
+
+  await expect(grapesjsIframe(page)).toBeVisible({ timeout: 20_000 });
+  const frame = page.frameLocator(GRAPESJS_IFRAME_SELECTOR);
+  const flex = frame.locator('[data-od-id="flex-row"]');
+  await expect(flex).toBeVisible({ timeout: 15_000 });
+  await flex.click({ position: { x: 6, y: 6 }, force: true });
+
+  const gapHandles = page.locator('[data-od-spacing-kind="gap"]:visible');
+  await expect(gapHandles).toHaveCount(2);
+
+  const childBoxes = await Promise.all([
+    frame.locator('[data-od-id="item-a"]').boundingBox(),
+    frame.locator('[data-od-id="item-b"]').boundingBox(),
+    frame.locator('[data-od-id="item-c"]').boundingBox(),
+  ]);
+  if (childBoxes.some((box) => !box)) throw new Error('flex child has no bounding box');
+  const handleBoxes = await gapHandles.evaluateAll((elements) =>
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { x: rect.x, width: rect.width };
+    }),
+  );
+  const [a, b, c] = childBoxes as [
+    NonNullable<(typeof childBoxes)[number]>,
+    NonNullable<(typeof childBoxes)[number]>,
+    NonNullable<(typeof childBoxes)[number]>,
+  ];
+  expect(handleBoxes[0]!.x + handleBoxes[0]!.width / 2).toBeCloseTo((a.x + a.width + b.x) / 2, 0);
+  expect(handleBoxes[1]!.x + handleBoxes[1]!.width / 2).toBeCloseTo((b.x + b.width + c.x) / 2, 0);
+
+  await frame.locator('[data-od-id="item-b"]').dblclick({ force: true });
+  await expect(page.locator('[data-od-spacing-kind="gap"]:visible')).toHaveCount(0);
+});
+
+test('[P0] spacing guides reveal stripes and values on hover and drag without moving the component', async ({ page }) => {
+  await routeMockAgents(page);
+  const projectId = await createEmptyProject(page, 'GrapesJS spacing drag');
+  await seedHtmlArtifact(page, projectId, 'gjs-spacing-drag.html', flexSpacingHtml());
+  await openDesignFile(page, 'gjs-spacing-drag.html');
+
+  await expect(grapesjsIframe(page)).toBeVisible({ timeout: 20_000 });
+  const frame = page.frameLocator(GRAPESJS_IFRAME_SELECTOR);
+  const flex = frame.locator('[data-od-id="flex-row"]');
+  await expect(flex).toBeVisible({ timeout: 15_000 });
+  await flex.click({ position: { x: 6, y: 6 }, force: true });
+
+  const paddingHandle = page.locator(
+    '[data-od-spacing-kind="padding"][data-od-spacing-prop="padding-left"]:visible',
+  );
+  const paddingBand = page.locator(
+    '[data-od-spacing-band-kind="padding"][data-od-spacing-prop="padding-left"]:visible',
+  );
+  await expect(paddingHandle).toHaveCount(1);
+  await expect(paddingBand).toHaveCSS('background-image', 'none');
+
+  await paddingHandle.hover();
+  await expect(paddingBand).toHaveCSS('background-image', /repeating-linear-gradient/);
+  const spacingTip = page.locator('[data-od-spacing-tip="true"]');
+  await expect(spacingTip).toBeVisible();
+  await expect(spacingTip).toContainText('24');
+
+  const dragBy = async (locator: Locator, dx: number, dy: number) => {
+    const box = await locator.boundingBox();
+    if (!box) throw new Error('spacing handle has no bounding box');
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + dx, y + dy, { steps: 5 });
+    await page.mouse.up();
+  };
+  const computedNumber = (property: 'gap' | 'padding-left' | 'margin-right') =>
+    flex.evaluate((element, prop) => parseFloat(getComputedStyle(element).getPropertyValue(prop)), property);
+  const selectedOrder = () => frame.locator('.flex-item').evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute('data-od-id')),
+  );
+
+  await dragBy(paddingHandle, 12, 0);
+  await expect.poll(() => computedNumber('padding-left')).toBeCloseTo(36, 0);
+
+  const gapHandle = page.locator('[data-od-spacing-kind="gap"][data-od-spacing-index="0"]:visible');
+  await dragBy(gapHandle, 24, 0);
+  await expect.poll(() => computedNumber('gap')).toBeCloseTo(44, 0);
+
+  const marginHandle = page.locator(
+    '[data-od-spacing-kind="margin"][data-od-spacing-prop="margin-right"]:visible',
+  );
+  await dragBy(marginHandle, 10, 0);
+  await expect.poll(() => computedNumber('margin-right')).toBeCloseTo(26, 0);
+  await expect.poll(selectedOrder).toEqual(['item-a', 'item-b', 'item-c']);
 });
 
 test('[P0] Style panel shows the selected element\'s properties', async ({ page }) => {
