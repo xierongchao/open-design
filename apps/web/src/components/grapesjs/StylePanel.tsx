@@ -22,6 +22,8 @@ import {
   AlignCenterHorizontal,
   AlignCenterVertical,
   AlignEndHorizontal,
+  AlignHorizontalSpaceBetween,
+  AlignVerticalSpaceBetween,
   AlignEndVertical,
   AlignJustify,
   AlignLeft,
@@ -2134,6 +2136,17 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
               onClick={() => {
                 if (flow === 'row') apply({ flexDirection: reverseFlow ? 'row' : 'row-reverse' });
                 if (flow === 'column') apply({ flexDirection: reverseFlow ? 'column' : 'column-reverse' });
+              }}
+            />
+            <IconButton
+              label="两端对齐"
+              icon={flow === 'column' ? AlignVerticalSpaceBetween : AlignHorizontalSpaceBetween}
+              active={(style.justifyContent ?? '') === 'space-between'}
+              disabled={flow === 'free' || flow === 'wrap'}
+              placement="left"
+              onClick={() => {
+                const next = (style.justifyContent ?? '') === 'space-between' ? 'flex-start' : 'space-between';
+                apply({ justifyContent: next });
               }}
             />
           </div>

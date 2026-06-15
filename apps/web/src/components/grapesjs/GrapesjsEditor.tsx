@@ -1116,10 +1116,12 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 else if (it.side === 'left') layoutSide(it, pLCss, 0, 0, pL, boxH, pL, boxH / 2);
                 else layoutSide(it, pRCss, boxW - pR, 0, pR, boxH, boxW - pR, boxH / 2);
               } else {
-                if (it.side === 'top') layoutSide(it, mTCss, -mL, -mT, boxW + mL + mR, mT, boxW / 2, -mT);
-                else if (it.side === 'bottom') layoutSide(it, mBCss, -mL, boxH, boxW + mL + mR, mB, boxW / 2, boxH + mB);
-                else if (it.side === 'left') layoutSide(it, mLCss, -mL, -mT, mL, boxH + mT + mB, -mL, boxH / 2);
-                else layoutSide(it, mRCss, boxW, -mT, mR, boxH + mT + mB, boxW + mR, boxH / 2);
+                // Margin guide lines sit OUTSIDE the border box by ~10px so they
+                // don't overlap the selection outline even when margin is 0.
+                if (it.side === 'top') layoutSide(it, mTCss, -mL, -mT, boxW + mL + mR, mT, boxW / 2, -mT - 10);
+                else if (it.side === 'bottom') layoutSide(it, mBCss, -mL, boxH, boxW + mL + mR, mB, boxW / 2, boxH + mB + 10);
+                else if (it.side === 'left') layoutSide(it, mLCss, -mL, -mT, mL, boxH + mT + mB, -mL - 10, boxH / 2);
+                else layoutSide(it, mRCss, boxW, -mT, mR, boxH + mT + mB, boxW + mR + 10, boxH / 2);
               }
             }
 
