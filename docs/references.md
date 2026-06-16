@@ -6,6 +6,14 @@ Every external project this spec leans on. Three questions per entry: what is it
 
 ---
 
+## Internal code maps
+
+These are internal navigation aids (not external projects). They map product-owner UI vocabulary to actual source files so humans and agents can locate code quickly.
+
+- [`ui-region-map.md`](ui-region-map.md) — maps the four common UI regions ("HTML 区域" / "左侧文件树" / "右侧编辑面板" / "顶部工具条") to their owning files and key line anchors. Reach for this first when a task names one of those regions; use the class-name anchors (`df-tree-pane`, `viewer-toolbar`, `workspace-edit-panel-host`, `grapesjs-sidebar`) rather than line numbers, since lines drift.
+
+---
+
 ## Primary references
 
 ### [Anthropic Claude Design][cd]
