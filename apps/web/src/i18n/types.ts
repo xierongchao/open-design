@@ -2743,7 +2743,9 @@ export interface Dict {
   'fileViewer.exportImageFailed': string;
   'fileViewer.exportImageModalSubtitle': string;
   'fileViewer.exportImageFormatLabel': string;
+  'fileViewer.exportImageScaleLabel': string;
   'fileViewer.exportImageSaving': string;
+  'fileViewer.exportImageCapturing': string;
   'fileViewer.exportImageSaved': string;
   'fileViewer.exportImageDownloadStarted': string;
   'fileViewer.exportImageDownloadDetails': string;

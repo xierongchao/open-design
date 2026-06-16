@@ -156,6 +156,7 @@ import { filterImplicitProducedFiles } from '../produced-files';
 import { buildPptxExportPrompt } from '../lib/build-pptx-export-prompt';
 import { AvatarMenu } from './AvatarMenu';
 import { EntrySettingsMenu } from './EntrySettingsMenu';
+import { DownloadButton } from './DownloadButton';
 import { HandoffButton } from './HandoffButton';
 import { Icon } from './Icon';
 import { DesignSystemPicker } from './DesignSystemPicker';
@@ -1802,6 +1803,28 @@ export function ProjectView({
     ),
     [openTabsState.active, projectFileNames],
   );
+  // Active file's kind, so the header DownloadButton can tell whether the
+  // current tab is an HTML artifact (PDF / image / zip exports only make
+  // sense for HTML). Derived from the same projectFiles the viewer uses.
+  const activeProjectFileKind = useMemo(
+    () =>
+      activeProjectFileName
+        ? projectFiles.find((file) => file.name === activeProjectFileName)?.kind ?? null
+        : null,
+    [activeProjectFileName, projectFiles],
+  );
+  // The HTML file the header DownloadButton targets. File tabs resolve
+  // directly; live-artifact tabs (`live:<id>`) and the no-tab case fall back
+  // to the project's primary HTML file, which is what the preview is
+  // rendering. Returns null when there is no HTML artifact to export.
+  const downloadTargetFile = useMemo<ProjectFile | null>(() => {
+    if (activeProjectFileName) {
+      const direct = projectFiles.find((file) => file.name === activeProjectFileName);
+      if (direct && direct.kind === 'html') return direct;
+    }
+    const primary = selectPrimaryProjectFile(projectFiles);
+    return primary && primary.kind === 'html' ? primary : null;
+  }, [activeProjectFileName, projectFiles]);
   const agentsById = useMemo(
     () => new Map(agents.map((agent) => [agent.id, agent])),
     [agents],
@@ -5695,6 +5718,11 @@ export function ProjectView({
           backLabel={t('project.backToProjects')}
           headerActions={(
             <>
+              <DownloadButton
+                projectId={project.id}
+                fileName={downloadTargetFile?.name}
+                fileKind={downloadTargetFile?.kind}
+              />
               <EntrySettingsMenu
                 config={config}
                 onThemeChange={handleThemeChange}

@@ -953,6 +953,51 @@
 .image-export-format-text span {
   display: none;
 }
+/* DownloadButton (project header) image-export modal: format +
+   scale (1x/2x/3x/4x) pickers. Mirrors the viewer's image-export modal
+   styling so the header surface reads as the same dialog. */
+.download-image-modal {
+  width: min(420px, calc(100vw - 32px));
+}
+/* The header modal exposes 4 formats (PNG/JPG/WebP/SVG) — force a single
+   row instead of the viewer's 3-column grid (which wraps the 4th option). */
+.download-image-modal .image-export-format-options {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+/* Match the scale chips' accent highlight so the selected format reads with
+   the same emphasis as the selected 1x/2x/3x/4x chip. */
+.download-image-modal .image-export-format-option.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: none;
+}
+.download-image-scale-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.download-image-scale-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+              border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.download-image-scale-chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.download-image-scale-chip.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+}
 .image-export-modal .modal-foot {
   padding: 14px 24px 20px;
   border-top: 1px solid var(--border);

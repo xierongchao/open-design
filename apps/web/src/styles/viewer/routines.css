@@ -2472,6 +2472,32 @@
   padding: 4px 10px 6px;
 }
 
+/* -- Header DownloadButton popover (PDF / image / zip) -- */
+.app .download-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.app .download-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow-md, 0 12px 32px rgba(0, 0, 0, 0.12));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.app .download-menu .share-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
 /* -- Project-page design-system picker (project chrome header) -- */
 .project-ds-picker {
   position: relative;

@@ -396,6 +396,57 @@ export async function requestPreviewSnapshot(
 }
 
 /**
+ * Request the verbatim foreignObject SVG string for the artifact rendered in
+ * `iframe`. The snapshot bridge serializes its constructed SVG (the same one
+ * it rasterizes for PNG) directly back, so this yields a true vector export
+ * with no pixel scale. Used by the header DownloadButton's SVG format.
+ */
+export function requestPreviewSvg(
+  iframe: HTMLIFrameElement,
+  timeout = 8000,
+): Promise<{ svg: string; w: number; h: number } | null> {
+  const win = iframe.contentWindow;
+  if (!win) return Promise.resolve(null);
+  const id = `snap-svg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return new Promise((resolve) => {
+    let done = false;
+    function onMsg(ev: MessageEvent) {
+      if (ev.source !== win) return;
+      const d = ev.data as {
+        type?: string;
+        resultType?: string;
+        id?: string;
+        svg?: string;
+        w?: number;
+        h?: number;
+        error?: string;
+      } | null;
+      if (!d || d.type !== 'od:snapshot:result' || d.resultType !== 'svg' || d.id !== id) return;
+      if (done) return;
+      done = true;
+      window.removeEventListener('message', onMsg);
+      if (d.svg && d.w && d.h) resolve({ svg: d.svg, w: d.w, h: d.h });
+      else resolve(null);
+    }
+    window.addEventListener('message', onMsg);
+    try {
+      win.postMessage({ type: 'od:snapshot:svg', id }, '*');
+    } catch {
+      done = true;
+      window.removeEventListener('message', onMsg);
+      resolve(null);
+    }
+    setTimeout(() => {
+      if (!done) {
+        done = true;
+        window.removeEventListener('message', onMsg);
+        resolve(null);
+      }
+    }, timeout);
+  });
+}
+
+/**
  * Capture a rectangle of the on-screen window via the desktop host's
  * compositor (Electron `webContents.capturePage`). Unlike the in-iframe
  * SVG-foreignObject bridge, this returns the REAL rendered pixels — fonts,
@@ -720,6 +771,208 @@ export function exportAsImage(dataUrl: string, title: string): void {
     // Re-throw the error to allow the caller to handle UI feedback
     throw err;
   }
+}
+
+/**
+ * Render an HTML artifact off-screen and capture it as a PNG data URL. This is
+ * the export path that works regardless of what is currently on screen: it
+ * spins up a hidden iframe, loads the artifact's srcdoc (buildSrcdoc injects
+ * the `od:snapshot` bridge), waits for the bridge to reply with a snapshot,
+ * then tears the iframe down. Used by the header DownloadButton so an image
+ * export works in the GrapesJS editor view (whose on-screen canvas is not a
+ * normal preview iframe and has no snapshot bridge).
+ *
+ * Returns null when the capture times out or the bridge reports an error, so
+ * callers can surface a friendly message instead of a blank frame.
+ */
+export async function captureHtmlSnapshot(
+  html: string,
+  opts: { baseHref?: string; deck?: boolean; timeoutMs?: number } = {},
+): Promise<PreviewSnapshot | null> {
+  const host = await renderArtifactForCapture(html, opts);
+  if (!host) return null;
+  try {
+    const { domToPng } = await import('modern-screenshot');
+    const dataUrl = await domToPng(host.body, {
+      backgroundColor: readEffectiveBackgroundColor(host.doc) ?? '#ffffff',
+    });
+    const w = host.body.scrollWidth || host.body.clientWidth || 1;
+    const h = host.body.scrollHeight || host.body.clientHeight || 1;
+    return { dataUrl, w, h };
+  } catch (err) {
+    console.warn('[captureHtmlSnapshot] modern-screenshot failed:', err);
+    return null;
+  } finally {
+    host.cleanup();
+  }
+}
+
+/**
+ * Render an HTML artifact off-screen and return a TRUE vector SVG. Uses
+ * dom-to-svg (elementToSVG), which traverses the DOM and re-creates each
+ * element as a native SVG primitive (rect, text, image, …) instead of
+ * wrapping the rendered HTML in a foreignObject + base64 raster like
+ * modern-screenshot's domToSvg does. The result is a genuine vector file:
+ * text stays selectable/editable, shapes scale without aliasing. Only the
+ * bitmap <img> sources remain raster (inlined as data URIs) because they
+ * were raster to begin with. Works in every view, including the GrapesJS
+ * editor where the on-screen canvas is not a normal preview iframe.
+ */
+export async function captureHtmlSvg(
+  html: string,
+  opts: { baseHref?: string; deck?: boolean; timeoutMs?: number } = {},
+): Promise<{ svg: string; w: number; h: number } | null> {
+  const host = await renderArtifactForCapture(html, opts);
+  if (!host) return null;
+  try {
+    const { elementToSVG, inlineResources } = await import('dom-to-svg');
+    const svgDoc = elementToSVG(host.body);
+    await inlineResources(svgDoc.documentElement as unknown as Element);
+    const w = host.body.scrollWidth || host.body.clientWidth || 1;
+    const h = host.body.scrollHeight || host.body.clientHeight || 1;
+    const svg = new XMLSerializer().serializeToString(svgDoc);
+    return { svg, w, h };
+  } catch (err) {
+    console.warn('[captureHtmlSvg] dom-to-svg failed:', err);
+    return null;
+  } finally {
+    host.cleanup();
+  }
+}
+
+function readEffectiveBackgroundColor(doc: Document): string | null {
+  try {
+    const probe = doc.defaultView?.getComputedStyle(doc.body ?? doc.documentElement);
+    const bg = probe?.backgroundColor ?? '';
+    if (!bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)') return '#ffffff';
+    return bg;
+  } catch {
+    return '#ffffff';
+  }
+}
+
+/**
+ * Render an HTML artifact into a hidden same-origin iframe so the body is a
+ * real, style-resolvable DOM node. modern-screenshot needs direct DOM access
+ * (it reads computed styles, clones nodes, inlines assets), which a
+ * cross-origin sandboxed srcdoc iframe forbids — so we grant allow-same-origin
+ * here. The iframe is off-screen (left:-99999px) but kept laid out (not
+ * display:none) so the body measures a real scrollWidth/Height for the
+ * rasterizer. The artifact's own HTML is untrusted in the sense that the user
+ * generated it, but it runs in a throwaway iframe that is torn down after
+ * capture, so the same-origin grant is scoped to this transient export.
+ */
+async function renderArtifactForCapture(
+  html: string,
+  opts: { baseHref?: string; deck?: boolean; timeoutMs?: number } = {},
+): Promise<{ doc: Document; body: HTMLElement; cleanup: () => void } | null> {
+  if (typeof document === 'undefined') return null;
+  const timeoutMs = opts.timeoutMs ?? 12_000;
+  const srcdoc = buildSrcdoc(html, {
+    baseHref: opts.baseHref,
+    deck: opts.deck,
+    previewFocusGuard: false,
+  });
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.setAttribute('data-od-snapshot-host', 'true');
+  iframe.title = 'export-snapshot';
+  // allow-same-origin is required so the host can read contentDocument and
+  // modern-screenshot can resolve computed styles on the body.
+  iframe.sandbox.add('allow-scripts', 'allow-same-origin');
+  iframe.style.cssText =
+    'position:fixed;left:-99999px;top:0;width:1280px;height:800px;border:0;opacity:0;pointer-events:none;';
+  document.body.appendChild(iframe);
+  iframe.srcdoc = srcdoc;
+  const cleanup = () => {
+    try {
+      iframe.remove();
+    } catch {
+      /* ignore */
+    }
+  };
+  // Wait for load, then for images to finish so the rasterizer paints them.
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      iframe.removeEventListener('load', finish);
+      resolve();
+    };
+    iframe.addEventListener('load', finish);
+    window.setTimeout(finish, timeoutMs);
+  });
+  const doc = iframe.contentDocument;
+  if (!doc || !doc.body) {
+    cleanup();
+    return null;
+  }
+  await waitForCaptureImages(doc);
+  return { doc, body: doc.body, cleanup };
+}
+
+function waitForCaptureImages(doc: Document, timeoutMs = 8000): Promise<void> {
+  const imgs = Array.from(doc.images ?? []);
+  if (imgs.length === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    let remaining = imgs.length;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    for (const img of imgs) {
+      if (img.complete) {
+        remaining -= 1;
+        if (remaining <= 0) finish();
+        continue;
+      }
+      img.addEventListener('load', () => {
+        remaining -= 1;
+        if (remaining <= 0) finish();
+      }, { once: true });
+      img.addEventListener('error', () => {
+        remaining -= 1;
+        if (remaining <= 0) finish();
+      }, { once: true });
+    }
+    window.setTimeout(finish, timeoutMs);
+  });
+}
+
+/**
+ * Scale a captured snapshot up to an integer multiplier (2x / 3x / 4x) and
+ * re-encode it as the requested format. 1x passes through with only the
+ * format conversion. JPEG gets an opaque white background so transparency
+ * never flattens to black.
+ */
+export async function scaleAndEncodeSnapshot(
+  dataUrl: string,
+  opts: { scale: number; format: ImageExportFormat },
+): Promise<Blob> {
+  const scale = Math.max(1, Math.min(8, Math.round(opts.scale)));
+  const img = await loadImageFromDataUrl(dataUrl);
+  const baseW = img.naturalWidth || img.width;
+  const baseH = img.naturalHeight || img.height;
+  if (baseW <= 0 || baseH <= 0) throw new Error('Image snapshot is empty');
+  const width = baseW * scale;
+  const height = baseH * scale;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas is not available');
+  if (opts.format === 'jpeg') {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, width, height);
+  }
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, width, height);
+  const spec = IMAGE_EXPORT_SPECS[opts.format];
+  return canvasToBlob(canvas, spec.mime, opts.format === 'jpeg' ? 0.92 : undefined);
 }
 
 export type ProjectPdfExportResult = 'desktop' | 'fallback';

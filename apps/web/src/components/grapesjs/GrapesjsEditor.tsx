@@ -1043,6 +1043,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               gapSpacingItems = [];
               spacingTip?.remove();
               spacingTip = null;
+              closeSpacingInputEditor();
               spacingAttached = false;
             };
           };
@@ -1186,8 +1187,91 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
             if (spacingTip) spacingTip.style.display = 'none';
           };
+          // A single host-doc-level editor for the spacing "click to type"
+          // popup. Only one value can be edited at a time, so we keep one
+          // floating <input> and re-anchor it to whichever guide handle the
+          // user clicked. Stored on the boot-effect closure so the detach
+          // path below can remove it on teardown.
+          let spacingInputEditor: HTMLDivElement | null = null;
+          const closeSpacingInputEditor = () => {
+            if (spacingInputEditor) {
+              spacingInputEditor.remove();
+              spacingInputEditor = null;
+            }
+          };
+          // Open the click-to-edit popup for a spacing guide. Anchor it next
+          // to the handle and pre-fill the current value. Typing commits
+          // live (input/change), Enter/blur commits + closes, Escape closes
+          // without rollback (changes were already applied live).
+          const openSpacingInputEditor = (
+            item: SpacingItem,
+            target: Component,
+            anchorScreenX: number,
+            anchorScreenY: number,
+          ) => {
+            const hostDoc = item.handle.ownerDocument;
+            const hostWindow = hostDoc.defaultView;
+            if (!hostWindow) return;
+            closeSpacingInputEditor();
+            const wrap = hostDoc.createElement('div');
+            wrap.setAttribute('data-od-spacing-input', 'true');
+            wrap.style.cssText = 'position:fixed;z-index:2147483647;display:flex;align-items:center;gap:2px;padding:3px;background:#111;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.28);';
+            const input = hostDoc.createElement('input');
+            input.type = 'number';
+            input.min = '0';
+            input.step = '1';
+            input.value = String(Math.round(readSpacingVal(target, item.prop)));
+            input.style.cssText = 'width:80px;padding:2px 4px;border-radius:4px;background:#000;color:#fff;font:600 12px/1.4 system-ui;text-align:center;outline:none;-moz-appearance:textfield;box-shadow:0 2px 8px rgba(0,0,0,.28);outline:none;border:none;';
+            // Hide the native number spinners — they steal vertical pixel space
+            // and fight the value entry.
+            const hideSpin = hostDoc.createElement('style');
+            hideSpin.textContent = 'input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}';
+            wrap.appendChild(hideSpin);
+            wrap.appendChild(input);
+            hostDoc.body.appendChild(wrap);
+            spacingInputEditor = wrap;
+            // Anchor to the right of the click point; fall above if it would
+            // overflow the right edge.
+            const anchorLeft = anchorScreenX + 8;
+            const w = 80;
+            const maxLeft = hostWindow.innerWidth - w - 4;
+            wrap.style.left = `${Math.min(anchorLeft, Math.max(4, maxLeft))}px`;
+            wrap.style.top = `${Math.max(4, anchorScreenY - 14)}px`;
+            const apply = (raw: string) => {
+              const parsed = Math.max(0, Math.round(Number(raw)));
+              const v = Number.isFinite(parsed) ? parsed : 0;
+              try {
+                const merged = { ...(target.getStyle?.() ?? {}) } as Record<string, string>;
+                merged[item.prop] = `${v}px`;
+                target.setStyle(merged as Parameters<typeof target.setStyle>[0]);
+                refreshSelectionSnapshotRef.current?.();
+                editor.refresh({ tools: true });
+                positionSpacingHandles();
+              } catch { /* ignore */ }
+            };
+            const commit = () => {
+              apply(input.value);
+              closeSpacingInputEditor();
+              scheduleEmitRef.current?.();
+            };
+            input.addEventListener('input', () => apply(input.value));
+            input.addEventListener('change', () => apply(input.value));
+            input.addEventListener('keydown', (ke: KeyboardEvent) => {
+              if (ke.key === 'Enter') { ke.preventDefault(); commit(); }
+              else if (ke.key === 'Escape') { ke.preventDefault(); closeSpacingInputEditor(); }
+              ke.stopPropagation();
+            });
+            input.addEventListener('blur', commit);
+            // Stop pointer events on the popup from leaking into the canvas
+            // (which would deselect / reselect and hide the handles).
+            wrap.addEventListener('pointerdown', (pe) => { pe.stopPropagation(); });
+            hostWindow.requestAnimationFrame(() => { input.focus(); input.select(); });
+          };
           const onSpacingDragStart = (ev: PointerEvent, item: SpacingItem) => {
             if (readOnlyRef.current || cropModeRef.current) return;
+            // A click that opens the input popup would be confusing if one is
+            // already open — close it first so the new handle's value wins.
+            closeSpacingInputEditor();
             ev.preventDefault();
             ev.stopPropagation();
             ev.stopImmediatePropagation();
@@ -1212,13 +1296,22 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               : item.kind === 'padding'
                 ? (item.side === 'top' || item.side === 'left' ? 1 : -1)
                 : (item.side === 'bottom' || item.side === 'right' ? 1 : -1);
+            // Track whether the pointer crossed the drag threshold. A press
+            // that stays within the threshold is a "click" → open the input
+            // popup; a press that exceeds it is a drag → live-edit the value.
+            const CLICK_THRESHOLD_PX = 5;
+            let moved = false;
             const move = (me: PointerEvent) => {
               const d = spacingDrag;
               if (!d) return;
               me.preventDefault();
               me.stopPropagation();
+              const dxMove = me.clientX - d.startX;
+              const dyMove = me.clientY - d.startY;
+              if (!moved && Math.hypot(dxMove, dyMove) < CLICK_THRESHOLD_PX) return;
+              moved = true;
               const horizontal = d.item.side === 'left' || d.item.side === 'right';
-              const rawDelta = horizontal ? me.clientX - d.startX : me.clientY - d.startY;
+              const rawDelta = horizontal ? dxMove : dyMove;
               const next = Math.max(0, Math.round(d.startVal + (rawDelta / d.zoom) * dragSign));
               d.item.value = next;
               showSpacingTip(d.item, me.clientX, me.clientY);
@@ -1231,7 +1324,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 positionSpacingHandles();
               } catch { /* ignore */ }
             };
-            const up = () => {
+            const up = (ue: PointerEvent) => {
               const d = spacingDrag;
               spacingDrag = null;
               if (spacingTip) spacingTip.style.display = 'none';
@@ -1242,6 +1335,12 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               hostWindow.removeEventListener('pointermove', move, true);
               hostWindow.removeEventListener('pointerup', up, true);
               hostWindow.removeEventListener('pointercancel', up, true);
+              // Click (no drag) → open the numeric input popup. The drag
+              // path already wrote each move, so a drag commit just emits.
+              if (!moved && d) {
+                openSpacingInputEditor(d.item, d.target, ue.clientX, ue.clientY);
+                return;
+              }
               scheduleEmitRef.current?.();
             };
             hostWindow.addEventListener('pointermove', move, true);
@@ -1252,7 +1351,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             if (opts && opts.type === 'global') positionSpacingHandles();
           });
           editor.on('component:deselected', hideSpacingHandles);
-          editor.on('component:selected', () => { ensureSpacingHandles(); positionSpacingHandles(); });
+          editor.on('component:selected', () => {
+            // Opening a new selection should not leave a stale value popup
+            // from the previous element's spacing guide.
+            closeSpacingInputEditor();
+            ensureSpacingHandles();
+            positionSpacingHandles();
+          });
           // NOTE: we intentionally do NOT install a capture-phase click
           // interceptor on the canvas document. GrapesJS's own click → select
           // pipeline (including its native selection box, resize handles, and
@@ -1350,8 +1455,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           // the cursor flips to grab even before the mouse is over the canvas.
           const ZOOM_MIN = 25;
           const ZOOM_MAX = 300;
-          const ZOOM_SENSITIVITY = 0.0012;
-          const MAX_WHEEL_DELTA_PER_EVENT = 40;
+          // Sensitivity deliberately on the higher side: the user reported the
+          // Cmd+wheel zoom step felt too small. 0.004 ≈ 3.3× the previous
+          // 0.0012, so a normal wheel tick produces a clearly-visible zoom
+          // change. MAX_WHEEL_DELTA_PER_EVENT is raised in step so fast/large
+          // wheel events aren't clamped back to a small effective delta.
+          const ZOOM_SENSITIVITY = 0.004;
+          const MAX_WHEEL_DELTA_PER_EVENT = 60;
           const canvasEl = (() => {
             try {
               return editor.Canvas.getElement?.() ?? containerRef.current;
@@ -1887,17 +1997,15 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 } catch { /* ignore */ }
                 return;
               }
-              // Shift+A: auto-arrange the current multi-selection into a flex
-              // layout. Orientation is derived from the first/last picked
-              // elements' relative positions (horizontal if |dx|>|dy|), and the
-              // gap is the first↔last main-axis distance minus the sum of the
-              // items' main-axis sizes, divided across the gaps. For
-              // cross-container selections, the LAST picked element's parent
-              // becomes the target container (the last picked item lands last).
+              // Shift+A: wrap the current multi-selection in a NEW flex
+              // container, leaving the picked elements in their original
+              // visual positions. Selection order does NOT affect layout:
+              // children are collected in DOM order and the gap is the real
+              // distance between adjacent picked elements, so the wrapped
+              // frame lands where the elements already were.
               if (!readOnlyRef.current && ev.shiftKey && !ev.metaKey && !ev.ctrlKey && (ev.key === 'a' || ev.key === 'A')) {
                 if (isTextInputTarget(ev.target)) return;
                 try {
-                  // Prefer tracked pick order; fall back to getSelectedAll().
                   const picked = selectionOrderRef.current.length > 0
                     ? selectionOrderRef.current.slice()
                     : ((editor.getSelectedAll?.() ?? []) as Component[]);
@@ -1910,73 +2018,88 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                     const r = el.getBoundingClientRect();
                     return { x: r.left / zoom, y: r.top / zoom, w: r.width / zoom, h: r.height / zoom };
                   };
-                  const a = picked[0] as Component;
-                  const b = picked[picked.length - 1] as Component;
-                  const ra = rectOf(a);
-                  const rb = rectOf(b);
-                  // Determine orientation from first/last centres.
-                  const horizontal = !!(ra && rb) && Math.abs((rb.x + rb.w / 2) - (ra.x + ra.w / 2)) >= Math.abs((rb.y + rb.h / 2) - (ra.y + ra.h / 2));
+                  // All picked elements must share the SAME direct parent —
+                  // that parent is where the wrapper gets inserted. If they
+                  // don't share a parent, bail (cross-container grouping is
+                  // out of scope; the user can group within one container).
+                  const parents = new Set(picked.map((c) => c.parent?.() ?? null));
+                  if (parents.size !== 1) return;
+                  const parent = picked[0]?.parent?.();
+                  if (!parent) return;
+                  // Order the picked elements by their current DOM position
+                  // (NOT by pick order). This is what keeps each element where
+                  // it already is once they flow into the new flex wrapper.
+                  const ordered = picked
+                    .map((comp) => ({ comp, rect: rectOf(comp) }))
+                    .filter((e): e is { comp: Component; rect: { x: number; y: number; w: number; h: number } } => !!e.rect);
+                  if (ordered.length === 0) return;
+                  ordered.sort((p, q) => (p.rect.y - q.rect.y) || (p.rect.x - q.rect.x));
+                  const orderedComps = ordered.map((e) => e.comp);
+                  // Orientation from the first/last DOM-ordered centres.
+                  const first = ordered[0]!.rect;
+                  const last = ordered[ordered.length - 1]!.rect;
+                  const horizontal = Math.abs((last.x + last.w / 2) - (first.x + first.w / 2))
+                    >= Math.abs((last.y + last.h / 2) - (first.y + first.h / 2));
                   const direction = horizontal ? 'row' : 'column';
-                  // Compute gap from first↔last distance minus summed sizes.
-                  let gap = 8;
-                  if (ra && rb && picked.length > 1) {
-                    let span = 0;
-                    let sumSize = 0;
-                    for (const comp of picked) {
-                      const rc = rectOf(comp);
-                      if (!rc) continue;
-                      sumSize += horizontal ? rc.w : rc.h;
+                  // Gap = average real spacing between adjacent picked
+                  // elements along the main axis (clamped ≥ 0). This
+                  // preserves the original visual spacing inside the wrapper.
+                  let gap = 0;
+                  if (ordered.length > 1) {
+                    let totalGap = 0;
+                    for (let i = 1; i < ordered.length; i += 1) {
+                      const prev = ordered[i - 1]!.rect;
+                      const cur = ordered[i]!.rect;
+                      if (horizontal) {
+                        totalGap += Math.max(0, cur.x - (prev.x + prev.w));
+                      } else {
+                        totalGap += Math.max(0, cur.y - (prev.y + prev.h));
+                      }
                     }
-                    span = horizontal
-                      ? Math.abs((rb.x + rb.w) - ra.x)
-                      : Math.abs((rb.y + rb.h) - ra.y);
-                    const gaps = picked.length - 1;
-                    const g = Math.round((span - sumSize) / gaps);
-                    gap = Number.isFinite(g) && g >= 0 ? g : 0;
+                    gap = Math.round(totalGap / (ordered.length - 1));
                   }
-                  // Target container = LAST picked element's parent (handles
-                  // cross-container selections; same-container is a special case).
-                  const target = b.parent?.() ?? a.parent?.();
-                  if (!target) return;
-                  // Ensure the target is a flex container with the chosen
-                  // direction + gap (merge into existing inline style).
-                  try {
-                    const tStyle = { ...(target.getStyle?.() ?? {}) } as Record<string, string>;
-                    tStyle['display'] = 'flex';
-                    tStyle['flex-direction'] = direction;
-                    tStyle['gap'] = `${gap}px`;
-                    target.setStyle(tStyle as Parameters<typeof target.setStyle>[0]);
-                  } catch { /* ignore */ }
-                  // Move all picked components into the target in pick order.
-                  // Moving the last picked first would shift indices, so append
-                  // in order and rely on GrapesJS append semantics, then fix
-                  // order by moving each to its pick index afterwards.
-                  for (const comp of picked) {
-                    if (comp.parent?.() === target) continue;
-                    try { comp.move(target); } catch { /* ignore */ }
-                  }
-                  // Re-order within target to match pick order (last picked last).
-                  try {
-                    const tcomps = target.components();
-                    picked.forEach((comp, i) => {
-                      try { comp.move(target, { at: i }); } catch { /* ignore */ }
-                    });
-                    void tcomps;
-                  } catch { /* ignore */ }
-                  // Reposition the flex target to the FIRST picked element's
-                  // original slot so the arranged frame lands where the user
-                  // started the selection, not at the parent's end.
-                  try {
-                    const fcomps = target.components();
-                    const firstIdx = (() => {
-                      for (let i = 0; i < fcomps.length; i += 1) { if (fcomps.get(i) === a) return i; }
-                      return -1;
-                    })();
-                    if (firstIdx >= 0) target.move(target.parent?.() ?? target, { at: firstIdx });
-                  } catch { /* ignore */ }
-                  // Select the flex container (the arrange target) so the
-                  // user lands on the just-arranged frame, matching Figma.
-                  editor.select(target);
+                  // Size the wrapper to the picked elements' bounding box so
+                  // it occupies exactly the region they filled — keeping the
+                  // visual footprint stable regardless of the parent's layout.
+                  const minX = Math.min(...ordered.map((e) => e.rect.x));
+                  const minY = Math.min(...ordered.map((e) => e.rect.y));
+                  const maxX = Math.max(...ordered.map((e) => e.rect.x + e.rect.w));
+                  const maxY = Math.max(...ordered.map((e) => e.rect.y + e.rect.h));
+                  const wrapW = Math.round(maxX - minX);
+                  const wrapH = Math.round(maxY - minY);
+                  // Insert the wrapper at the DOM index of the first
+                  // (DOM-ordered) picked element, so it takes that element's
+                  // slot and the un-picked siblings stay put.
+                  const firstPickedComp = orderedComps[0]!;
+                  const insertAt = (() => {
+                    const pc = parent.components();
+                    for (let i = 0; i < pc.length; i += 1) { if (pc.get(i) === firstPickedComp) return i; }
+                    return pc.length;
+                  })();
+                  const created = parent.append(
+                    {
+                      tagName: 'div',
+                      style: {
+                        'display': 'flex',
+                        'flex-direction': direction,
+                        'gap': `${gap}px`,
+                        'width': `${wrapW}px`,
+                        'height': `${wrapH}px`,
+                      },
+                    } as never,
+                    { at: insertAt } as never,
+                  );
+                  const wrapper = (Array.isArray(created) ? created[0] : created) as Component | null;
+                  if (!wrapper) return;
+                  // Move each picked element into the wrapper in DOM order.
+                  // Re-inserting at sequential indices preserves their order
+                  // and keeps them in the same relative positions inside the
+                  // flex container.
+                  orderedComps.forEach((comp, i) => {
+                    try { comp.move(wrapper, { at: i }); } catch { /* ignore */ }
+                  });
+                  editor.select(wrapper);
+                  scheduleEmitRef.current?.();
                 } catch { /* ignore */ }
                 return;
               }
@@ -2286,6 +2409,74 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               editor.select(ancestor);
             };
 
+            // Flex-aware hover: when the pointer is over an element that lives
+            // INSIDE a flex container, redirect the GrapesJS hover highlight to
+            // that container (so the hover box matches the "click selects the
+            // container" behaviour) and add a dashed blue outline to the actual
+            // child under the cursor. This removes the jarring mismatch where
+            // hovering a flex child drew the hover outline on the child but
+            // clicking selected the container.
+            const FLEX_CHILD_HOVER_CLASS = 'od-flex-child-hover';
+            // Inject the outline style into the canvas iframe document (the
+            // child element lives inside the iframe, so a host-side stylesheet
+            // wouldn't reach it). Idempotent via a marker attribute.
+            try {
+              const head = doc.head;
+              if (head && !head.querySelector('style[data-od-flex-child-hover]')) {
+                const styleEl = doc.createElement('style');
+                styleEl.setAttribute('data-od-flex-child-hover', 'true');
+                styleEl.textContent = `.${FLEX_CHILD_HOVER_CLASS}{outline:1px dashed #3b82f6 !important;outline-offset:1px !important;}`;
+                head.appendChild(styleEl);
+              }
+            } catch { /* ignore */ }
+            let lastChildHoverEl: HTMLElement | null = null;
+            const clearChildHover = () => {
+              if (lastChildHoverEl) {
+                lastChildHoverEl.classList.remove(FLEX_CHILD_HOVER_CLASS);
+                lastChildHoverEl = null;
+              }
+            };
+            const onMouseOver = (ev: MouseEvent) => {
+              if (readOnlyRef.current) {
+                clearChildHover();
+                return;
+              }
+              const comp = getComponentFromElement(ev.target as Element | null);
+              if (!comp) { clearChildHover(); return; }
+              const ancestor = findNearestFlexAncestor(comp);
+              if (!ancestor) {
+                clearChildHover();
+                return;
+              }
+              // The element actually under the cursor (the flex child). Tag it
+              // with the dashed outline. Skip when the pointer is directly on
+              // the flex container itself (no child to outline).
+              const childEl = getElementFromComponent(comp) as HTMLElement | null;
+              if (childEl && childEl !== lastChildHoverEl) {
+                clearChildHover();
+                childEl.classList.add(FLEX_CHILD_HOVER_CLASS);
+                lastChildHoverEl = childEl;
+              }
+              // Redirect the editor hover to the flex container. GrapesJS
+              // listens for `mouseover` on the body in the BUBBLE phase; this
+              // capture-phase handler runs first, so stopImmediatePropagation
+              // prevents GrapesJS from marking the child as hovered, and
+              // setHovered then drives the .gjs-hovered box onto the container.
+              ev.stopImmediatePropagation();
+              try {
+                (editor as unknown as { setHovered?: (cmp: Component | null) => void })
+                  .setHovered?.(ancestor);
+              } catch { /* ignore */ }
+            };
+            const onMouseOut = (ev: MouseEvent) => {
+              // Only clear when leaving the canvas document entirely (relatedTarget
+              // is null/outside the doc) — otherwise mouseover fires for the new
+              // target and re-tags it before this clears.
+              const related = ev.relatedTarget as Node | null;
+              if (related && doc.contains(related)) return;
+              clearChildHover();
+            };
+
             const onDblClick = (ev: MouseEvent) => {
               if (readOnlyRef.current) return;
               if (isTextInputTarget(ev.target)) return;
@@ -2364,11 +2555,16 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             doc.addEventListener('click', onClick, true);
             doc.addEventListener('dblclick', onDblClick, true);
             doc.addEventListener('contextmenu', onCtxMenu, true);
+            doc.addEventListener('mouseover', onMouseOver, true);
+            doc.addEventListener('mouseout', onMouseOut, true);
             detachNestedSelect = () => {
               try {
                 doc.removeEventListener('click', onClick, true);
                 doc.removeEventListener('dblclick', onDblClick, true);
                 doc.removeEventListener('contextmenu', onCtxMenu, true);
+                doc.removeEventListener('mouseover', onMouseOver, true);
+                doc.removeEventListener('mouseout', onMouseOut, true);
+                clearChildHover();
                 delete (doc as unknown as { __odNestedSelect?: true }).__odNestedSelect;
               } catch { /* ignore */ }
             };

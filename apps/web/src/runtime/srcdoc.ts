@@ -294,7 +294,7 @@ function injectSnapshotBridge(doc: string): string {
       return samples > 8;
     } catch (_) { return false; }
   }
-  function renderSnapshot(id){
+  function renderSnapshot(id, mode){
     var w = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
     var h = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
     var dpr = window.devicePixelRatio || 1;
@@ -345,6 +345,18 @@ function injectSnapshotBridge(doc: string): string {
       var encoded = encodeURIComponent(svg);
       return 'data:image/svg+xml;charset=utf-8,' + encoded;
     }
+    // SVG export: serialize the constructed foreignObject SVG verbatim so
+    // the host can save a true vector file (no pixel scale applies — SVG
+    // is resolution-independent, so this path is always "1x"). The host
+    // distinguishes the reply by resultType 'svg'.
+    if (mode === 'svg') {
+      try {
+        window.parent.postMessage({ type: 'od:snapshot:result', resultType: 'svg', id: id, svg: svg, w: w, h: h }, '*');
+      } catch (err) {
+        window.parent.postMessage({ type: 'od:snapshot:result', id: id, error: String(err && err.message || err) }, '*');
+      }
+      return;
+    }
     img.onerror = function(){
       window.parent.postMessage({ type: 'od:snapshot:result', id: id, error: 'snapshot image failed' }, '*');
     };
@@ -352,8 +364,13 @@ function injectSnapshotBridge(doc: string): string {
   }
   window.addEventListener('message', function(ev){
     var data = ev && ev.data;
-    if (!data || data.type !== 'od:snapshot' || !data.id) return;
-    waitForImages().then(function(){ renderSnapshot(String(data.id)); });
+    if (!data || !data.id) return;
+    // od:snapshot → PNG raster; od:snapshot:svg → verbatim SVG string.
+    if (data.type === 'od:snapshot') {
+      waitForImages().then(function(){ renderSnapshot(String(data.id), 'png'); });
+    } else if (data.type === 'od:snapshot:svg') {
+      waitForImages().then(function(){ renderSnapshot(String(data.id), 'svg'); });
+    }
   });
 })();</script>`;
   return injectBeforeBodyEnd(doc, script);

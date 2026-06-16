@@ -193,7 +193,8 @@
     "../../.tmp/tools-dev/codex-spacing/web/next/types/**/*.ts",
     "../../.tmp/tools-dev/codex-spacing/web/next/dev/types/**/*.ts",
     "../../.tmp/tools-dev/playwright-90146/web/next/types/**/*.ts",
-    "../../.tmp/tools-dev/playwright-90146/web/next/dev/types/**/*.ts"
+    "../../.tmp/tools-dev/playwright-90146/web/next/dev/types/**/*.ts",
+    "../../.tmp/tools-dev/default/web/next/dev/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
