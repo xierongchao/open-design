@@ -1214,6 +1214,16 @@ html.od-export-capture-active .od-toast {
 .comment-target-overlay.selected {
   border-width: 2px;
 }
+.comment-target-overlay.element-selection {
+  --comment-overlay-border: rgba(16, 185, 129, 0.95);
+  --comment-overlay-bg: rgba(16, 185, 129, 0.14);
+  --comment-overlay-ring: rgba(16, 185, 129, 0.22);
+}
+.comment-target-overlay.element-selection.selected {
+  box-shadow:
+    0 0 0 1px rgba(16, 185, 129, 0.38),
+    0 0 0 4px rgba(16, 185, 129, 0.12);
+}
 /* Per-member overlay highlight triggered by chip hover / remove-button focus.
    Only fires from the member rendering branch in CommentTargetOverlay;
    single-element snapshots use the non-member fallback and never get hovered. */
@@ -1221,6 +1231,9 @@ html.od-export-capture-active .od-toast {
   outline: 2px solid rgb(22, 119, 255);
   outline-offset: 2px;
   z-index: 2; /* float above sibling overlays */
+}
+.comment-target-overlay--member.element-selection.is-hover-focused {
+  outline-color: rgb(16, 185, 129);
 }
 .comment-target-overlay-label {
   position: absolute;
@@ -1232,6 +1245,46 @@ html.od-export-capture-active .od-toast {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+.element-selection-action {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, calc(100% - 36px));
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, #10b981 34%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-panel) 94%, #10b981);
+  box-shadow: var(--shadow-lg);
+}
+.element-selection-target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, #10b981 38%, var(--border));
+  border-radius: var(--radius-sm);
+  color: #d1fae5;
+  background: rgba(15, 23, 42, 0.68);
+  font-size: 12px;
+  font-weight: 600;
+}
+.element-selection-target-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.element-selection-action button {
+  min-height: 30px;
+  white-space: nowrap;
 }
 .comment-saved-marker {
   position: absolute;

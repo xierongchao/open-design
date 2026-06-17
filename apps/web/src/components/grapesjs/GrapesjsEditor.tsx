@@ -247,6 +247,14 @@ const CANVAS_BODY_STYLE_PROPS = [
   'opacity',
 ] as const;
 
+const FLEX_CHILD_HOVER_CLASS = 'od-flex-child-hover';
+export type GrapesjsSelectionTone = 'default' | 'element-selection';
+export type GrapesjsSelectionChrome = 'edit' | 'element-selection';
+
+function grapesjsSelectionColor(tone: GrapesjsSelectionTone | undefined): string {
+  return tone === 'element-selection' ? '#10b981' : '#3b82f6';
+}
+
 function applyCanvasBodyStyleOverrides(
   editor: GrapesjsEditorInstance,
   styles: Record<string, string>,
@@ -416,11 +424,14 @@ export function getGrapesjsZoomStyleVars(zoom: number): {
   };
 }
 
-export function getGrapesjsIframeSelectionOutlineCss(): string {
+export function getGrapesjsIframeSelectionOutlineCss(tone: GrapesjsSelectionTone = 'default'): string {
+  const selectionColor = grapesjsSelectionColor(tone);
   return `
+                  html body .gjs-selected,
+                  html body .gjs-hovered,
                   .gjs-selected,
                   .gjs-hovered {
-                    outline: var(--od-gjs-hairline, 1px) solid #3b82f6 !important;
+                    outline: var(--od-gjs-hairline, 1px) solid ${selectionColor} !important;
                     outline-offset: calc(-1 * var(--od-gjs-hairline, 1px)) !important;
                   }
                   .gjs-com-dashed * {
@@ -429,17 +440,25 @@ export function getGrapesjsIframeSelectionOutlineCss(): string {
   `;
 }
 
-export function getGrapesjsIframeSelectionStyleCss(hoverClass: string): string {
+export function getGrapesjsIframeSelectionStyleCss(
+  hoverClass: string,
+  tone: GrapesjsSelectionTone = 'default',
+): string {
+  const selectionColor = grapesjsSelectionColor(tone);
   return `
                   .${hoverClass} {
-                    outline: var(--od-gjs-hairline, 1px) dashed #3b82f6 !important;
+                    outline: var(--od-gjs-hairline, 1px) dashed ${selectionColor} !important;
                     outline-offset: var(--od-gjs-hairline, 1px) !important;
                   }
-                  ${getGrapesjsIframeSelectionOutlineCss()}
+                  ${getGrapesjsIframeSelectionOutlineCss(tone)}
   `;
 }
 
-export function upsertGrapesjsIframeSelectionStyle(doc: Document, hoverClass: string): boolean {
+export function upsertGrapesjsIframeSelectionStyle(
+  doc: Document,
+  hoverClass: string,
+  tone: GrapesjsSelectionTone = 'default',
+): boolean {
   const head = doc.head;
   if (!head) return false;
   const selector = 'style[data-od-flex-child-hover]';
@@ -447,8 +466,8 @@ export function upsertGrapesjsIframeSelectionStyle(doc: Document, hoverClass: st
     head.querySelector(selector) as HTMLStyleElement | null
   ) ?? doc.createElement('style');
   styleEl.setAttribute('data-od-flex-child-hover', 'true');
-  styleEl.textContent = getGrapesjsIframeSelectionStyleCss(hoverClass);
-  if (!styleEl.parentNode) head.appendChild(styleEl);
+  styleEl.textContent = getGrapesjsIframeSelectionStyleCss(hoverClass, tone);
+  head.appendChild(styleEl);
   return true;
 }
 
@@ -611,6 +630,10 @@ export interface GrapesjsEditorProps {
   onSave?: () => void;
   /** Optional className for the root container. */
   className?: string;
+  /** Host-controlled selection color: default editor blue or element-picker green. */
+  selectionTone?: GrapesjsSelectionTone;
+  /** Host-controlled selection chrome: full edit handles or selection-only picker. */
+  selectionChrome?: GrapesjsSelectionChrome;
   /**
    * PR2: element selection changed (component:selected / component:deselected).
    * ids is the list of selected data-od-id values (empty when nothing is
@@ -643,6 +666,8 @@ export interface GrapesjsEditorProps {
    * when nothing is selected.
    */
   onSelectionChange?: (info: SelectionSnapshot) => void;
+  /** Fired for Escape before GrapesJS clears selection, allowing host modes to close. */
+  onEscapeKey?: () => void;
   /** Fires when the canvas zoom changes so the host can update its zoom % display. */
   onZoomChange?: (zoom: number) => void;
   /** Fires when the user changes the canvas frame size so the host can persist it. */
@@ -685,11 +710,14 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       onDirtyChange,
       onSave,
       className,
+      selectionTone = 'default',
+      selectionChrome = 'edit',
       onSelectTargets,
       onHoverTarget,
       onStyleUpdate,
       onTweaksAvailable,
       onSelectionChange,
+      onEscapeKey,
       onZoomChange,
       onViewportSizeChange,
       initialViewport,
@@ -713,9 +741,12 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const onStyleUpdateRef = useRef(onStyleUpdate);
     const onTweaksAvailableRef = useRef(onTweaksAvailable);
     const onSelectionChangeRef = useRef(onSelectionChange);
+    const onEscapeKeyRef = useRef(onEscapeKey);
     const onZoomChangeRef = useRef(onZoomChange);
     const onViewportSizeChangeRef = useRef(onViewportSizeChange);
     const onImageEditRequestRef = useRef(onImageEditRequest);
+    const selectionToneRef = useRef<GrapesjsSelectionTone>(selectionTone);
+    const selectionChromeRef = useRef<GrapesjsSelectionChrome>(selectionChrome);
     const userCanvasSizeEditVersionRef = useRef(0);
     // When true, canvas pointer drag pans the selected element's
     // background-image and wheel scales it (裁剪 mode). Toggled from the
@@ -772,6 +803,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       onSelectionChangeRef.current = onSelectionChange;
     }, [onSelectionChange]);
     useEffect(() => {
+      onEscapeKeyRef.current = onEscapeKey;
+    }, [onEscapeKey]);
+    useEffect(() => {
       onZoomChangeRef.current = onZoomChange;
     }, [onZoomChange]);
     useEffect(() => {
@@ -780,6 +814,28 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     useEffect(() => {
       onImageEditRequestRef.current = onImageEditRequest;
     }, [onImageEditRequest]);
+    useEffect(() => {
+      selectionToneRef.current = selectionTone;
+      const editor = editorRef.current;
+      if (!editor) return;
+      try {
+        const doc = editor.Canvas.getDocument?.();
+        if (doc) upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS, selectionTone);
+      } catch {
+        // ignore
+      }
+    }, [selectionTone]);
+    useEffect(() => {
+      selectionChromeRef.current = selectionChrome;
+      if (selectionChrome !== 'element-selection') return;
+      const hostDoc = rootRef.current?.ownerDocument ?? document;
+      rootRef.current
+        ?.querySelectorAll<HTMLElement>('.od-dimension-badge, .od-selection-stroke, [data-od-spacing-kind], [data-od-spacing-band]')
+        .forEach((el) => { el.style.display = 'none'; });
+      hostDoc
+        .querySelectorAll<HTMLElement>('[data-od-spacing-tip]')
+        .forEach((el) => { el.style.display = 'none'; });
+    }, [selectionChrome]);
 
     const applyLogicalCanvasSize = useCallback((width: number, height: number) => {
       const editor = editorRef.current;
@@ -1179,6 +1235,15 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 z-index: 10;
                 display: none;
               }
+              .od-gjs-element-selection-mode .gjs-resizer,
+              .od-gjs-element-selection-mode .gjs-resizer-h,
+              .od-gjs-element-selection-mode .od-dimension-badge,
+              .od-gjs-element-selection-mode .od-selection-stroke,
+              .od-gjs-element-selection-mode [data-od-spacing-kind],
+              .od-gjs-element-selection-mode [data-od-spacing-band] {
+                display: none !important;
+                pointer-events: none !important;
+              }
             `;
             doc.head?.appendChild(overrideStyle);
           } catch { /* ignore */ }
@@ -1243,6 +1308,14 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           type ToolsUpdatePayload = { type?: string; width?: number; height?: number };
           const onToolsUpdate = (opts: ToolsUpdatePayload) => {
             if (!opts || opts.type !== 'global') return;
+            try {
+              const doc = editor.Canvas.getDocument?.();
+              if (doc) upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS, selectionToneRef.current);
+            } catch { /* ignore */ }
+            if (selectionChromeRef.current === 'element-selection') {
+              hideDimensionBadge();
+              return;
+            }
             const stroke = ensureSelectionStroke();
             if (stroke) stroke.style.display = 'block';
             const badge = ensureDimensionBadge();
@@ -1271,8 +1344,16 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           editor.on('component:selected', () => {
             // Ensure the badge shows even when tools:update fires before the
             // badge element existed (first selection right after load).
+            if (selectionChromeRef.current === 'element-selection') {
+              hideDimensionBadge();
+              return;
+            }
             ensureDimensionBadge();
             ensureSelectionStroke();
+            try {
+              const doc = editor.Canvas.getDocument?.();
+              if (doc) upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS, selectionToneRef.current);
+            } catch { /* ignore */ }
           });
           // ── Spacing guides: draggable padding / gap / margin overlays ──
           // The visible guide is a thin line while the hit target stays large
@@ -1465,6 +1546,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             };
           };
           const positionSpacingHandles = () => {
+            if (selectionChromeRef.current === 'element-selection') {
+              hideSpacingHandles();
+              return;
+            }
             ensureSpacingHandles();
             if (!spacingAttached) return;
             const toolsEl = (editor.Canvas as unknown as { getToolsEl?: () => HTMLElement | null }).getToolsEl?.();
@@ -1782,6 +1867,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // Opening a new selection should not leave a stale value popup
             // from the previous element's spacing guide.
             closeSpacingInputEditor();
+            if (selectionChromeRef.current === 'element-selection') {
+              hideSpacingHandles();
+              return;
+            }
             ensureSpacingHandles();
             positionSpacingHandles();
           });
@@ -1912,6 +2001,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               doc?.documentElement?.style.setProperty('--od-gjs-zoom-decimal', String(zoomDecimal));
               doc?.documentElement?.style.setProperty('--od-gjs-hairline', canvasHairline);
               doc?.documentElement?.style.setProperty('--od-gjs-screen-hairline', screenHairline);
+              if (doc) upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS, selectionToneRef.current);
             } catch {
               // ignore
             }
@@ -2016,6 +2106,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // bind Esc by default when the canvas focus is inside the iframe,
             // so we drive it explicitly.
             if (ev.key === 'Escape') {
+              if (selectionChromeRef.current === 'element-selection' && onEscapeKeyRef.current) {
+                ev.preventDefault();
+                onEscapeKeyRef.current();
+                return;
+              }
               try {
                 const sel = editor.getSelected?.();
                 if (sel) {
@@ -2793,9 +2888,8 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               try { return editor.Canvas.getDocument(); } catch { return null; }
             })();
             if (!doc) return;
-            const FLEX_CHILD_HOVER_CLASS = 'od-flex-child-hover';
             try {
-              upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS);
+              upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS, selectionToneRef.current);
             } catch { /* ignore */ }
             if ((doc as unknown as { __odNestedSelect?: true }).__odNestedSelect) return;
             (doc as unknown as { __odNestedSelect?: true }).__odNestedSelect = true;
@@ -4111,8 +4205,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const rootClass = useMemo(() => {
       const parts = [styles.root];
       if (className) parts.push(className);
+      if (selectionChrome === 'element-selection') parts.push('od-gjs-element-selection-mode');
       return parts.filter(Boolean).join(' ');
-    }, [className]);
+    }, [className, selectionChrome]);
 
     return (
       <div className={rootClass} ref={rootRef}>

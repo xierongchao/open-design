@@ -1521,6 +1521,13 @@ function meaningfulDomFallbackTarget(el) {
     }
   });
   function pickerActive(){ return inspectEnabled || (commentEnabled && mode === 'picker'); }
+  document.addEventListener('keydown', function(ev){
+    if (ev.key !== 'Escape') return;
+    if (!(commentEnabled && mode === 'picker' && !inspectEnabled)) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try { window.parent.postMessage({ type: 'od:selection-escape' }, '*'); } catch (_) {}
+  }, true);
   document.addEventListener('mouseover', function(ev){
     if (!pickerActive()) return;
     var result = closestTarget(ev);

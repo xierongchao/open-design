@@ -76,6 +76,20 @@ describe('preview comment attachment helpers', () => {
     ]);
   });
 
+  it('keeps staged element selections as board-batch attachments', () => {
+    const [attachment] = commentsToAttachments([
+      comment({ id: 'staged-hero-title-board-1', elementId: 'hero-title', note: '' }),
+    ]);
+
+    expect(attachment).toMatchObject({
+      id: 'staged-hero-title-board-1',
+      source: 'board-batch',
+      comment: '',
+      selector: '[data-od-id="hero-title"]',
+      htmlHint: '<h1 data-od-id="hero-title">',
+    });
+  });
+
   it('keeps saved comment images in send payloads even when the note is empty', () => {
     const [attachment] = commentsToAttachments([
       comment({

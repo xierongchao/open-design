@@ -1361,7 +1361,7 @@ export const zhTW: Dict = {
   'fileViewer.jsxModuleTitle': '無獨立預覽',
   'fileViewer.jsxModuleBody': '此檔案是由其他頁面載入的元件模組。',
   'fileViewer.jsxModuleCta': '請開啟轉譯它的頁面：',
-  'fileViewer.comment': '註釋',
+  'fileViewer.comment': '元素選擇',
   'fileViewer.edit': '編輯',
   'fileViewer.draw': '繪製',
   'fileViewer.mark': '標記',

@@ -31,7 +31,8 @@ describe('buildSrcdoc', () => {
     const srcdoc = buildSrcdoc('<main style="color:red">Hero</main>');
 
     expect(srcdoc).toContain('data-od-snapshot-bridge');
-    expect(srcdoc).toContain("data.type !== 'od:snapshot'");
+    expect(srcdoc).toContain("data.type === 'od:snapshot'");
+    expect(srcdoc).toContain("data.type === 'od:snapshot:svg'");
     expect(srcdoc).toContain("type: 'od:snapshot:result'");
     expect(srcdoc).toContain('copyComputedStyle');
     expect(srcdoc).toContain('foreignObject');
@@ -160,6 +161,8 @@ describe('buildSrcdoc', () => {
     expect(srcdoc).toContain('html[data-od-comment-mode] body iframe');
     expect(srcdoc).toContain('html[data-od-inspect-mode] body iframe');
     expect(srcdoc).toContain('pointer-events: none !important');
+    expect(srcdoc).toContain("ev.key !== 'Escape'");
+    expect(srcdoc).toContain("type: 'od:selection-escape'");
   });
 
   it('emits free-pin fallback coordinates in viewport space', () => {

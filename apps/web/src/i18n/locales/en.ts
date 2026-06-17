@@ -1815,7 +1815,7 @@ export const en: Dict = {
   'fileViewer.jsxModuleTitle': 'No standalone preview',
   'fileViewer.jsxModuleBody': 'This file is a component module loaded by another page.',
   'fileViewer.jsxModuleCta': 'Open the page that renders it:',
-  'fileViewer.comment': 'Comment',
+  'fileViewer.comment': 'Element select',
   'fileViewer.edit': 'Edit',
   'fileViewer.draw': 'Draw',
   'fileViewer.mark': 'Mark',

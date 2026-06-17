@@ -245,6 +245,7 @@ export function commentToAttachment(
 ): ChatCommentAttachment {
   const podMembers = normalizeMembers(comment.podMembers);
   const imageAttachments = mergePreviewCommentAttachments(undefined, comment.attachments);
+  const source = comment.id.startsWith('staged-') ? 'board-batch' : 'saved-comment';
   return {
     id: comment.id,
     order,
@@ -269,7 +270,7 @@ export function commentToAttachment(
     podMembers: podMembers.length > 0 ? podMembers : undefined,
     ...(typeof comment.slideIndex === 'number' ? { slideIndex: comment.slideIndex } : {}),
     imageAttachments: imageAttachments.length > 0 ? imageAttachments : undefined,
-    source: 'saved-comment',
+    source,
   };
 }
 

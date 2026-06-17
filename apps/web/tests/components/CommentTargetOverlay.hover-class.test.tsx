@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { cleanup, render } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CommentTargetOverlay } from '../../src/components/FileViewer';
+import { CommentTargetOverlay, ElementSelectionAddButton } from '../../src/components/FileViewer';
+import type { TranslateFn } from '../../src/components/viewer-utils';
 import type { PreviewCommentSnapshot } from '../../src/comments';
 import type { PreviewCommentMember } from '../../src/types';
 
@@ -73,5 +74,56 @@ describe('CommentTargetOverlay hover-focus class wiring', () => {
       <CommentTargetOverlay snapshot={elementSnapshot} scale={1} selected={false} hoveredMemberId="single-target" />,
     );
     expect(container.querySelectorAll('.is-hover-focused')).toHaveLength(0);
+  });
+
+  it('marks selected element-picker overlays with the green tone class', () => {
+    const elementSnapshot: PreviewCommentSnapshot = {
+      filePath: 'index.html',
+      elementId: 'hero-title',
+      selector: '#hero-title',
+      label: 'Hero title',
+      text: '',
+      position: { x: 0, y: 0, width: 20, height: 20 },
+      htmlHint: '',
+      selectionKind: 'element',
+    };
+    const { container } = render(
+      <CommentTargetOverlay
+        snapshot={elementSnapshot}
+        scale={1}
+        selected
+        tone="element-selection"
+      />,
+    );
+
+    const overlay = container.querySelector<HTMLElement>('[data-testid="comment-target-overlay"]');
+    expect(overlay?.classList.contains('element-selection')).toBe(true);
+    expect(overlay?.classList.contains('selected')).toBe(true);
+  });
+});
+
+describe('ElementSelectionAddButton', () => {
+  it('adds the selected target to the chat input on click', () => {
+    const onAdd = vi.fn();
+    const t: TranslateFn = (key) => {
+      const strings: Record<string, string> = {
+        'chat.annotationAddToInput': 'Add to input',
+        'chat.annotationAddingToInput': 'Adding...',
+        'chat.comments.targetArea': 'Area',
+      };
+      return strings[key] ?? key;
+    };
+    render(
+      <ElementSelectionAddButton
+        target={podSnapshot([member('hero-title', 0)])}
+        busy={false}
+        onAdd={onAdd}
+        t={t}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('element-selection-add-to-chat'));
+
+    expect(onAdd).toHaveBeenCalledTimes(1);
   });
 });

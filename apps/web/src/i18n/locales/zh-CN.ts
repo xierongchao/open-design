@@ -1787,7 +1787,7 @@ export const zhCN: Dict = {
   'fileViewer.jsxModuleTitle': '无独立预览',
   'fileViewer.jsxModuleBody': '此文件是由其他页面加载的组件模块。',
   'fileViewer.jsxModuleCta': '请打开渲染它的页面：',
-  'fileViewer.comment': '注释',
+  'fileViewer.comment': '元素选择',
   'fileViewer.edit': '编辑',
   'fileViewer.draw': '绘制',
   'fileViewer.mark': '标记',

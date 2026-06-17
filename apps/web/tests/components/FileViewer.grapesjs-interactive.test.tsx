@@ -13,9 +13,61 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
     html: string;
     className?: string;
     initialViewport?: { width: number; height: number };
+    selectionChrome?: 'edit' | 'element-selection';
+    onEscapeKey?: () => void;
+    onSelectTargets?: (ids: string[]) => void;
     onViewportSizeChange?: (width: number, height: number) => void;
   }>(
     (props, ref) => {
+      const heroElement = {
+        nodeType: 1,
+        getBoundingClientRect: () => ({
+          left: 20,
+          top: 30,
+          width: 160,
+          height: 40,
+          right: 180,
+          bottom: 70,
+        }),
+      };
+      const heroComponent = {
+        getAttributes: () => ({
+          'data-od-id': 'hero-title',
+          'data-od-label': 'Hero title',
+          class: 'hero-title',
+        }),
+        get: (key: string) => key === 'tagName' ? 'div' : undefined,
+        getEl: () => heroElement,
+        components: () => ({ length: 0, get: () => null }),
+        toHTML: () => '<div data-od-id="hero-title" class="hero-title">Hero title</div>',
+      };
+      const editor = {
+        Components: {
+          getComponents: () => ({
+            length: 1,
+            get: (index: number) => index === 0 ? heroComponent : null,
+          }),
+        },
+        Canvas: {
+          setZoom: () => {},
+          getFrameEl: () => ({
+            getBoundingClientRect: () => ({
+              left: 0,
+              top: 0,
+              width: 390,
+              height: 844,
+              right: 390,
+              bottom: 844,
+            }),
+          }),
+          getDocument: () => ({
+            defaultView: {
+              getComputedStyle: () => ({ getPropertyValue: () => '' }),
+            },
+          }),
+        },
+        getSelected: () => heroComponent,
+      };
       React.useImperativeHandle(ref, () => ({
         getHtml: () => '',
         getCss: () => '',
@@ -36,18 +88,27 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
         setCropMode: () => {},
         collectColorsFromSelection: () => [],
         replaceColors: () => 0,
-        getEditor: () => ({ Canvas: { setZoom: () => {} } }),
+        getEditor: () => editor,
       }));
       return React.createElement('div', {
         className: props.className,
         'data-testid': 'mock-grapesjs-editor',
         'data-initial-width': String(props.initialViewport?.width ?? ''),
         'data-initial-height': String(props.initialViewport?.height ?? ''),
+        'data-selection-chrome': props.selectionChrome ?? 'edit',
       }, React.createElement('button', {
         type: 'button',
         'data-testid': 'mock-resize-canvas',
         onClick: () => props.onViewportSizeChange?.(props.initialViewport?.width ?? 1920, 1400),
-      }, 'resize'));
+      }, 'resize'), React.createElement('button', {
+        type: 'button',
+        'data-testid': 'mock-select-target',
+        onClick: () => props.onSelectTargets?.(['hero-title']),
+      }, 'select'), React.createElement('button', {
+        type: 'button',
+        'data-testid': 'mock-escape-key',
+        onClick: () => props.onEscapeKey?.(),
+      }, 'escape'));
     },
   );
   MockGrapesjsEditor.displayName = 'MockGrapesjsEditor';
@@ -226,5 +287,117 @@ describe('FileViewer GrapesJS interactive mode', () => {
       expect(editor.getAttribute('data-initial-height')).toBe('1400');
       expect(grapesjsMockState.setViewport).toHaveBeenLastCalledWith(1920, 1400);
     });
+  });
+
+  it('shows an add-to-chat action after selecting an element in element selection mode', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+    const onEditModeChange = vi.fn();
+    const onEditSelectionChange = vi.fn();
+    const onStageBoardCommentAttachments = vi.fn(() => true);
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlFile()}
+          onEditModeChange={onEditModeChange}
+          onEditSelectionChange={onEditSelectionChange}
+          onStageBoardCommentAttachments={onStageBoardCommentAttachments}
+        />
+      </I18nProvider>,
+    );
+
+    const editor = await screen.findByTestId('mock-grapesjs-editor');
+    expect(editor.getAttribute('data-selection-chrome')).toBe('edit');
+
+    fireEvent.click(await screen.findByTestId('board-mode-toggle'));
+
+    await waitFor(() => {
+      expect(editor.getAttribute('data-selection-chrome')).toBe('element-selection');
+    });
+    expect(onEditModeChange).toHaveBeenLastCalledWith(false);
+    expect(onEditSelectionChange).toHaveBeenLastCalledWith(false);
+
+    fireEvent.click(screen.getByTestId('mock-select-target'));
+
+    const addButton = await screen.findByTestId('element-selection-add-to-chat');
+    expect(screen.getByTestId('element-selection-action').textContent).toContain('Hero title');
+    await waitFor(() => {
+      expect(onEditSelectionChange).toHaveBeenLastCalledWith(false);
+    });
+
+    fireEvent.click(addButton);
+
+    await waitFor(() => {
+      expect(onStageBoardCommentAttachments).toHaveBeenCalledTimes(1);
+    });
+    expect(onStageBoardCommentAttachments).toHaveBeenCalledWith([
+      expect.objectContaining({
+        elementId: 'hero-title',
+        selector: 'div.hero-title',
+        label: 'Hero title',
+        htmlHint: '<div data-od-id="hero-title" class="hero-title">Hero title</div>',
+        source: 'board-batch',
+        commentContext: 'context',
+      }),
+    ]);
+  });
+
+  it('exits element selection mode when Escape is pressed inside the GrapesJS canvas', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+    const onEditModeChange = vi.fn();
+    const onEditSelectionChange = vi.fn();
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlFile()}
+          onEditModeChange={onEditModeChange}
+          onEditSelectionChange={onEditSelectionChange}
+          onStageBoardCommentAttachments={() => true}
+        />
+      </I18nProvider>,
+    );
+
+    const editor = await screen.findByTestId('mock-grapesjs-editor');
+
+    fireEvent.click(await screen.findByTestId('board-mode-toggle'));
+    await waitFor(() => {
+      expect(editor.getAttribute('data-selection-chrome')).toBe('element-selection');
+    });
+    fireEvent.click(screen.getByTestId('mock-select-target'));
+    expect(await screen.findByTestId('element-selection-add-to-chat')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('mock-escape-key'));
+
+    await waitFor(() => {
+      expect(editor.getAttribute('data-selection-chrome')).toBe('edit');
+    });
+    expect(screen.queryByTestId('element-selection-add-to-chat')).toBeNull();
+    expect(onEditModeChange).toHaveBeenLastCalledWith(false);
+    expect(onEditSelectionChange).toHaveBeenLastCalledWith(false);
   });
 });

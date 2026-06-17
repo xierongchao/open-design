@@ -9,6 +9,7 @@ import {
   applyPreviewStyle,
   extractInspectTarget,
   extractInspectTargetFromComponent,
+  findComponentByOdId,
   getNormalizedBox,
   persistStyleOverride,
 } from './grapesjs/grapesjs-bridge-adapter';
@@ -501,6 +502,7 @@ interface Props {
   previewComments?: PreviewComment[];
   onSavePreviewComment?: (target: PreviewCommentTarget, note: string, attachAfterSave: boolean, images?: File[]) => Promise<PreviewComment | null>;
   onRemovePreviewComment?: (commentId: string) => Promise<void>;
+  onStageBoardCommentAttachments?: (attachments: ChatCommentAttachment[]) => Promise<boolean | void> | boolean | void;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<boolean | void> | boolean | void;
   onFileSaved?: () => Promise<void> | void;
   // Open `openName` as a tab (focusing it) and close `closeName` in one
@@ -537,6 +539,7 @@ export function FileViewer({
   previewComments = [],
   onSavePreviewComment,
   onRemovePreviewComment,
+  onStageBoardCommentAttachments,
   onSendBoardCommentAttachments,
   onFileSaved,
   onOpenFileReplacing,
@@ -587,6 +590,7 @@ export function FileViewer({
         previewComments={previewComments}
         onSavePreviewComment={onSavePreviewComment}
         onRemovePreviewComment={onRemovePreviewComment}
+        onStageBoardCommentAttachments={onStageBoardCommentAttachments}
         onSendBoardCommentAttachments={onSendBoardCommentAttachments}
         onFileSaved={onFileSaved}
         commentPortalId={commentPortalId}
@@ -3123,6 +3127,7 @@ function CommentPreviewOverlays({
   activeExistingCommentId = null,
   boardTool,
   showActivePin = false,
+  targetTone = 'comment',
   scale,
   offsetX,
   offsetY,
@@ -3138,6 +3143,7 @@ function CommentPreviewOverlays({
   activeExistingCommentId?: string | null;
   boardTool: BoardTool;
   showActivePin?: boolean;
+  targetTone?: 'comment' | 'element-selection';
   scale: number;
   offsetX: number;
   offsetY: number;
@@ -3224,6 +3230,7 @@ function CommentPreviewOverlays({
           offset={overlayOffset}
           selected={Boolean(activeTarget)}
           hoveredMemberId={hoveredPodMemberId}
+          tone={targetTone}
         />
       ) : null}
       {showActivePin && activeTarget ? (
@@ -3245,6 +3252,18 @@ function CommentPreviewOverlays({
       ) : null}
     </div>
   );
+}
+
+export function shouldShowElementSelectionAction({
+  boardMode,
+  commentCreateMode,
+  activeTarget,
+}: {
+  boardMode: boolean;
+  commentCreateMode: boolean;
+  activeTarget: PreviewCommentSnapshot | null;
+}): boolean {
+  return Boolean(boardMode && !commentCreateMode && activeTarget);
 }
 
 function activeCommentPinStyle(
@@ -3269,17 +3288,21 @@ export function CommentTargetOverlay({
   offset,
   selected,
   hoveredMemberId,
+  tone = 'comment',
 }: {
   snapshot: PreviewCommentSnapshot;
   scale: number;
   offset?: { x: number; y: number };
   selected: boolean;
   hoveredMemberId?: string | null;
+  tone?: 'comment' | 'element-selection';
 }) {
   const overlayOffset = offset ?? { x: 0, y: 0 };
+  const toneClass = tone === 'element-selection' ? ' element-selection' : '';
   const displayMembers = podDisplayMembers(snapshot);
   if (displayMembers.length > 0) {
     const overlayWeights = podOverlayWeights(displayMembers);
+    const overlayRgb = tone === 'element-selection' ? '16, 185, 129' : '22, 119, 255';
     return (
       <>
         {displayMembers.map((member, index) => {
@@ -3296,15 +3319,15 @@ export function CommentTargetOverlay({
             top: bounds.top,
             width: bounds.width,
             height: bounds.height,
-            '--comment-overlay-bg': `rgba(22, 119, 255, ${overlayWeight.backgroundOpacity})`,
-            '--comment-overlay-ring': `rgba(22, 119, 255, ${overlayWeight.ringOpacity})`,
-            '--comment-overlay-border': `rgba(22, 119, 255, ${overlayWeight.outlineOpacity})`,
+            '--comment-overlay-bg': `rgba(${overlayRgb}, ${overlayWeight.backgroundOpacity})`,
+            '--comment-overlay-ring': `rgba(${overlayRgb}, ${overlayWeight.ringOpacity})`,
+            '--comment-overlay-border': `rgba(${overlayRgb}, ${overlayWeight.outlineOpacity})`,
           };
           const isHoverFocused = hoveredMemberId === member.elementId;
           return (
             <div
               key={`${member.elementId}-${index}`}
-              className={`comment-target-overlay comment-target-overlay--member${selected ? ' selected' : ''}${isHoverFocused ? ' is-hover-focused' : ''}`}
+              className={`comment-target-overlay comment-target-overlay--member${toneClass}${selected ? ' selected' : ''}${isHoverFocused ? ' is-hover-focused' : ''}`}
               style={overlayStyle}
               data-testid="comment-target-overlay"
             >
@@ -3321,7 +3344,7 @@ export function CommentTargetOverlay({
   const bounds = overlayBoundsFromSnapshot(snapshot, scale, overlayOffset);
   return (
     <div
-      className={`comment-target-overlay${selected ? ' selected' : ''}`}
+      className={`comment-target-overlay${toneClass}${selected ? ' selected' : ''}`}
       style={{
         left: bounds.left,
         top: bounds.top,
@@ -3331,6 +3354,40 @@ export function CommentTargetOverlay({
       data-testid="comment-target-overlay"
     >
       <span className="comment-target-overlay-label">{snapshot.elementId}</span>
+    </div>
+  );
+}
+
+export function ElementSelectionAddButton({
+  target,
+  busy,
+  disabled = false,
+  onAdd,
+  t,
+}: {
+  target: PreviewCommentSnapshot;
+  busy: boolean;
+  disabled?: boolean;
+  onAdd: () => void | Promise<void>;
+  t: TranslateFn;
+}) {
+  const targetName = commentTargetDisplayName(target, t('chat.comments.targetArea'));
+  return (
+    <div className="element-selection-action" data-testid="element-selection-action">
+      <span className="element-selection-target-chip" title={targetName}>
+        <RemixIcon name="cursor-line" size={13} />
+        <span>{targetName}</span>
+      </span>
+      <Button
+        type="button"
+        variant="primary"
+        disabled={disabled || busy}
+        data-testid="element-selection-add-to-chat"
+        onClick={() => { void onAdd(); }}
+      >
+        <RemixIcon name="sparkling-2-line" size={14} />
+        <span>{busy ? t('chat.annotationAddingToInput') : t('chat.annotationAddToInput')}</span>
+      </Button>
     </div>
   );
 }
@@ -4014,6 +4071,7 @@ function HtmlViewer({
   previewComments = [],
   onSavePreviewComment,
   onRemovePreviewComment,
+  onStageBoardCommentAttachments,
   onSendBoardCommentAttachments,
   onFileSaved,
   commentPortalId,
@@ -4040,6 +4098,7 @@ function HtmlViewer({
   previewComments?: PreviewComment[];
   onSavePreviewComment?: (target: PreviewCommentTarget, note: string, attachAfterSave: boolean, images?: File[]) => Promise<PreviewComment | null>;
   onRemovePreviewComment?: (commentId: string) => Promise<void>;
+  onStageBoardCommentAttachments?: (attachments: ChatCommentAttachment[]) => Promise<boolean | void> | boolean | void;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<boolean | void> | boolean | void;
   onFileSaved?: () => Promise<void> | void;
   commentPortalId?: string;
@@ -5089,8 +5148,12 @@ function HtmlViewer({
   // to the right-panel Edit tab and shows the portalled sidebar.
   useEffect(() => {
     if (!useGrapesjs) return;
+    if (boardMode || drawOverlayOpen) {
+      onEditSelectionChange?.(false);
+      return;
+    }
     onEditSelectionChange?.(grapesjsSelectionActive);
-  }, [grapesjsSelectionActive, onEditSelectionChange, useGrapesjs]);
+  }, [boardMode, drawOverlayOpen, grapesjsSelectionActive, onEditSelectionChange, useGrapesjs]);
   useEffect(() => {
     if (useGrapesjs) return;
     setGrapesjsSelectionActive(false);
@@ -5148,6 +5211,14 @@ function HtmlViewer({
       const box = getNormalizedBox(editor, odId);
       if (!box) return null;
       const inspect = extractInspectTarget(editor, odId);
+      const htmlHint = (() => {
+        try {
+          const component = findComponentByOdId(editor, odId);
+          return String(component?.toHTML?.() ?? '').trim();
+        } catch {
+          return '';
+        }
+      })();
       return {
         filePath,
         elementId: odId,
@@ -5155,7 +5226,8 @@ function HtmlViewer({
         label: inspect?.label ?? '',
         text: inspect?.text ?? '',
         position: { x: box.x, y: box.y, width: box.width, height: box.height },
-        htmlHint: '',
+        htmlHint,
+        style: inspect?.style,
         selectionKind: 'element',
       };
     },
@@ -5848,6 +5920,10 @@ function HtmlViewer({
         points?: StrokePoint[];
       }) | null;
       if (!data?.type) return;
+      if (data.type === 'od:selection-escape') {
+        if (!commentCreateMode) deactivateElementSelectionMode();
+        return;
+      }
       if (data.type === 'od:comment-targets' && Array.isArray(data.targets)) {
         const next = new Map<string, PreviewCommentSnapshot>();
         data.targets.forEach((item) => {
@@ -5987,7 +6063,7 @@ function HtmlViewer({
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, scheduleHoverCardDismiss, useGrapesjs]);
+  }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentCreateMode, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, scheduleHoverCardDismiss, useGrapesjs]);
 
   useEffect(() => {
     if (!boardMode || !activeCommentTarget || activeCommentTarget.selectionKind === 'pod') return;
@@ -7785,14 +7861,23 @@ function HtmlViewer({
     activateDraw();
   }
 
+  function deactivateElementSelectionMode() {
+    setBoardMode(false);
+    setCommentCreateMode(false);
+    setCommentPanelOpen(false);
+    clearBoardComposer();
+    setGrapesjsSelectionActive(false);
+    setAgentToolsOpen(false);
+    onEditModeChange?.(false);
+    onEditSelectionChange?.(false);
+    closeArtifactToolMenus();
+  }
+
   function activateCommentTool() {
     fireArtifactToolbarClick('comment');
     capturePreviewScrollPosition();
     if (boardMode && !commentCreateMode && boardTool === 'inspect') {
-      setBoardMode(false);
-      setCommentCreateMode(false);
-      clearBoardComposer();
-      setAgentToolsOpen(false);
+      deactivateElementSelectionMode();
       return;
     }
     const activateComment = () => {
@@ -7802,6 +7887,8 @@ function HtmlViewer({
       setInspectMode(false);
       setDrawOverlayOpen(false);
       setMode('preview');
+      onEditModeChange?.(false);
+      onEditSelectionChange?.(false);
       activateBoard('inspect');
       closeArtifactToolMenus();
     };
@@ -7844,6 +7931,18 @@ function HtmlViewer({
     }
     activateCommentCreate();
   }
+
+  useEffect(() => {
+    if (!boardMode || commentCreateMode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      deactivateElementSelectionMode();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [boardMode, commentCreateMode]);
 
   function activateManualEditTool() {
     fireArtifactToolbarClick('edit');
@@ -7943,6 +8042,47 @@ function HtmlViewer({
       );
       if (accepted === false) return;
       clearBoardComposer();
+    } finally {
+      setSendingBoardBatch(false);
+    }
+  }
+
+  async function stageActiveElementSelection() {
+    if (!activeCommentTarget || !onStageBoardCommentAttachments) return;
+    setSendingBoardBatch(true);
+    try {
+      const target = withDeckSlideIndex(targetFromSnapshot(activeCommentTarget));
+      const selectionKind = target.selectionKind === 'pod' ? 'pod' : 'element';
+      const attachment: ChatCommentAttachment = {
+        id: `${target.elementId}-board-1`,
+        order: 1,
+        filePath: target.filePath,
+        elementId: target.elementId,
+        selector: target.selector,
+        label: target.label,
+        comment: commentDraft.trim(),
+        currentText: target.text,
+        pagePosition: target.position,
+        htmlHint: target.htmlHint,
+        selectionKind,
+        source: 'board-batch',
+        commentContext: 'context',
+      };
+      if (target.style) attachment.style = target.style;
+      if (selectionKind === 'pod') {
+        const podMembers = target.podMembers ?? [];
+        attachment.memberCount =
+          podMembers.length > 0
+            ? podMembers.length
+            : typeof target.memberCount === 'number'
+              ? Math.round(target.memberCount)
+              : 0;
+        if (podMembers.length > 0) attachment.podMembers = podMembers;
+      }
+      if (typeof target.slideIndex === 'number') attachment.slideIndex = target.slideIndex;
+      const accepted = await onStageBoardCommentAttachments([attachment]);
+      if (accepted === false) return;
+      setCommentSavedToast(t('chat.comments.attached'));
     } finally {
       setSendingBoardBatch(false);
     }
@@ -8654,7 +8794,7 @@ function HtmlViewer({
     : null;
   const activeComposerAttachments =
     activeComposerComment?.attachments ?? activeCommentExistingAttachments;
-  const commentComposer = boardMode && activeCommentTarget && activeCommentTargetVisible ? (
+  const commentComposer = boardMode && commentCreateMode && activeCommentTarget && activeCommentTargetVisible ? (
     <BoardComposerPopover
       target={activeCommentTarget}
       existing={activeComposerComment}
@@ -8707,6 +8847,19 @@ function HtmlViewer({
       bounds={previewBodySize}
       docked={false}
       commenting
+    />
+  ) : null;
+  const elementSelectionAction = shouldShowElementSelectionAction({
+    boardMode,
+    commentCreateMode,
+    activeTarget: activeCommentTarget,
+  }) && activeCommentTarget ? (
+    <ElementSelectionAddButton
+      target={activeCommentTarget}
+      busy={sendingBoardBatch}
+      disabled={!onStageBoardCommentAttachments}
+      onAdd={stageActiveElementSelection}
+      t={t}
     />
   ) : null;
   const boardPreviewImage =
@@ -8974,7 +9127,7 @@ function HtmlViewer({
                   aria-pressed={boardMode && !commentCreateMode && boardTool === 'inspect'}
                   onClick={activateCommentTool}
                 >
-                  <RemixIcon name="chat-new-line" size={15} />
+                  <RemixIcon name="cursor-line" size={15} />
                 </button>
               </div>
               <button
@@ -9135,6 +9288,9 @@ function HtmlViewer({
                 ref={grapesjsEditorRef}
                 html={grapesjsLiveSource}
                 baseHref={projectRawUrl(projectId, baseDirFor(file.name))}
+                selectionTone={boardMode && !commentCreateMode ? 'element-selection' : 'default'}
+                selectionChrome={boardMode && !commentCreateMode ? 'element-selection' : 'edit'}
+                {...(boardMode && !commentCreateMode ? { onEscapeKey: deactivateElementSelectionMode } : {})}
                 onChange={(next) => {
                   sourceRef.current = next;
                   setSource(next);
@@ -9163,8 +9319,10 @@ function HtmlViewer({
                   // PR3: a normal canvas click should feel like "click →
                   // edit". Drive ProjectView's right panel immediately
                   // instead of waiting for inspect state/effects to settle.
-                  onEditModeChange?.(true);
-                  onEditSelectionChange?.(hasSelection);
+                  if (!boardMode && !drawOverlayOpen) {
+                    onEditModeChange?.(true);
+                    onEditSelectionChange?.(hasSelection);
+                  }
 
                   const shouldDriveInspect =
                     !boardMode && !drawOverlayOpen && (inspectMode || hasSelection);
@@ -9362,6 +9520,7 @@ function HtmlViewer({
               )}
             </Suspense>
           </PreviewDrawOverlay>
+          {elementSelectionAction}
           {useGrapesjs && mode === 'preview' && !grapesjsViewMode ? (() => {
             const sidebar = (
               <aside className={`grapesjs-sidebar${grapesjsInspectPortalHost ? ' grapesjs-sidebar-portal' : ''}`} data-testid="grapesjs-sidebar">
@@ -9572,6 +9731,7 @@ function HtmlViewer({
                   activeExistingCommentId={activeComposerComment?.id ?? null}
                   boardTool={boardTool}
                   showActivePin={commentCreateMode}
+                  targetTone={commentCreateMode ? 'comment' : 'element-selection'}
                   scale={overlayPreviewScale}
                   offsetX={overlayPreviewTransform.offsetX}
                   offsetY={overlayPreviewTransform.offsetY}
@@ -9625,6 +9785,7 @@ function HtmlViewer({
                 </div>
               ) : null}
               {commentComposer}
+              {elementSelectionAction}
               {boardMode && !commentCreateMode && hoveredCommentTarget && (!activeCommentTarget || commentPortalHost) ? (
                 <AnnotationHoverPopover
                   target={hoveredCommentTarget}

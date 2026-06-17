@@ -2379,7 +2379,10 @@ export function ProjectView({
     setPreviewComments(next);
     setAttachedComments((current) =>
       current
-        .map((attached) => next.find((comment) => comment.id === attached.id))
+        .map((attached) =>
+          next.find((comment) => comment.id === attached.id)
+          ?? (attached.id.startsWith('staged-') ? attached : null),
+        )
         .filter((comment): comment is PreviewComment => Boolean(comment)),
     );
   }, [project.id, activeConversationId]);
@@ -2429,6 +2432,42 @@ export function ProjectView({
   const attachPreviewComment = useCallback((comment: PreviewComment) => {
     setAttachedComments((current) => mergeAttachedComments(current, comment));
   }, []);
+
+  const stageBoardCommentAttachments = useCallback(
+    (commentAttachments: ChatCommentAttachment[]) => {
+      if (!activeConversationId || commentAttachments.length === 0) return false;
+      const now = Date.now();
+      const stagedComments = commentAttachments.map((attachment, index): PreviewComment => ({
+        id: `staged-${attachment.id}`,
+        projectId: project.id,
+        conversationId: activeConversationId,
+        filePath: attachment.filePath,
+        elementId: attachment.elementId,
+        selector: attachment.selector,
+        label: attachment.label,
+        text: attachment.currentText,
+        position: attachment.pagePosition,
+        htmlHint: attachment.htmlHint,
+        ...(attachment.style ? { style: attachment.style } : {}),
+        selectionKind: attachment.selectionKind === 'pod' ? 'pod' : 'element',
+        ...(typeof attachment.memberCount === 'number' ? { memberCount: attachment.memberCount } : {}),
+        ...(attachment.podMembers ? { podMembers: attachment.podMembers } : {}),
+        ...(typeof attachment.slideIndex === 'number' ? { slideIndex: attachment.slideIndex } : {}),
+        ...(attachment.imageAttachments ? { attachments: attachment.imageAttachments } : {}),
+        note: attachment.comment.trim(),
+        status: 'attached',
+        createdAt: now + index,
+        updatedAt: now + index,
+      }));
+      setAttachedComments((current) =>
+        stagedComments.reduce((next, comment) => mergeAttachedComments(next, comment), current),
+      );
+      setWorkspaceFocused(false);
+      setCommentInspectorActive(false);
+      return true;
+    },
+    [activeConversationId, project.id],
+  );
 
   const detachPreviewComment = useCallback((commentId: string) => {
     setAttachedComments((current) => removeAttachedComment(current, commentId));
@@ -5681,6 +5720,7 @@ export function ProjectView({
           previewComments={previewComments}
           onSavePreviewComment={savePreviewComment}
           onRemovePreviewComment={removePreviewComment}
+          onStageBoardCommentAttachments={stageBoardCommentAttachments}
           onSendBoardCommentAttachments={handleSendBoardCommentAttachments}
           onRequestBrowserUsePrompt={handleBrowserUsePrompt}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
