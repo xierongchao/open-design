@@ -1421,7 +1421,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(markup).toContain('sandbox="allow-scripts allow-downloads"');
   });
 
-  it('falls back to srcDoc when the HTML body looks deck-shaped even without an isDeck hint', () => {
+  it('keeps slide-class HTML on the GrapesJS path without an explicit deck hint', () => {
     const file = baseFile({
       name: 'inferred.html',
       path: 'inferred.html',
@@ -1443,9 +1443,10 @@ describe('FileViewer SVG artifacts', () => {
       />,
     );
 
-    expect(markup).toContain('data-od-render-mode="srcdoc"');
-    expect(markup).toContain('data-od-render-mode="srcdoc" data-od-active="true"');
-    expect(markup).toContain('data-od-render-mode="url-load" data-od-active="false"');
+    expect(markup).toContain('viewer-tabs-switch');
+    expect(markup).toContain('data-testid="grapesjs-sidebar"');
+    expect(markup).toContain('data-testid="grapesjs-interactive-toggle"');
+    expect(markup).not.toContain('data-od-render-mode="srcdoc"');
   });
 
   it('hides preview-only toolbar controls when switching an HTML deck to source view', async () => {

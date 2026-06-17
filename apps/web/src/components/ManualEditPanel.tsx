@@ -2025,8 +2025,19 @@ function ColorRow({ label, value, onChange, compact }: {
   label: string; value: string; onChange: (v: string) => void; compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
   const ref = useRef<HTMLSpanElement | null>(null);
   const [popStyle, setPopStyle] = useState<CSSProperties>({});
+  useEffect(() => {
+    setDraft(null);
+  }, [value]);
+
+  const commitColor = useCallback((raw: string) => {
+    const normalized = normalizeManualEditColorInput(raw);
+    if (normalized !== null && normalized !== value) onChange(normalized);
+    return normalized;
+  }, [onChange, value]);
+
   useEffect(() => {
     if (!open) return;
     // Position the popover via fixed positioning so it isn't clipped by parent overflow:hidden
@@ -2056,8 +2067,32 @@ function ColorRow({ label, value, onChange, compact }: {
       <span className={`cc-value cc-color ${compact ? 'cc-color-compact' : ''}`} ref={ref}>
         <button type="button" className="cc-swatch" style={{ background: value || 'transparent' }}
           onClick={() => setOpen((v) => !v)} aria-label={`Pick ${label}`} />
-        <input value={value} placeholder="#000000"
-          onChange={(e) => onChange(e.currentTarget.value)} onFocus={() => setOpen(true)} />
+        <input
+          value={draft ?? value}
+          placeholder="#000000"
+          onChange={(e) => {
+            const next = e.currentTarget.value;
+            setDraft(next);
+            commitColor(next);
+          }}
+          onBlur={(e) => {
+            commitColor(e.currentTarget.value);
+            setDraft(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitColor(e.currentTarget.value);
+              setDraft(null);
+              e.currentTarget.blur();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              setDraft(null);
+              e.currentTarget.blur();
+            }
+          }}
+          onFocus={() => setOpen(true)}
+        />
         {open ? (
           <div className="cc-color-popover" style={popStyle}>
             <div className="cc-color-grid">
@@ -2228,6 +2263,15 @@ function normalizeColorForPicker(value: string): string {
     return `#${toHex(match[1]!)}${toHex(match[2]!)}${toHex(match[3]!)}`;
   }
   return '#000000';
+}
+
+function normalizeManualEditColorInput(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (/^#?[0-9a-f]{6}$/i.test(trimmed)) {
+    return `#${trimmed.replace('#', '')}`.toLowerCase();
+  }
+  return null;
 }
 
 export function manualEditPatchSummary(patch: ManualEditPatch): string {

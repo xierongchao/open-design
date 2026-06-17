@@ -5,6 +5,9 @@ import {
   desktopEditAutoFitTransform,
   manualEditPanFromPointer,
   manualEditZoomPanAtPoint,
+  readCanvasSizeFromSource,
+  readViewportPresetFromSource,
+  writeCanvasSizeToSource,
 } from '../src/components/viewer-utils';
 
 describe('effectivePreviewScale', () => {
@@ -192,5 +195,16 @@ describe('manual edit viewport interaction math', () => {
       { x: 100, y: 120 },
       { x: 126, y: 144 },
     )).toEqual({ x: 66, y: 4 });
+  });
+});
+
+describe('od-canvas source metadata', () => {
+  it('round-trips a mobile custom canvas size and viewport preset', () => {
+    const source = '<!doctype html><html><head></head><body>Approval</body></html>';
+    const updated = writeCanvasSizeToSource(source, { width: 390, height: 1344 }, 'mobile');
+
+    expect(readCanvasSizeFromSource(updated)).toEqual({ width: 390, height: 1344 });
+    expect(readViewportPresetFromSource(updated)).toBe('mobile');
+    expect(updated).toContain('width=390,height=1344,viewport=mobile');
   });
 });

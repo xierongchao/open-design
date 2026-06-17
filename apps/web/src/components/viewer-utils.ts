@@ -752,7 +752,7 @@ export function setPreviewViewportCached(key: string, viewport: PreviewViewportI
   }
 }
 
-const OD_CANVAS_META_REGEX = /<meta\s+name=["']od-canvas["']\s+content=["']width=(\d+),height=(\d+)["']\s*\/?>/;
+const OD_CANVAS_META_REGEX = /<meta\s+name=["']od-canvas["']\s+content=["']width=(\d+),height=(\d+)(?:,viewport=([a-z]+))?["']\s*\/?>/;
 
 export function readCanvasSizeFromSource(source: string): { width: number; height: number } | null {
   const match = source.match(OD_CANVAS_META_REGEX);
@@ -763,8 +763,24 @@ export function readCanvasSizeFromSource(source: string): { width: number; heigh
   return { width, height };
 }
 
-export function writeCanvasSizeToSource(source: string, size: { width: number; height: number }): string {
-  const metaTag = `<meta name="od-canvas" content="width=${size.width},height=${size.height}">`;
+export type ViewportPresetId = 'desktop' | 'tablet' | 'mobile';
+
+/** Read the persisted viewport preset from an HTML source meta tag. */
+export function readViewportPresetFromSource(source: string): ViewportPresetId | null {
+  const match = source.match(OD_CANVAS_META_REGEX);
+  if (!match || !match[3]) return null;
+  const preset = match[3] as ViewportPresetId;
+  if (preset === 'desktop' || preset === 'tablet' || preset === 'mobile') return preset;
+  return null;
+}
+
+export function writeCanvasSizeToSource(
+  source: string,
+  size: { width: number; height: number },
+  viewport?: ViewportPresetId | null,
+): string {
+  const vp = viewport ? `,viewport=${viewport}` : '';
+  const metaTag = `<meta name="od-canvas" content="width=${size.width},height=${size.height}${vp}">`;
   if (OD_CANVAS_META_REGEX.test(source)) {
     return source.replace(OD_CANVAS_META_REGEX, metaTag);
   }

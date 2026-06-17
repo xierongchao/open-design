@@ -1813,18 +1813,24 @@ export function ProjectView({
         : null,
     [activeProjectFileName, projectFiles],
   );
-  // The HTML file the header DownloadButton targets. File tabs resolve
-  // directly; live-artifact tabs (`live:<id>`) and the no-tab case fall back
-  // to the project's primary HTML file, which is what the preview is
-  // rendering. Returns null when there is no HTML artifact to export.
+  // Track the file currently being previewed in the Design Files panel,
+  // so the header DownloadButton can target it even when no file tab is open.
+  const [designFilesPreviewName, setDesignFilesPreviewName] = useState<string | null>(null);
+
+  // The HTML file the header DownloadButton targets. Prefers the active file
+  // tab; when none is open, falls back to the Design Files inline preview.
   const downloadTargetFile = useMemo<ProjectFile | null>(() => {
     if (activeProjectFileName) {
       const direct = projectFiles.find((file) => file.name === activeProjectFileName);
       if (direct && direct.kind === 'html') return direct;
     }
+    if (designFilesPreviewName) {
+      const preview = projectFiles.find((file) => file.name === designFilesPreviewName);
+      if (preview && preview.kind === 'html') return preview;
+    }
     const primary = selectPrimaryProjectFile(projectFiles);
     return primary && primary.kind === 'html' ? primary : null;
-  }, [activeProjectFileName, projectFiles]);
+  }, [activeProjectFileName, designFilesPreviewName, projectFiles]);
   const agentsById = useMemo(
     () => new Map(agents.map((agent) => [agent.id, agent])),
     [agents],
@@ -5659,6 +5665,7 @@ export function ProjectView({
           onRefreshFiles={() => {
             void refreshWorkspaceItems();
           }}
+          onDesignFilesPreviewChange={setDesignFilesPreviewName}
           isDeck={isDeck}
           onExportAsPptx={handleExportAsPptx}
           streaming={currentConversationActionDisabled}

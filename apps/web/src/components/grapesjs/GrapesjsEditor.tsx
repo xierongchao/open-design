@@ -16,6 +16,7 @@ import {
   applyCanvasHeadAssets,
   areDocumentsEqual,
   parseHtmlDocument,
+  readCanvasBodyStyleOverrides,
   reassembleDocument,
   type ParsedDocument,
 } from './html-document';
@@ -217,10 +218,10 @@ function replaceColorsInSelection(editor: GrapesjsEditorInstance | null, targets
 }
 
 function toCssStyleProps(styles: Record<string, string>): Record<string, string> {
-  // Convert camelCase keys to kebab-case CSS prop names for element.style assignment.
+  // Convert kebab-case CSS prop names to camelCase for CSSStyleDeclaration assignment.
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(styles)) {
-    out[k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)] = v;
+    out[k.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase())] = v;
   }
   return out;
 }
@@ -232,6 +233,196 @@ function getCanvasBodyElFromEditor(editor: { Canvas?: { getDocument?: () => Docu
   } catch {
     return null;
   }
+}
+
+const CANVAS_BODY_STYLE_PROPS = [
+  'backgroundColor',
+  'backgroundImage',
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'lineHeight',
+  'letterSpacing',
+  'color',
+  'opacity',
+] as const;
+
+function applyCanvasBodyStyleOverrides(
+  editor: GrapesjsEditorInstance,
+  styles: Record<string, string>,
+) {
+  const body = getCanvasBodyElFromEditor(editor);
+  if (!body) return;
+  const cssStyleProps = toCssStyleProps(styles);
+  for (const prop of CANVAS_BODY_STYLE_PROPS) {
+    if (!(prop in cssStyleProps)) {
+      try {
+        (body.style as unknown as Record<string, string>)[prop] = '';
+      } catch {
+        // ignore individual unsupported CSS properties
+      }
+    }
+  }
+  for (const [prop, value] of Object.entries(cssStyleProps)) {
+    try {
+      (body.style as unknown as Record<string, string>)[prop] = value;
+    } catch {
+      // ignore individual unsupported CSS properties
+    }
+  }
+}
+
+function mergeCanvasStyleSnapshot(
+  computed: Record<string, string>,
+  sourceOverrides: Record<string, string>,
+): Record<string, string> {
+  return { ...computed, ...sourceOverrides };
+}
+
+function readCanvasWrapperStyle(editor: GrapesjsEditorInstance): Record<string, string> | undefined {
+  try {
+    const wrapper = editor.Components.getComponents().get(0);
+    const raw = wrapper?.getStyle?.() ?? {};
+    const coerced: Record<string, string> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (typeof value === 'string') coerced[key] = value;
+    }
+    return Object.keys(coerced).length > 0 ? coerced : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildEditorDocument(
+  editor: GrapesjsEditorInstance,
+  parsed: ParsedDocument,
+): string {
+  return reassembleDocument(
+    parsed,
+    editor.getHtml(),
+    editor.getCss() ?? '',
+    readCanvasWrapperStyle(editor),
+  );
+}
+
+function applyCanvasFrameSize(
+  editor: GrapesjsEditorInstance,
+  width: number,
+  height: number,
+) {
+  try {
+    const canvasEl = editor.Canvas.getElement?.() as HTMLElement | null | undefined;
+    if (canvasEl) {
+      canvasEl.style.setProperty('--od-gjs-frame-width', `${width}px`);
+      canvasEl.style.setProperty('--od-gjs-frame-height', `${height}px`);
+    }
+  } catch {
+    // ignore — direct frame sizing below is the source of truth
+  }
+  try {
+    const frameModel = (editor.Canvas as unknown as {
+      getFrame?: () => { set?: (attrs: Record<string, string>, opts?: Record<string, unknown>) => void };
+    }).getFrame?.();
+    frameModel?.set?.(
+      { width: `${width}px`, height: `${height}px`, minHeight: `${height}px` },
+      { noUndo: 1 },
+    );
+  } catch {
+    // ignore — DOM sizing still keeps the visual frame correct
+  }
+  const frame = editor.Canvas.getFrameEl?.();
+  if (!frame) return;
+  const applySize = (el: HTMLElement | null | undefined) => {
+    if (!el) return;
+    el.style.width = `${width}px`;
+    el.style.height = `${height}px`;
+    el.style.minWidth = `${width}px`;
+    el.style.maxWidth = `${width}px`;
+    el.style.minHeight = `${height}px`;
+    el.style.maxHeight = `${height}px`;
+    el.style.flexBasis = `${width}px`;
+  };
+  applySize(frame);
+  const wrapper = frame.parentElement as HTMLElement | null;
+  applySize(wrapper);
+  const frameBox = wrapper?.parentElement as HTMLElement | null;
+  if (
+    frameBox &&
+    (
+      frameBox.classList.contains('gjs-frame') ||
+      frameBox.classList.contains('gjs-frame-wrapper')
+    )
+  ) {
+    applySize(frameBox);
+  }
+  try {
+    const doc = editor.Canvas.getDocument?.();
+    if (doc?.documentElement) {
+      doc.documentElement.style.width = `${width}px`;
+      doc.documentElement.style.minWidth = '0';
+    }
+    if (doc?.body) {
+      doc.body.style.width = `${width}px`;
+      doc.body.style.minWidth = '0';
+    }
+  } catch {
+    // ignore — frame sizing still succeeded
+  }
+}
+
+export function calculateCanvasFitToViewport({
+  frameWidth,
+  frameHeight,
+  canvasWidth,
+  canvasHeight,
+  padding = 48,
+}: {
+  frameWidth: number;
+  frameHeight: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  padding?: number;
+}): { zoom: number; x: number; y: number } {
+  if (canvasWidth < 50 || canvasHeight < 50 || frameWidth <= 0 || frameHeight <= 0) {
+    return { zoom: 100, x: 0, y: 0 };
+  }
+  const availableWidth = Math.max(1, canvasWidth - padding);
+  const availableHeight = Math.max(1, canvasHeight - padding);
+  const widthRatio = frameWidth > 0 ? availableWidth / frameWidth : 1;
+  const shouldFit = frameWidth > availableWidth;
+  const nextZoom = shouldFit
+    ? Math.max(25, Math.min(100, widthRatio * 100))
+    : 100;
+  const zoom = Number.isFinite(nextZoom) ? nextZoom : 100;
+  const zoomScale = zoom / 100;
+  const scaledHeight = frameHeight * zoomScale;
+  const y = scaledHeight <= availableHeight
+    ? Math.max(0, Math.round((canvasHeight - scaledHeight) / 2))
+    : 0;
+  return { zoom, x: 0, y };
+}
+
+function fitCanvasFrameToViewport(editor: GrapesjsEditorInstance) {
+  const size = readCanvasFrameSize(editor);
+  const canvasEl = editor.Canvas.getElement?.() as HTMLElement | null | undefined;
+  const rect = canvasEl?.getBoundingClientRect?.();
+  const fit = calculateCanvasFitToViewport({
+    frameWidth: size?.width ?? 0,
+    frameHeight: size?.height ?? 0,
+    canvasWidth: rect?.width ?? 0,
+    canvasHeight: rect?.height ?? 0,
+  });
+  editor.Canvas.setZoom(fit.zoom);
+  editor.Canvas.setCoords(fit.x, fit.y);
+}
+
+function readCanvasFrameSize(editor: GrapesjsEditorInstance): { width: number; height: number } | null {
+  const frame = editor.Canvas.getFrameEl?.();
+  if (!frame) return null;
+  const width = Number.parseInt(frame.style.width || '', 10) || frame.offsetWidth || 0;
+  const height = Number.parseInt(frame.style.height || '', 10) || frame.offsetHeight || 0;
+  if (width <= 0 || height <= 0) return null;
+  return { width, height };
 }
 
 /**
@@ -296,6 +487,11 @@ export interface SelectionSnapshot {
   styles: Record<string, string>;
 }
 
+export interface CanvasSnapshot {
+  styles: Record<string, string>;
+  size: { width: number; height: number } | null;
+}
+
 export interface GrapesjsEditorHandle {
   /** Body components HTML (no doctype, no head). */
   getHtml(): string;
@@ -313,6 +509,8 @@ export interface GrapesjsEditorHandle {
   applyStyle(styles: Record<string, string>): void;
   /** Read computed styles of the canvas <body> (for the no-selection canvas panel). */
   getCanvasStyles(): Record<string, string>;
+  /** Read canvas-level styles plus the current frame size. */
+  getCanvasState(): CanvasSnapshot;
   /** Write styles to the canvas <body> (canvas-level background / font / size). */
   setCanvasStyles(styles: Record<string, string>): void;
   /** Switch the canvas device viewport (desktop/tablet/mobile) by setting the frame width. */
@@ -397,6 +595,17 @@ export interface GrapesjsEditorProps {
   onSelectionChange?: (info: SelectionSnapshot) => void;
   /** Fires when the canvas zoom changes so the host can update its zoom % display. */
   onZoomChange?: (zoom: number) => void;
+  /** Fires when the user changes the canvas frame size so the host can persist it. */
+  onViewportSizeChange?: (width: number, height: number) => void;
+  /**
+   * Initial canvas frame size applied BEFORE first paint. Without this the
+   * editor boots at GrapesJS's built-in default device (~1280px) and the host's
+   * apply-viewport effect only corrects it after mount — causing a visible
+   * "snap" from screen-size to the saved viewport (e.g. mobile 390×844). When
+   * provided, the frame is sized right after grapesjs.init() returns, before
+   * the first frame draws.
+   */
+  initialViewport?: { width: number; height: number };
   /**
    * Fires when the user double-clicks an <img> component. The host owns the
    * upload UI (the fill panel's image tab) so we suppress GrapesJS's native
@@ -432,6 +641,8 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       onTweaksAvailable,
       onSelectionChange,
       onZoomChange,
+      onViewportSizeChange,
+      initialViewport,
       onImageEditRequest,
       layersPanelRef,
       stylePanelRef,
@@ -453,7 +664,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const onTweaksAvailableRef = useRef(onTweaksAvailable);
     const onSelectionChangeRef = useRef(onSelectionChange);
     const onZoomChangeRef = useRef(onZoomChange);
+    const onViewportSizeChangeRef = useRef(onViewportSizeChange);
     const onImageEditRequestRef = useRef(onImageEditRequest);
+    const userCanvasSizeEditVersionRef = useRef(0);
     // When true, canvas pointer drag pans the selected element's
     // background-image and wheel scales it (裁剪 mode). Toggled from the
     // StylePanel when the user picks the 裁剪 fill-size option.
@@ -469,6 +682,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const refreshSelectionSnapshotRef = useRef<(() => void) | null>(null);
     const syncZoomAttrRef = useRef<(() => void) | null>(null);
     const syncCoordsAttrRef = useRef<(() => void) | null>(null);
+    const currentCanvasSizeRef = useRef<{ width: number; height: number } | null>(
+      initialViewport ? { width: initialViewport.width, height: initialViewport.height } : null,
+    );
+    const currentCanvasStylesRef = useRef<Record<string, string>>({});
     const lastTweaksAvailableRef = useRef<boolean | null>(null);
     // Cmd+right-click layer-stack menu. The boot effect writes through
     // setCtxMenuRef (so the canvas-doc contextmenu handler can open it without
@@ -508,8 +725,51 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       onZoomChangeRef.current = onZoomChange;
     }, [onZoomChange]);
     useEffect(() => {
+      onViewportSizeChangeRef.current = onViewportSizeChange;
+    }, [onViewportSizeChange]);
+    useEffect(() => {
       onImageEditRequestRef.current = onImageEditRequest;
     }, [onImageEditRequest]);
+
+    const applyLogicalCanvasSize = useCallback((width: number, height: number) => {
+      const editor = editorRef.current;
+      if (!editor || width <= 0 || height <= 0) return false;
+      currentCanvasSizeRef.current = { width, height };
+      try {
+        applyCanvasFrameSize(editor, width, height);
+        fitCanvasFrameToViewport(editor);
+        syncZoomAttrRef.current?.();
+        syncCoordsAttrRef.current?.();
+        return true;
+      } catch {
+        return false;
+      }
+    }, []);
+
+    useEffect(() => {
+      if (!initialViewport) return undefined;
+      const width = initialViewport.width;
+      const height = initialViewport.height;
+      currentCanvasSizeRef.current = { width, height };
+      let raf = 0;
+      let timeoutShort = 0;
+      let timeoutLong = 0;
+      const editVersion = userCanvasSizeEditVersionRef.current;
+      const apply = () => {
+        if (userCanvasSizeEditVersionRef.current !== editVersion) return;
+        applyLogicalCanvasSize(width, height);
+      };
+      apply();
+      raf = window.requestAnimationFrame(apply);
+      timeoutShort = window.setTimeout(apply, 50);
+      timeoutLong = window.setTimeout(apply, 250);
+      return () => {
+        if (raf) window.cancelAnimationFrame(raf);
+        if (timeoutShort) window.clearTimeout(timeoutShort);
+        if (timeoutLong) window.clearTimeout(timeoutLong);
+      };
+    }, [applyLogicalCanvasSize, initialViewport?.height, initialViewport?.width]);
+
     // Bridge the imperative setCtxMenuRef (written by the canvas-doc
     // contextmenu handler inside the boot effect) to React state so the
     // CanvasContextMenu portal renders.
@@ -520,6 +780,8 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     useEffect(() => {
       baseHrefRef.current = baseHref;
       applyCanvasHeadAssets(editorRef.current?.Canvas.getDocument() ?? null, parsedRef.current, baseHref);
+      const editor = editorRef.current;
+      if (editor) applyCanvasBodyStyleOverrides(editor, currentCanvasStylesRef.current);
     }, [baseHref]);
     useEffect(() => {
       readOnlyRef.current = readOnly;
@@ -544,9 +806,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       const editor = editorRef.current;
       const parsed = parsedRef.current;
       if (!editor || !parsed) return;
-      const bodyHtml = editor.getHtml();
-      const css = editor.getCss() ?? '';
-      const full = reassembleDocument(parsed, bodyHtml, css);
+      const full = buildEditorDocument(editor, parsed);
       if (areDocumentsEqual(full, lastEmittedRef.current)) return;
       lastEmittedRef.current = full;
       // CRITICAL loop-break: sync the emitted value to lastExternalHtmlRef so
@@ -574,6 +834,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           const grapesjs = mod.default;
           const parsed = parseHtmlDocument(html);
           parsedRef.current = parsed;
+          currentCanvasStylesRef.current = readCanvasBodyStyleOverrides(parsed);
           lastExternalHtmlRef.current = html;
 
           const editor = grapesjs.init({
@@ -757,6 +1018,19 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           });
 
           editorRef.current = editor;
+          // Apply the target canvas size BEFORE first paint. The frame element
+          // exists immediately after init() returns, so sizing it here (before
+          // 'load' fires and before React commits) avoids the visible "snap"
+          // from the default device (~1280px) to the saved viewport. Without
+          // this the host's apply-viewport effect only corrects the size after
+          // mount, producing the flash the user reported.
+          if (initialViewport) {
+            try {
+              currentCanvasSizeRef.current = { width: initialViewport.width, height: initialViewport.height };
+              applyCanvasFrameSize(editor, initialViewport.width, initialViewport.height);
+              fitCanvasFrameToViewport(editor);
+            } catch { /* ignore — fall back to host apply-viewport effect */ }
+          }
           // Inject theme overrides into the host <head> so they load AFTER
           // GrapesJS's runtime <style> injection and win the cascade. The
           // built-in toolbar + hover badge are disabled at the source
@@ -806,6 +1080,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           // component exists; the eager call here may race a cold iframe.
           const applyCurrentCanvasHead = () => {
             applyCanvasHeadAssets(editor.Canvas.getDocument(), parsedRef.current, baseHrefRef.current);
+            applyCanvasBodyStyleOverrides(editor, currentCanvasStylesRef.current);
           };
 
           // Selection dimension badge — a small "W x H" label pinned to the
@@ -1377,10 +1652,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const bootRoot = bootDoc?.documentElement;
             const savedW = bootRoot?.getAttribute('data-od-canvas-width');
             const savedH = bootRoot?.getAttribute('data-od-canvas-height');
-            const bootFrame = editor.Canvas.getFrameEl?.();
-            if (bootFrame) {
-              if (savedW) bootFrame.style.width = `${savedW}px`;
-              if (savedH) bootFrame.style.height = `${savedH}px`;
+            const width = savedW ? Number.parseInt(savedW, 10) : 0;
+            const height = savedH ? Number.parseInt(savedH, 10) : 0;
+            if (width > 0 && height > 0) {
+              currentCanvasSizeRef.current = { width, height };
+              applyCanvasFrameSize(editor, width, height);
             }
           } catch { /* ignore */ }
 
@@ -1478,11 +1754,21 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           const syncZoomAttr = () => {
             try {
               const z = editor.Canvas.getZoom?.();
-              if (typeof z === 'number') {
+              if (typeof z === 'number' && Number.isFinite(z)) {
+                if (z < 25) {
+                  editor.Canvas.setZoom?.(100);
+                  if (rootRef.current) rootRef.current.dataset.odCanvasZoom = '100';
+                  onZoomChangeRef.current?.(100);
+                  return;
+                }
                 if (rootRef.current) {
                   rootRef.current.dataset.odCanvasZoom = String(Number(z.toFixed(3)));
                 }
                 onZoomChangeRef.current?.(z);
+              } else {
+                editor.Canvas.setZoom?.(100);
+                if (rootRef.current) rootRef.current.dataset.odCanvasZoom = '100';
+                onZoomChangeRef.current?.(100);
               }
             } catch {
               // ignore
@@ -1570,13 +1856,15 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
             // Delete / Backspace removes the selected component(s). Guard with
             // a modifier-free check so we don't swallow Cmd+Backspace (browser
-            // navigation) or Cmd+Delete.
+            // navigation) or Cmd+Delete. Also skip when the user is
+            // editing text inside a component (double-click → contenteditable).
             if (
               !readOnlyRef.current &&
               !ev.metaKey &&
               !ev.ctrlKey &&
               !ev.altKey &&
-              (ev.key === 'Delete' || ev.key === 'Backspace')
+              (ev.key === 'Delete' || ev.key === 'Backspace') &&
+              !(editor as any).isEditing()
             ) {
               try {
                 const all = editor.getSelectedAll?.() ?? [];
@@ -1631,7 +1919,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             if ((ev.metaKey || ev.ctrlKey) && ev.key === '9') {
               ev.preventDefault();
               try {
-                editor.Canvas.fitViewport({ zoom: (z) => Math.min(z, 100) });
+                fitCanvasFrameToViewport(editor);
                 syncZoomAttr();
                 syncCoordsAttr();
               } catch {
@@ -1881,7 +2169,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 } catch { /* ignore */ }
                 return;
               }
-              if (!readOnlyRef.current && !ev.metaKey && !ev.ctrlKey && !ev.altKey && (ev.key === 'Delete' || ev.key === 'Backspace')) {
+              if (!readOnlyRef.current && !ev.metaKey && !ev.ctrlKey && !ev.altKey && (ev.key === 'Delete' || ev.key === 'Backspace') && !(editor as any).isEditing()) {
                 try {
                   const all = editor.getSelectedAll?.() ?? [];
                   if (all.length > 0) {
@@ -2381,15 +2669,18 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const onClick = (ev: MouseEvent) => {
               if (readOnlyRef.current) return;
               if (isTextInputTarget(ev.target)) return;
-              // Cmd/Ctrl+click = deep select (innermost). Stop propagation so
-              // GrapesJS's own click→select (which treats Cmd as multi-select
-              // toggle) doesn't run.
+              // Cmd/Ctrl+click = deep select (innermost). Cmd/Ctrl+Shift
+              // keeps the current selection and adds the innermost target,
+              // useful for piercing flex frames while building a multi-select.
+              // Stop propagation so GrapesJS's own click→select (which treats
+              // Cmd as a container-level multi-select toggle) doesn't run.
               if (ev.metaKey || ev.ctrlKey) {
                 const inner = getComponentFromElement(ev.target as Element | null);
                 if (!inner) return;
                 ev.preventDefault();
                 ev.stopImmediatePropagation();
-                editor.select(inner);
+                if (ev.shiftKey) editor.selectAdd(inner);
+                else editor.select(inner);
                 return;
               }
               // Plain click: if the clicked element sits INSIDE a flex
@@ -2492,9 +2783,23 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               // selecting + stopImmediatePropagation; on the second dblclick the
               // component is already selected, so we fall through and let
               // GrapesJS's own dblclick→onActive fire the RTE.
+              //
+              // Exception: when the text element lives inside a flex container
+              // and that container is currently selected (the user is drilling
+              // in), go straight to RTE. Without this, the click handler's
+              // flex-ancestor selection creates a loop: click→flex, dblclick
+              // →text (blocks RTE), click→flex, … and the user never reaches
+              // the editor.
               if (isText) {
                 const current = editor.getSelected?.();
                 if (current === comp) return; // already selected → let RTE engage
+                const flexAncestor = findNearestFlexAncestor(comp);
+                if (current && flexAncestor && current === flexAncestor) {
+                  // Drilling in from flex container → enter edit mode
+                  ev.preventDefault();
+                  editor.select(comp);
+                  return; // don't stopPropagation → GrapesJS RTE fires
+                }
                 ev.preventDefault();
                 ev.stopImmediatePropagation();
                 editor.select(comp);
@@ -3018,6 +3323,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       if (!editor) return;
       const parsed = parseHtmlDocument(html);
       parsedRef.current = parsed;
+      currentCanvasStylesRef.current = readCanvasBodyStyleOverrides(parsed);
       lastExternalHtmlRef.current = html;
       lastEmittedRef.current = '';
       // Reset components — od-stable-id-plugin will re-tag path-based ids
@@ -3025,6 +3331,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       try {
         editor.setComponents(parsed.bodyInner || '<div></div>');
         applyCanvasHeadAssets(editor.Canvas.getDocument(), parsed, baseHrefRef.current);
+        applyCanvasBodyStyleOverrides(editor, currentCanvasStylesRef.current);
       } catch {
         // ignore
       }
@@ -3063,18 +3370,20 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           const editor = editorRef.current;
           const parsed = parsedRef.current;
           if (!editor || !parsed) return html;
-          return reassembleDocument(parsed, editor.getHtml(), editor.getCss() ?? '');
+          return buildEditorDocument(editor, parsed);
         },
         setHtml: (next: string) => {
           const editor = editorRef.current;
           if (!editor) return;
           const parsed = parseHtmlDocument(next);
           parsedRef.current = parsed;
+          currentCanvasStylesRef.current = readCanvasBodyStyleOverrides(parsed);
           lastExternalHtmlRef.current = next;
           lastEmittedRef.current = '';
           try {
             editor.setComponents(parsed.bodyInner || '<div></div>');
             applyCanvasHeadAssets(editor.Canvas.getDocument(), parsed, baseHrefRef.current);
+            applyCanvasBodyStyleOverrides(editor, currentCanvasStylesRef.current);
           } catch {
             // ignore
           }
@@ -3117,25 +3426,46 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // color inputs reflect the just-written values (computed style
             // reads fresh after setStyle).
             refreshSelectionSnapshotRef.current?.();
+            // setStyle() doesn't reliably trigger GrapesJS's styleUpdate event
+            // for host-driven panel edits, so explicitly emit a document change
+            // to keep the auto-save path from dropping spacing/style updates.
+            scheduleEmitRef.current?.();
           } catch { /* ignore */ }
         },
         getCanvasStyles: () => {
           const editor = editorRef.current;
           const body = editor ? readElementStyles(getCanvasBodyElFromEditor(editor)) : {};
-          return body;
+          return mergeCanvasStyleSnapshot(body, currentCanvasStylesRef.current);
+        },
+        getCanvasState: () => {
+          const editor = editorRef.current;
+          if (!editor) return { styles: {}, size: null };
+          return {
+            styles: mergeCanvasStyleSnapshot(
+              readElementStyles(getCanvasBodyElFromEditor(editor)),
+              currentCanvasStylesRef.current,
+            ),
+            size: currentCanvasSizeRef.current ?? readCanvasFrameSize(editor),
+          };
         },
         setCanvasStyles: (styles: Record<string, string>) => {
           const editor = editorRef.current;
           if (!editor) return;
           try {
+            const nextCanvasStyles = toCssStyleProps(styles);
+            currentCanvasStylesRef.current = {
+              ...currentCanvasStylesRef.current,
+              ...nextCanvasStyles,
+            };
             const body = getCanvasBodyElFromEditor(editor);
-            if (body) Object.assign(body.style, toCssStyleProps(styles));
+            if (body) applyCanvasBodyStyleOverrides(editor, nextCanvasStyles);
             // Also persist onto the wrapper component so getDocument round-trips.
             const wrapper = editor.Components.getComponents().get(0);
             if (wrapper) {
               const merged = { ...(wrapper.getStyle?.() ?? {}), ...styles } as Parameters<typeof wrapper.setStyle>[0];
               wrapper.setStyle?.(merged);
             }
+            scheduleEmitRef.current?.();
           } catch { /* ignore */ }
         },
         setViewport: (width: number, height: number) => {
@@ -3146,23 +3476,18 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const dm = editor.DeviceManager;
             if (dm) {
               try {
-                dm.add?.({ id: 'od-custom', name: 'Custom', width: `${width}px` });
+                dm.add?.({ id: 'od-custom', name: 'Custom', width: `${width}px`, height: `${height}px` });
                 dm.select?.('od-custom');
               } catch { /* fall through */ }
             }
-            const frame = editor.Canvas.getFrameEl?.();
-            if (frame) {
-              frame.style.width = `${width}px`;
-              frame.style.height = `${height}px`;
-            }
-            // Reset zoom to 100% and recenter the frame in the viewport so the
-            // user isn't left looking at a panned/zoomed corner after switching
-            // device. fitViewport auto-scales to fit, then we clamp to ≤100%
-            // so small devices (mobile) don't blow up beyond actual size.
-            editor.Canvas.setZoom(100);
-            editor.Canvas.setCoords(0, 0);
+            currentCanvasSizeRef.current = { width, height };
+            applyCanvasFrameSize(editor, width, height);
+            // Recenter the frame in the viewport so the user isn't left
+            // looking at a panned/zoomed corner after switching device. The
+            // fit clamps to <=100%, so small devices don't enlarge past their
+            // real size when there is already enough room.
             try {
-              editor.Canvas.fitViewport({ zoom: (z: number) => Math.min(z, 100) });
+              fitCanvasFrameToViewport(editor);
             } catch { /* ignore — fitViewport best-effort */ }
             syncZoomAttrRef.current?.();
             syncCoordsAttrRef.current?.();
@@ -3172,10 +3497,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           const editor = editorRef.current;
           if (!editor) return;
           try {
-            const frame = editor.Canvas.getFrameEl?.();
-            if (frame) {
-              if (typeof width === 'number' && width > 0) frame.style.width = `${width}px`;
-              if (typeof height === 'number' && height > 0) frame.style.height = `${height}px`;
+            userCanvasSizeEditVersionRef.current += 1;
+            const currentSize = readCanvasFrameSize(editor) ?? { width: 0, height: 0 };
+            const nextWidth = typeof width === 'number' && width > 0 ? width : currentSize.width;
+            const nextHeight = typeof height === 'number' && height > 0 ? height : currentSize.height;
+            if (nextWidth > 0 && nextHeight > 0) {
+              currentCanvasSizeRef.current = { width: nextWidth, height: nextHeight };
+              applyCanvasFrameSize(editor, nextWidth, nextHeight);
             }
             // Persist into the document <html> so getDocument() round-trips
             // the size through auto-save (the canvas frame DOM is transient —
@@ -3184,8 +3512,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const doc = editor.Canvas.getDocument?.();
             const root = doc?.documentElement;
             if (root) {
-              if (typeof width === 'number' && width > 0) root.setAttribute('data-od-canvas-width', String(width));
-              if (typeof height === 'number' && height > 0) root.setAttribute('data-od-canvas-height', String(height));
+              if (nextWidth > 0) root.setAttribute('data-od-canvas-width', String(nextWidth));
+              if (nextHeight > 0) root.setAttribute('data-od-canvas-height', String(nextHeight));
+            }
+            if (nextWidth > 0 && nextHeight > 0) {
+              onViewportSizeChangeRef.current?.(nextWidth, nextHeight);
             }
             // Trigger auto-save so the new size is written to the file.
             scheduleEmitRef.current?.();

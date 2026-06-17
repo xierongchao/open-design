@@ -2527,6 +2527,18 @@ export interface Dict {
   'designFiles.expandAll': string;
   'designFiles.collapseAll': string;
   'designFiles.copyFailed': string;
+  'designFiles.newArtboard': string;
+  'designFiles.artboardCreated': string;
+  'designFiles.exportPdf': string;
+  'designFiles.exportImages': string;
+  'designFiles.exportZip': string;
+  'designFiles.imageFormatTitle': string;
+  'designFiles.imageFormat': string;
+  'designFiles.imageScale': string;
+  'designFiles.exportBtn': string;
+  'designFiles.rootNodeMenu': string;
+  'designFiles.noHtmlForPdf': string;
+  'designFiles.noHtmlForImage': string;
   'quickSwitcher.placeholder': string;
   'quickSwitcher.empty': string;
   'quickSwitcher.noMatches': string;

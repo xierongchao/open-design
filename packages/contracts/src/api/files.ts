@@ -172,7 +172,21 @@ export function buildProjectRawFileUrl(
 // `.open-design/aliases.json` so the map travels with the project folder
 // (cloud share / multi-user); read/written through dedicated routes because
 // the generic file-write endpoint cannot target the dot-prefixed metadata dir.
-export type ProjectFileAliasMap = Record<string, string>;
+//
+// The value is a union for backward compatibility: legacy data stores a bare
+// string (the display name only); newer data stores an object carrying the
+// display name plus the last-used canvas viewport preset (desktop/tablet/mobile).
+// Readers must handle both shapes; see file-aliases.ts / projects.ts sanitizers.
+export type ProjectFileViewportPreset = 'desktop' | 'tablet' | 'mobile';
+
+export interface ProjectFileAliasValue {
+  /** Cosmetic display label (the rename target). */
+  name?: string;
+  /** Last-used canvas viewport preset for this file. */
+  viewport?: ProjectFileViewportPreset;
+}
+
+export type ProjectFileAliasMap = Record<string, string | ProjectFileAliasValue>;
 
 export interface ProjectFileAliasesResponse {
   aliases: ProjectFileAliasMap;

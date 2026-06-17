@@ -41,6 +41,8 @@ import {
   fetchFileAliases,
   saveFileAliases,
   type FileAliasMap,
+  type FileAliasValue,
+  aliasViewportOf,
 } from '../runtime/file-aliases';
 import { latestTodosFromEvents, type TodoItem } from '../runtime/todos';
 import { deliverableSlideNavForActiveFile, isSlideNavDeliverableNow } from '../runtime/slide-nav';
@@ -115,6 +117,7 @@ interface Props {
   liveArtifacts: LiveArtifactSummary[];
   filesRefreshKey?: number;
   onRefreshFiles: () => Promise<void> | void;
+  onDesignFilesPreviewChange?: (fileName: string | null) => void;
   isDeck: boolean;
   onExportAsPptx?: ((fileName: string) => void) | undefined;
   streaming?: boolean;
@@ -383,6 +386,7 @@ export function FileWorkspace({
   liveArtifacts,
   filesRefreshKey = 0,
   onRefreshFiles,
+  onDesignFilesPreviewChange,
   isDeck,
   onExportAsPptx,
   streaming,
@@ -496,6 +500,7 @@ export function FileWorkspace({
   // onCurrentDirChange). New files — uploads, pastes, sketches, dropped files —
   // are created under this folder instead of the project root.
   const [uploadDir, setUploadDir] = useState<string>('');
+  const [autoRenameFile, setAutoRenameFile] = useState<string | null>(null);
   const [designFilesPreview, setDesignFilesPreview] = useState<{
     projectId: string;
     name: string;
@@ -775,6 +780,12 @@ export function FileWorkspace({
     // activeTab without round-tripping through the parent.
     setActiveTab(name);
   }
+
+  // Notify the parent when the design files preview changes, so the
+  // header DownloadButton can target the correct file.
+  useEffect(() => {
+    onDesignFilesPreviewChange?.(designFilesPreviewName);
+  }, [designFilesPreviewName, onDesignFilesPreviewChange]);
 
   // Promote the active browser tab to the front of the keep-alive LRU (and cap
   // it). Activating a browser tab is the only thing that mounts its webview.
@@ -1459,16 +1470,25 @@ export function FileWorkspace({
     const trimmed = alias.trim();
     const realBasename = displayNameForPath(name, undefined);
     mutateFileAliases((prev) => {
-      const hasAlias = name in prev;
+      const existing = prev[name];
+      const existingViewport = aliasViewportOf(existing);
+      const hasEntry = name in prev;
       const clears = !trimmed || trimmed === realBasename;
-      if (clears) {
-        if (!hasAlias) return prev;
+      // If the name clears AND there is no viewport to remember, drop the key
+      // entirely so the file tree shows the real basename.
+      if (clears && !existingViewport) {
+        if (!hasEntry) return prev;
         const next = { ...prev };
         delete next[name];
         return next;
       }
-      if (hasAlias && prev[name] === trimmed) return prev;
-      return { ...prev, [name]: trimmed };
+      // Preserve an existing viewport while updating/clearing the name. The
+      // value is always written in the object shape so both fields coexist.
+      const nextValue: FileAliasValue = {};
+      if (!clears) nextValue.name = trimmed;
+      if (existingViewport) nextValue.viewport = existingViewport;
+      if (hasEntry && JSON.stringify(existing) === JSON.stringify(nextValue)) return prev;
+      return { ...prev, [name]: nextValue };
     });
     // The file itself is unchanged; return it so the tree's rename editor
     // resolves. Fall back to a minimal stub if it isn't loaded yet.
@@ -1481,6 +1501,23 @@ export function FileWorkspace({
         mime: 'text/plain',
       }
     );
+  }
+
+  /** Remember the last-used canvas viewport preset (desktop/tablet/mobile) for a file. */
+  async function handleSetFileViewport(name: string, viewport: 'desktop' | 'tablet' | 'mobile'): Promise<void> {
+    mutateFileAliases((prev) => {
+      const existing = prev[name];
+      const existingName = (() => {
+        if (typeof existing === 'string') return existing;
+        return existing?.name;
+      })();
+      const nextValue: FileAliasValue = { viewport };
+      if (existingName) nextValue.name = existingName;
+      if (existing && typeof existing === 'object' && existing.viewport === viewport && existing.name === existingName) {
+        return prev;
+      }
+      return { ...prev, [name]: nextValue };
+    });
   }
 
   async function handleCopy(name: string): Promise<ProjectFile | null> {
@@ -1716,6 +1753,28 @@ export function FileWorkspace({
       },
     }));
     activatePending(name);
+  }
+
+  async function startNewArtboard() {
+    const artboardContent = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=1920, initial-scale=1.0">\n  <style>\n    * { margin: 0; padding: 0; box-sizing: border-box; }\n    body { width: 1920px; min-height: 1080px; background: #fff; }\n  </style>\n</head>\n<body>\n  <div style="width:1920px;height:1080px;border:1px solid #e5e7eb;"></div>\n</body>\n</html>\n';
+    // Find a unique base filename
+    const existingNames = new Set(files.map((f) => f.name));
+    let baseName = '画板';
+    let candidate = `${baseName}.html`;
+    if (uploadDir) candidate = `${uploadDir}/${candidate}`;
+    let n = 1;
+    while (existingNames.has(candidate)) {
+      n++;
+      const nextName = n === 1 ? `${baseName}.html` : `${baseName} ${n}.html`;
+      candidate = uploadDir ? `${uploadDir}/${nextName}` : nextName;
+    }
+    const file = await writeProjectTextFile(projectId, candidate, artboardContent);
+    if (file) {
+      await onRefreshFiles();
+      // Stay in file tree view + preview the new file
+      openDesignFilesPreview(file.name);
+      setAutoRenameFile(file.name);
+    }
   }
 
   // When the active tab is a sketch we don't have items for yet, load from
@@ -2601,6 +2660,10 @@ export function FileWorkspace({
                   )}
                   onEditModeChange={handleEditModeChange}
                   defaultEditMode
+                  fileViewportPreset={aliasViewportOf(fileAliases?.[designFilesPreviewFile.name])}
+                  onViewportPresetChange={(preset) => {
+                    void handleSetFileViewport(designFilesPreviewFile.name, preset);
+                  }}
                 />
               ) : null
             }
@@ -2652,6 +2715,15 @@ export function FileWorkspace({
               });
               startNewSketch();
             }}
+            onNewArtboard={() => {
+              trackFileManagerClick(analytics.track, {
+                page_name: 'file_manager',
+                area: 'file_manager',
+                element: 'new_artboard' as any,
+              });
+              void startNewArtboard();
+            }}
+            autoRenameFile={autoRenameFile}
             uploadError={uploadError}
             onClearUploadError={() => setUploadError(null)}
             onPluginFolderAgentAction={onPluginFolderAgentAction}
@@ -2744,6 +2816,10 @@ export function FileWorkspace({
             )}
             onEditModeChange={handleEditModeChange}
             defaultEditMode={activeFile.kind === 'html'}
+            fileViewportPreset={aliasViewportOf(fileAliases?.[activeFile.name])}
+            onViewportPresetChange={(preset) => {
+              void handleSetFileViewport(activeFile.name, preset);
+            }}
           />
         ) : (
           <div className="viewer-empty">

@@ -6,6 +6,7 @@ import {
   applyCanvasHeadAssets,
   extractCanvasHeadAssets,
   parseHtmlDocument,
+  readCanvasBodyStyleOverrides,
   resolveCanvasAssetUrl,
 } from '../../src/components/grapesjs/html-document';
 
@@ -65,5 +66,43 @@ describe('GrapesJS HTML document helpers', () => {
       'http://localhost:17573/api/projects/sf1/raw/css/admin-kit.css',
     );
     expect(doc.head.querySelector('style')?.textContent).toBe('body { margin: 0; }');
+  });
+
+  it('reads body appearance styles from the original document CSS', () => {
+    const parsed = parseHtmlDocument(`<!doctype html>
+<html>
+  <head>
+    <style>
+      .card { background-color: #fff; }
+      body {
+        font-family: Inter, sans-serif;
+        font-size: 16px;
+        color: #111827;
+        background-color: #f6f6f6;
+      }
+    </style>
+  </head>
+  <body><main>审批页</main></body>
+</html>`);
+
+    expect(readCanvasBodyStyleOverrides(parsed)).toEqual({
+      fontFamily: 'Inter, sans-serif',
+      fontSize: '16px',
+      color: '#111827',
+      backgroundColor: '#f6f6f6',
+    });
+  });
+
+  it('lets an inline body style override head body CSS', () => {
+    const parsed = parseHtmlDocument(`<!doctype html>
+<html>
+  <head><style>body { background-color: #f6f6f6; }</style></head>
+  <body style="background-color:#ffffff; font-size:18px"><main>审批页</main></body>
+</html>`);
+
+    expect(readCanvasBodyStyleOverrides(parsed)).toEqual({
+      backgroundColor: '#ffffff',
+      fontSize: '18px',
+    });
   });
 });

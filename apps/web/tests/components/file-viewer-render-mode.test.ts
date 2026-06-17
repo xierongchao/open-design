@@ -357,8 +357,14 @@ describe('shouldUseGrapesjs', () => {
     expect(shouldUseGrapesjs({ ...base, needsSandboxShim: true })).toBe(false);
   });
 
-  it('skips artifacts that steal focus on load', () => {
-    expect(shouldUseGrapesjs({ ...base, needsFocusGuard: true })).toBe(false);
+  it('routes focus-guard HTML through GrapesJS edit mode', () => {
+    expect(shouldUseGrapesjs({ ...base, needsFocusGuard: true })).toBe(true);
+    expect(shouldUseGrapesjs({ ...base, runtimeScript: true, needsFocusGuard: true })).toBe(true);
+  });
+
+  it('keeps focus-guard signals lower priority than hard GrapesJS disqualifiers', () => {
+    expect(shouldUseGrapesjs({ ...base, needsFocusGuard: true, isDeck: true })).toBe(false);
+    expect(shouldUseGrapesjs({ ...base, needsFocusGuard: true, needsSandboxShim: true })).toBe(false);
   });
 });
 

@@ -65,6 +65,9 @@ interface Props {
   onUploadFiles: (files: File[]) => void;
   onPaste: () => void;
   onNewSketch: () => void;
+  onNewArtboard?: () => void;
+  /** When set to a file name, auto-triggers inline rename for that file on next render. */
+  autoRenameFile?: string | null;
   // Reports the folder the panel is currently viewing so the parent can create
   // new files (upload / paste / new sketch / dropped files) under it instead
   // of the project root. Fires whenever the user navigates folders.
@@ -188,6 +191,8 @@ export function DesignFilesPanel({
   onUploadFiles,
   onPaste,
   onNewSketch,
+  onNewArtboard,
+  autoRenameFile = null,
   uploadError = null,
   onClearUploadError,
   onCurrentDirChange,
@@ -205,8 +210,11 @@ export function DesignFilesPanel({
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ name: string; top: number; left: number } | null>(null);
   const [folderMenuPos, setFolderMenuPos] = useState<{ path: string; top: number; left: number } | null>(null);
+  const [rootMenuOpen, setRootMenuOpen] = useState(false);
+  const [rootMenuPos, setRootMenuPos] = useState<{ top: number; left: number } | null>(null);
   const MENU_ESTIMATED_HEIGHT = 145;
   const FOLDER_MENU_ESTIMATED_HEIGHT = 128;
+  const ROOT_MENU_ESTIMATED_HEIGHT = 128;
   const MENU_SAFE_PADDING = 8;
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const resolvedActiveFile = activeFileName === undefined ? activeFile : activeFileName;
@@ -232,6 +240,10 @@ export function DesignFilesPanel({
   const [movePickerOpen, setMovePickerOpen] = useState(false);
   const [movePickerSelected, setMovePickerSelected] = useState<string | null>(null);
   const [movePickerExpanded, setMovePickerExpanded] = useState<Set<string>>(() => new Set());
+  const [imageExportOpen, setImageExportOpen] = useState(false);
+  const [imageExportFormat, setImageExportFormat] = useState<string>('png');
+  const [imageExportScale, setImageExportScale] = useState<number>(2);
+  const [batchDownloadOpen, setBatchDownloadOpen] = useState(false);
   const [currentDir, setCurrentDir] = useState<string>(() => navState?.currentDir ?? '');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [rootExpanded, setRootExpanded] = useState(true);
@@ -287,6 +299,22 @@ export function DesignFilesPanel({
     setSelected(new Set());
     setRenaming(null);
   }, [currentDir]);
+
+  // Auto-trigger rename when autoRenameFile is set (e.g. after creating an artboard).
+  // Uses a ref to ensure rename only triggers once — subsequent clicks on the
+  // file name will NOT re-enter rename mode.
+  const autoRenameConsumedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!autoRenameFile || !onSetFileAlias) return;
+    if (autoRenameConsumedRef.current === autoRenameFile) return;
+    const file = files.find((f) => f.name === autoRenameFile);
+    if (file) {
+      autoRenameConsumedRef.current = autoRenameFile;
+      setActiveFile(autoRenameFile);
+      onOpenFile(autoRenameFile); // show preview in the center area
+      setRenaming({ name: autoRenameFile, draft: displayNameForPath(autoRenameFile, fileAliases), saving: false });
+    }
+  }, [autoRenameFile, files, onSetFileAlias, fileAliases]);
 
   useEffect(() => {
     if (currentDir === '') return;
@@ -355,10 +383,13 @@ export function DesignFilesPanel({
   }, [activeFile, files]);
 
   useEffect(() => {
-    if (!menuPos && !folderMenuPos && !createMenuOpen) return;
+    if (!menuPos && !folderMenuPos && !createMenuOpen && !rootMenuOpen && !batchDownloadOpen) return;
     const close = () => {
       setMenuPos(null);
       setFolderMenuPos(null);
+      setRootMenuOpen(false);
+      setRootMenuPos(null);
+      setBatchDownloadOpen(false);
       setCreateMenuOpen(false);
       setMovePickerOpen(false);
     };
@@ -371,7 +402,7 @@ export function DesignFilesPanel({
       window.removeEventListener('mousedown', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [menuPos, folderMenuPos, createMenuOpen]);
+  }, [menuPos, folderMenuPos, createMenuOpen, rootMenuOpen, batchDownloadOpen]);
 
   useEffect(() => {
     if (currentDir !== '') setRootExpanded(true);
@@ -416,6 +447,29 @@ export function DesignFilesPanel({
     const left = Math.max(MENU_SAFE_PADDING, rect.right - 160);
 
     setMenuPos({ name, top, left });
+  }
+
+  function openRootMenu(el: HTMLElement) {
+    const rect = el.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const spaceBelow = viewportHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    let top: number;
+    if (spaceBelow >= ROOT_MENU_ESTIMATED_HEIGHT + MENU_SAFE_PADDING) {
+      top = rect.bottom + 4;
+    } else if (spaceAbove >= ROOT_MENU_ESTIMATED_HEIGHT + MENU_SAFE_PADDING) {
+      top = rect.top - ROOT_MENU_ESTIMATED_HEIGHT - 4;
+    } else {
+      top = Math.max(
+        MENU_SAFE_PADDING,
+        viewportHeight - ROOT_MENU_ESTIMATED_HEIGHT - MENU_SAFE_PADDING,
+      );
+    }
+    const left = Math.max(MENU_SAFE_PADDING, Math.min(rect.left + 18, window.innerWidth - 172));
+    setMenuPos(null);
+    setFolderMenuPos(null);
+    setRootMenuOpen(true);
+    setRootMenuPos({ top, left });
   }
 
   function openFolderMenuFor(path: string, el: HTMLElement) {
@@ -976,7 +1030,11 @@ export function DesignFilesPanel({
       </>,
       () => openFolderPath(''),
       undefined,
-      undefined,
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openRootMenu(ev.currentTarget);
+      },
       undefined,
       undefined,
     );
@@ -1319,10 +1377,38 @@ export function DesignFilesPanel({
     const fileList = [...selected];
     if (fileList.length === 0) return;
     try {
+      // Scan HTML files for referenced assets (CSS, JS, images, fonts)
+      // and include them in the archive so the downloaded ZIP is self-contained.
+      const allFiles = new Set(fileList);
+      for (const name of fileList) {
+        if (!/\.html?$/i.test(name)) continue;
+        try {
+          const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(name)}/raw`);
+          if (!resp.ok) continue;
+          const html = await resp.text();
+          const dir = name.lastIndexOf('/') >= 0 ? name.slice(0, name.lastIndexOf('/') + 1) : '';
+          // Extract href/src/url() references
+          const refs = new Set<string>();
+          const re = /(?:href|src)="([^"]+)"|url\(["']?([^"')]+)["']?\)/gi;
+          let m;
+          while ((m = re.exec(html)) !== null) {
+            const ref = (m[1] || m[2] || '').trim();
+            if (!ref || ref.startsWith('data:') || ref.startsWith('http://') || ref.startsWith('https://') || ref.startsWith('#') || ref.startsWith('mailto:')) continue;
+            // Resolve relative path
+            const resolved = dir ? `${dir}${ref}`.replace(/\/[^/]+\/\.\.\//g, '/') : ref;
+            if (resolved.includes('..')) continue; // skip paths that escape the project
+            refs.add(resolved);
+          }
+          for (const ref of refs) {
+            // Only include files that actually exist in the project
+            if (files.some((f) => f.name === ref)) allFiles.add(ref);
+          }
+        } catch { /* ignore parse errors */ }
+      }
       const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/archive/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: fileList }),
+        body: JSON.stringify({ files: [...allFiles] }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => null);
@@ -1349,6 +1435,100 @@ export function DesignFilesPanel({
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (err) {
       console.warn('[batchDownload] failed:', err);
+    }
+  }
+
+  async function handleBatchPdf() {
+    const fileList = [...selected];
+    if (fileList.length === 0) return;
+    try {
+      const htmlFiles = fileList.filter((f) => /\.html?$/i.test(f));
+      if (htmlFiles.length === 0) {
+        alert('No HTML files selected for PDF export');
+        return;
+      }
+      const { exportAsPdf } = await import('../runtime/exports');
+      const { projectRawUrl } = await import('../providers/registry');
+      for (const name of htmlFiles) {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(name)}/raw`);
+        if (!resp.ok) continue;
+        const html = await resp.text();
+        const baseName = name.replace(/\.[^.]+$/, '');
+        // Compute baseHref for asset resolution (same as DownloadButton)
+        const slashIdx = name.lastIndexOf('/');
+        const baseDir = slashIdx >= 0 ? name.slice(0, slashIdx + 1) : '';
+        const baseHref = projectRawUrl(projectId, baseDir);
+        // Delay between exports to avoid browser popup blocking
+        await exportAsPdf(html, baseName, baseHref ? { baseHref } : undefined);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    } catch (err) {
+      console.warn('[batchPdf] failed:', err);
+    }
+  }
+
+  async function handleBatchImages() {
+    const fileList = [...selected];
+    if (fileList.length === 0) return;
+    const htmlFiles = fileList.filter((f) => /\.html?$/i.test(f));
+    if (htmlFiles.length === 0) {
+      alert(t('designFiles.noHtmlForImage') || 'No HTML files selected for image export');
+      return;
+    }
+    setImageExportOpen(true);
+  }
+
+  async function executeImageExport() {
+    setImageExportOpen(false);
+    const fileList = [...selected];
+    const htmlFiles = fileList.filter((f) => /\.html?$/i.test(f));
+    if (htmlFiles.length === 0) return;
+    const format = imageExportFormat as 'png' | 'jpg' | 'webp' | 'svg';
+    const scale = imageExportScale;
+    try {
+      const { captureHtmlSnapshot, captureHtmlSvg, scaleAndEncodeSnapshot } = await import('../runtime/exports');
+      const { projectRawUrl } = await import('../providers/registry');
+      for (const name of htmlFiles) {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(name)}/raw`);
+        if (!resp.ok) continue;
+        const html = await resp.text();
+        const baseName = name.replace(/\.[^.]+$/, '');
+        const slashIdx = name.lastIndexOf('/');
+        const baseDir = slashIdx >= 0 ? name.slice(0, slashIdx + 1) : '';
+        const baseHref = projectRawUrl(projectId, baseDir) || undefined;
+        if (format === 'svg') {
+          const svgResult = await captureHtmlSvg(html, baseHref ? { baseHref } : undefined);
+          if (svgResult) {
+            const blob = new Blob([svgResult.svg], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${baseName}.svg`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+          }
+        } else {
+          const snapshot = await captureHtmlSnapshot(html, baseHref ? { baseHref } : undefined);
+          if (snapshot && snapshot.dataUrl) {
+            const fmt = format === 'jpg' ? 'jpeg' as const : format === 'webp' ? 'webp' as const : 'png' as const;
+            const blob = await scaleAndEncodeSnapshot(snapshot.dataUrl, { scale, format: fmt });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const ext = format === 'jpg' ? 'jpg' : format === 'webp' ? 'webp' : format;
+            a.download = `${baseName}@${scale}x.${ext}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+          }
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    } catch (err) {
+      console.warn('[batchImages] failed:', err);
     }
   }
 
@@ -1458,21 +1638,41 @@ export function DesignFilesPanel({
                 {t('designFiles.downloadSelected', { n: selected.size })}
               </span>
               <div className="df-batch-actions">
-                <button
-                  type="button"
-                  onClick={() => {
-                    trackFileManagerClick(analytics.track, {
-                      page_name: 'file_manager',
-                      area: 'file_manager',
-                      element: 'download_as_zip',
-                    });
-                    void handleBatchDownload();
-                  }}
-                  title={t('designFiles.downloadSelected', { n: selected.size })}
-                >
-                  <Icon name="download" size={13} />
-                  <span>{t('designFiles.download')}</span>
-                </button>
+                <div style={{ position: 'relative' }}>
+                  <button
+                    type="button"
+                    onClick={() => setBatchDownloadOpen((v) => !v)}
+                    title={t('designFiles.download')}
+                  >
+                    <Icon name="download" size={13} />
+                    <span>{t('designFiles.download')}</span>
+                  </button>
+                  {batchDownloadOpen ? (
+                    <div
+                      data-testid="design-batch-download-menu"
+                      className="df-row-popover"
+                      style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 200, minWidth: 160 }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button type="button"
+                        onClick={() => { setBatchDownloadOpen(false); void handleBatchDownload(); }}>
+                        <Icon name="download" size={14} />
+                        <span style={{ marginLeft: 6 }}>{t('designFiles.exportZip')}</span>
+                      </button>
+                      <button type="button"
+                        onClick={() => { setBatchDownloadOpen(false); void handleBatchPdf(); }}>
+                        <Icon name="file" size={14} />
+                        <span style={{ marginLeft: 6 }}>{t('designFiles.exportPdf')}</span>
+                      </button>
+                      <button type="button"
+                        onClick={() => { setBatchDownloadOpen(false); void handleBatchImages(); }}>
+                        <Icon name="image" size={14} />
+                        <span style={{ marginLeft: 6 }}>{t('designFiles.exportImages')}</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 {onMoveFiles ? (
                   <button
                     type="button"
@@ -1498,7 +1698,7 @@ export function DesignFilesPanel({
                 >
                   <span>{t('designFiles.delete')}</span>
                 </button>
-                <button type="button" className="df-batch-clear" onClick={clearSelection}>
+                <button type="button" className="df-batch-clear" onClick={() => { clearSelection(); setBatchMode(false); }}>
                   {t('designFiles.clearSelection')}
                 </button>
               </div>
@@ -1614,6 +1814,17 @@ export function DesignFilesPanel({
                       >
                         <Icon name="pencil" size={14} />
                         <span>{t('designFiles.newSketch')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          onNewArtboard?.();
+                        }}
+                      >
+                        <Icon name="plus-filled" size={14} />
+                        <span>{t('designFiles.newArtboard')}</span>
                       </button>
                       <button
                         type="button"
@@ -1841,6 +2052,18 @@ export function DesignFilesPanel({
               {t('common.rename')}
             </button>
           ) : null}
+          {onNewArtboard ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuPos(null);
+                onNewArtboard();
+              }}
+            >
+              {t('designFiles.newArtboard')}
+            </button>
+          ) : null}
           <a
             href={projectFileUrl(projectId, menuPos.name)}
             download={menuPos.name}
@@ -1892,6 +2115,18 @@ export function DesignFilesPanel({
               {t('designFiles.newSubfolder')}
             </button>
           ) : null}
+          {onNewArtboard ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setFolderMenuPos(null);
+                onNewArtboard();
+              }}
+            >
+              {t('designFiles.newArtboard')}
+            </button>
+          ) : null}
           {onRenameFolder ? (
             <button
               type="button"
@@ -1917,6 +2152,43 @@ export function DesignFilesPanel({
               }}
             >
               {t('designFiles.delete')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {rootMenuOpen && rootMenuPos ? (
+        <div
+          data-testid="design-root-menu-popover"
+          className="df-row-popover"
+          style={{ top: rootMenuPos.top, left: rootMenuPos.left }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {onCreateFolder ? (
+            <button
+              type="button"
+              data-testid="design-root-new-subfolder"
+              onClick={(e) => {
+                e.stopPropagation();
+                setRootMenuOpen(false);
+                setRootMenuPos(null);
+                void startCreateSubfolder('');
+              }}
+            >
+              {t('designFiles.newSubfolder')}
+            </button>
+          ) : null}
+          {onNewArtboard ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setRootMenuOpen(false);
+                setRootMenuPos(null);
+                onNewArtboard();
+              }}
+            >
+              {t('designFiles.newArtboard')}
             </button>
           ) : null}
         </div>
@@ -1976,6 +2248,87 @@ export function DesignFilesPanel({
                 }}
               >
                 {t('common.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {imageExportOpen ? (
+        <div
+          className="df-move-dialog-overlay"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); setImageExportOpen(false); }}
+        >
+          <div
+            className="df-move-dialog"
+            role="dialog"
+            aria-label={t('designFiles.imageFormatTitle')}
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 360 }}
+          >
+            <div className="df-move-dialog-header">
+              <span className="df-move-dialog-title">{t('designFiles.imageFormatTitle')}</span>
+              <button
+                type="button"
+                className="df-move-dialog-close"
+                onClick={() => setImageExportOpen(false)}
+                aria-label={t('common.close')}
+              >
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <div className="df-move-dialog-body" style={{ padding: '16px 20px' }}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13 }}>
+                  {t('designFiles.imageFormat')}
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['png', 'jpg', 'webp', 'svg'].map((fmt) => (
+                    <button
+                      key={fmt}
+                      type="button"
+                      className={imageExportFormat === fmt ? 'df-batch-toggle is-active' : 'df-batch-toggle'}
+                      style={{ padding: '4px 12px', fontSize: 12 }}
+                      onClick={() => setImageExportFormat(fmt)}
+                    >
+                      {fmt.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13 }}>
+                  {t('designFiles.imageScale')}
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {[1, 2, 3, 4].map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={imageExportScale === s ? 'df-batch-toggle is-active' : 'df-batch-toggle'}
+                      style={{ padding: '4px 12px', fontSize: 12 }}
+                      onClick={() => setImageExportScale(s)}
+                    >
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="df-move-dialog-footer">
+              <button
+                type="button"
+                className="df-move-dialog-btn-cancel"
+                onClick={() => setImageExportOpen(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="df-move-dialog-btn-confirm"
+                onClick={() => void executeImageExport()}
+              >
+                {t('designFiles.exportBtn')}
               </button>
             </div>
           </div>

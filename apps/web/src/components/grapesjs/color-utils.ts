@@ -80,7 +80,7 @@ export function rgbToHsv({ r, g, b }: RGB): HSV {
   }
   const s = max === 0 ? 0 : (d / max) * 100;
   const v = max * 100;
-  return { h: Math.round(h), s: Math.round(s), v: Math.round(v) };
+  return { h, s, v };
 }
 
 export function rgbToHsl({ r, g, b }: RGB): { h: number; s: number; l: number } {

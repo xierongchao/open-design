@@ -322,6 +322,25 @@ html.od-export-capture-active .od-toast {
 .viewer-toggle.on .switch::after,
 .viewer-toggle.active .switch::after { transform: translateX(12px); }
 .viewer-tabs { display: inline-flex; gap: 2px; }
+.viewer-tabs-switch {
+  gap: 0;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+}
+.viewer-tabs-switch .viewer-tab {
+  min-height: 24px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  transition:
+    background-color 160ms var(--ease-out),
+    color 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out);
+}
+.viewer-tabs-switch .viewer-tab.active {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
 .viewer-mode-menu {
   position: relative;
   display: inline-flex;

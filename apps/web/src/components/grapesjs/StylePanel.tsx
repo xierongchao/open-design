@@ -82,6 +82,7 @@ import {
   parseCssColor,
   parseCssToColorValue,
   colorValueToCss,
+  rgbaToCss,
   pickColorWithEyedropper,
   isEyeDropperSupported,
   type ColorValue,
@@ -309,6 +310,55 @@ function cssColorToHex(value: string | undefined): string {
   if (!match) return value.startsWith('#') ? value.slice(0, 7).toUpperCase() : '#000000';
   const hex = (part: string) => Number.parseInt(part, 10).toString(16).padStart(2, '0');
   return `#${hex(match[1] ?? '0')}${hex(match[2] ?? '0')}${hex(match[3] ?? '0')}`.toUpperCase();
+}
+
+function normalizeTypedCssColor(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^(none|transparent)$/i.test(trimmed)) return 'transparent';
+  if (/^#?[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(trimmed)) {
+    const withHash = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+    return rgbaToCss(parseCssColor(withHash));
+  }
+  if (/^(?:rgba?|hsla?)\(/i.test(trimmed)) {
+    return rgbaToCss(parseCssColor(trimmed));
+  }
+  return null;
+}
+
+function cssColorToFormatInput(value: ColorValue, format: 'hex' | 'rgb' | 'hsl'): string {
+  const rgb = hsvToRgb(value.hsv);
+  if (format === 'rgb') return `${rgb.r}, ${rgb.g}, ${rgb.b}`;
+  if (format === 'hsl') {
+    const hsl = rgbToHsl(rgb);
+    return `${hsl.h}, ${hsl.s}%, ${hsl.l}%`;
+  }
+  return rgbToHex(rgb);
+}
+
+function parseFormattedColorInput(raw: string, format: 'hex' | 'rgb' | 'hsl', alpha: number): ColorValue | null {
+  const trimmed = raw.trim();
+  let parsed: RGBA | null = null;
+  if (format === 'hex') {
+    if (/^#?[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(trimmed)) {
+      parsed = parseCssColor(trimmed.startsWith('#') ? trimmed : `#${trimmed}`);
+    }
+  } else if (format === 'rgb') {
+    const parts = trimmed.split(',').map((s) => Number.parseFloat(s.trim()));
+    if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+      parsed = { r: parts[0]!, g: parts[1]!, b: parts[2]!, a: 1 };
+    }
+  } else if (format === 'hsl') {
+    const parts = trimmed.split(',').map((s) => Number.parseFloat(s.trim().replace('%', '')));
+    if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+      parsed = { ...hslToRgb(parts[0]!, parts[1]!, parts[2]!), a: 1 };
+    }
+  }
+  if (!parsed) return null;
+  return {
+    hsv: rgbToHsv({ r: parsed.r, g: parsed.g, b: parsed.b }),
+    a: parsed.a < 1 ? parsed.a : alpha,
+  };
 }
 
 function isTransparent(value: string | undefined): boolean {
@@ -581,9 +631,11 @@ function ColorEditor({
   // Parse the incoming CSS color into HSV + alpha state.
   const [colorValue, setColorValue] = useState<ColorValue>(() => parseCssToColorValue(value));
   const [format, setFormat] = useState<'hex' | 'rgb' | 'hsl'>('hex');
+  const [formatDraft, setFormatDraft] = useState<string | null>(null);
 
   useEffect(() => {
     setColorValue(parseCssToColorValue(value));
+    setFormatDraft(null);
   }, [value]);
 
   const commit = useCallback(
@@ -682,27 +734,14 @@ function ColorEditor({
 
   // ── Format input value ──
   const inputValue = useMemo(() => {
-    if (format === 'rgb') return `${rgb.r}, ${rgb.g}, ${rgb.b}`;
-    if (format === 'hsl') {
-      const hsl = rgbToHsl(rgb);
-      return `${hsl.h}, ${hsl.s}%, ${hsl.l}%`;
-    }
-    return rgbToHex(rgb);
-  }, [format, rgb]);
+    return formatDraft ?? cssColorToFormatInput(colorValue, format);
+  }, [colorValue, format, formatDraft]);
 
-  const onFormatInput = useCallback(
+  const commitFormatDraft = useCallback(
     (raw: string) => {
-      let parsed: RGBA | null = null;
-      if (format === 'hex') {
-        if (/^#?[0-9a-f]{6}$/i.test(raw)) parsed = { ...hexToRgb(raw.startsWith('#') ? raw : `#${raw}`), a: 1 };
-      } else if (format === 'rgb') {
-        const parts = raw.split(',').map((s) => Number.parseFloat(s.trim()));
-        if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) parsed = { r: parts[0]!, g: parts[1]!, b: parts[2]!, a: 1 };
-      } else if (format === 'hsl') {
-        const parts = raw.split(',').map((s) => Number.parseFloat(s.trim().replace('%', '')));
-        if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) parsed = { ...hslToRgb(parts[0]!, parts[1]!, parts[2]!), a: 1 };
-      }
-      if (parsed) commit({ hsv: rgbToHsv({ r: parsed.r, g: parsed.g, b: parsed.b }), a });
+      const parsed = parseFormattedColorInput(raw, format, a);
+      if (parsed) commit(parsed);
+      setFormatDraft(null);
     },
     [format, commit, a],
   );
@@ -819,7 +858,10 @@ function ColorEditor({
         <select
           aria-label="颜色格式"
           value={format}
-          onChange={(e) => setFormat(e.target.value as 'hex' | 'rgb' | 'hsl')}
+          onChange={(e) => {
+            setFormat(e.target.value as 'hex' | 'rgb' | 'hsl');
+            setFormatDraft(null);
+          }}
         >
           <option value="hex">HEX</option>
           <option value="rgb">RGB</option>
@@ -828,7 +870,23 @@ function ColorEditor({
         <input
           aria-label={`${label}颜色值`}
           value={inputValue}
-          onChange={(e) => onFormatInput(e.target.value)}
+          onChange={(e) => {
+            const raw = e.target.value;
+            setFormatDraft(raw);
+            const parsed = parseFormattedColorInput(raw, format, a);
+            if (parsed) commit(parsed);
+          }}
+          onBlur={(e) => commitFormatDraft(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitFormatDraft(e.currentTarget.value);
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              setFormatDraft(null);
+              e.currentTarget.blur();
+            }
+          }}
         />
         <input
           aria-label={`${label}透明度`}
@@ -1461,6 +1519,75 @@ function AlignmentGrid({
   );
 }
 
+/**
+ * Editable colour text input that accepts hand-typed hex / rgb / rgba / hsl.
+ * Maintains a local text buffer so the user can type intermediate (invalid)
+ * states without each keystroke being rejected; only valid colour strings are
+ * pushed to `onChange`. On blur the buffer is normalised back to the canonical
+ * CSS form derived from the parsed value, so the field always lands on a
+ * legal colour. Reused across every colour field (fill / text / stroke /
+ * shadow / batch-replace) so manual typing works everywhere, not just in the
+ * floating ColorEditor.
+ */
+function ColorTextInput({
+  value,
+  onChange,
+  className,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (css: string) => void;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  // Display the canonical hex (without leading #) when the external value is
+  // the source of truth — i.e. on mount and after external updates the user
+  // didn't just type. A non-empty local buffer takes precedence so the user's
+  // in-progress typing isn't clobbered.
+  const displayHex = cssColorToHex(value).replace('#', '');
+  const [local, setLocal] = useState<string | null>(null);
+  useEffect(() => {
+    // Reset the local buffer whenever the external value changes from outside
+    // (picker drag, undo, selection switch) so the field resyncs.
+    setLocal(null);
+  }, [value]);
+
+  const fieldValue = local ?? displayHex;
+
+  return (
+    <input
+      type="text"
+      className={className ?? styles.hexInput}
+      aria-label={ariaLabel}
+      value={fieldValue}
+      spellCheck={false}
+      autoComplete="off"
+      onChange={(event) => {
+        const raw = event.target.value;
+        setLocal(raw);
+        const normalised = normalizeTypedCssColor(raw);
+        if (normalised) onChange(normalised);
+      }}
+      onBlur={() => {
+        if (local == null) return;
+        const normalised = normalizeTypedCssColor(local);
+        if (normalised) onChange(normalised);
+        setLocal(null);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          (event.currentTarget as HTMLInputElement).blur();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          setLocal(null);
+          (event.currentTarget as HTMLInputElement).blur();
+        }
+      }}
+    />
+  );
+}
+
 function ColorProperty({
   label,
   value,
@@ -1490,12 +1617,10 @@ function ColorProperty({
           style={{ '--swatch-color': hex } as CSSProperties}
           onClick={(event) => onOpenPicker?.(event.currentTarget)}
         />
-        <input
-          type="text"
-          className={styles.hexInput}
-          aria-label={`${label}颜色值`}
-          value={hex.replace('#', '')}
-          onChange={(event) => onChange(`#${event.target.value.replace(/^#/, '')}`)}
+        <ColorTextInput
+          value={value}
+          onChange={onChange}
+          ariaLabel={`${label}颜色值`}
         />
         <span className={styles.colorOpacity}>{Math.round(parseCssColor(value).a * 100)}</span>
         <span className={styles.percent}>%</span>
@@ -1517,12 +1642,14 @@ function SelectedColor({
   selected,
   onToggle,
   onOpenPicker,
+  onColorChange,
 }: {
   color: string;
   batchMode: boolean;
   selected: boolean;
   onToggle: () => void;
   onOpenPicker: (anchor: HTMLButtonElement) => void;
+  onColorChange?: (value: string) => void;
 }) {
   return (
     <div className={`${styles.selectedColor}${batchMode ? ` ${styles.selectedColorBatch}` : ''}`}>
@@ -1537,7 +1664,12 @@ function SelectedColor({
         title={`编辑颜色 ${cssColorToHex(color)}`}
         onClick={(event) => onOpenPicker(event.currentTarget)}
       />
-      <span className={styles.selectedHex}>{cssColorToHex(color).replace('#', '')}</span>
+      <ColorTextInput
+        value={color}
+        onChange={(value) => onColorChange?.(value)}
+        className={styles.selectedHex}
+        ariaLabel={`颜色值 ${cssColorToHex(color)}`}
+      />
       <span className={styles.selectedOpacity}>{Math.round((parseCssColor(color).a) * 100)}</span>
       <span className={styles.percent}>%</span>
     </div>
@@ -1599,26 +1731,46 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     inset: false,
   });
   const previousFill = useRef('#FFFFFF');
+  const previousCanvasBackground = useRef('#FFFFFF');
   const previousStroke = useRef('#000000');
   const previousShadow = useRef('0 4px 12px rgba(0, 0, 0, 0.18)');
 
   const refreshCanvas = useCallback(() => {
-    const stylesSnapshot = editorRef.current?.getCanvasStyles() ?? {};
+    const state = editorRef.current?.getCanvasState?.();
+    const stylesSnapshot = state?.styles ?? editorRef.current?.getCanvasStyles() ?? {};
     setCanvasStyles(stylesSnapshot);
-    try {
-      const frame = editorRef.current?.getEditor()?.Canvas?.getFrameEl?.();
-      if (!frame) return;
-      const width = Number.parseInt(frame.style.width || '0', 10) || frame.offsetWidth || 0;
-      const height = Number.parseInt(frame.style.height || '0', 10) || frame.offsetHeight || 0;
-      setCanvasSize({ width, height });
-    } catch {
-      // The canvas can be between mounts while the edit mode changes.
+    const size = state?.size;
+    if (size) {
+      setCanvasSize(size);
+      return size.width > 0 && size.height > 0;
     }
+    return false;
   }, [editorRef]);
 
   useEffect(() => {
-    if (!hasSelection) refreshCanvas();
+    if (hasSelection) return undefined;
+    let cancelled = false;
+    let timeout: number | null = null;
+    let attempts = 0;
+    const tick = () => {
+      if (cancelled) return;
+      const ready = refreshCanvas();
+      attempts += 1;
+      if (!ready && attempts < 100) {
+        timeout = window.setTimeout(tick, 50);
+      }
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timeout != null) window.clearTimeout(timeout);
+    };
   }, [hasSelection, refreshCanvas]);
+
+  useEffect(() => {
+    const bg = canvasStyles.backgroundColor;
+    if (bg && !isTransparent(bg)) previousCanvasBackground.current = cssColorToHex(bg);
+  }, [canvasStyles.backgroundColor]);
 
   const apply = useCallback(
     (nextStyles: StyleMap) => {
@@ -1834,6 +1986,10 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   ) : null;
 
   if (!hasSelection) {
+    const canvasBackgroundVisible = !isTransparent(canvasStyles.backgroundColor);
+    const canvasBackgroundValue = canvasBackgroundVisible
+      ? (canvasStyles.backgroundColor ?? previousCanvasBackground.current)
+      : previousCanvasBackground.current;
     return (
       <div className={styles.root} data-testid="grapesjs-style-panel">
         <div className={styles.elementHeader}>
@@ -1860,16 +2016,16 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             />
           </div>
         </PropertySection>
-        <PropertySection title="外观">
+        <PropertySection title="HTML 外观">
           <ColorProperty
-            label="背景"
-            value={canvasStyles.backgroundColor ?? '#FFFFFF'}
-            visible={!isTransparent(canvasStyles.backgroundColor)}
+            label="HTML 背景"
+            value={canvasBackgroundValue}
+            visible={canvasBackgroundVisible}
             onChange={(value) => apply({ backgroundColor: value })}
-            onVisibleChange={(visible) => apply({ backgroundColor: visible ? '#FFFFFF' : 'transparent' })}
+            onVisibleChange={(visible) => apply({ backgroundColor: visible ? previousCanvasBackground.current : 'transparent' })}
             onOpenPicker={(anchor) => openColorEditor(
-              '背景',
-              canvasStyles.backgroundColor ?? '#FFFFFF',
+              'HTML 背景',
+              canvasBackgroundValue,
               (value) => apply({ backgroundColor: value }),
               anchor,
             )}
@@ -2718,6 +2874,16 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                     anchor,
                   );
                 }}
+                onColorChange={(value) => {
+                  // Manual hex/rgba typing: replace this colour throughout the
+                  // selection, mirroring the picker commit path above.
+                  const target = replaceTargetRef.current ?? color;
+                  editorRef.current?.replaceColors([target], value);
+                  replaceTargetRef.current = value;
+                  window.setTimeout(() => {
+                    setSelectedColors(editorRef.current?.collectColorsFromSelection() ?? []);
+                  }, 0);
+                }}
               />
             ))}
             {batchMode ? (
@@ -2886,7 +3052,11 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                     event.currentTarget,
                   )}
                 />
-                <code>{shadowDraft.color.replace('#', '')}</code>
+                <ColorTextInput
+                  value={shadowDraft.color}
+                  onChange={(value) => updateShadowDraft({ color: value })}
+                  ariaLabel="投影颜色值"
+                />
                 <input
                   aria-label="投影透明度"
                   value={shadowDraft.opacity.replace('%', '')}

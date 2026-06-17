@@ -835,7 +835,24 @@ function sanitizeAliasMap(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const result = {};
   for (const [k, v] of Object.entries(value)) {
-    if (typeof k === 'string' && typeof v === 'string') result[k] = v;
+    if (typeof k !== 'string') continue;
+    // Legacy shape: value is a bare string (display name only). Preserve as-is.
+    if (typeof v === 'string') { result[k] = v; continue; }
+    // New shape: value is an object { name?, viewport? }. Keep only the known
+    // fields with valid types so a malformed payload can't smuggle arbitrary
+    // data into the aliases.json file.
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const obj = {};
+      const name = v.name;
+      if (typeof name === 'string') obj.name = name;
+      const viewport = v.viewport;
+      if (viewport === 'desktop' || viewport === 'tablet' || viewport === 'mobile') {
+        obj.viewport = viewport;
+      }
+      // Only store the entry if it carries at least one recognised field;
+      // an empty object would just bloat the file.
+      if (Object.keys(obj).length > 0) result[k] = obj;
+    }
   }
   return result;
 }

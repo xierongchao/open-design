@@ -175,6 +175,10 @@ export function parseForceInline(search: string | URLSearchParams | null | undef
  * renderer). External `<script src=>` no longer trips this guard because
  * most agent-emitted artifacts ship a boot script, and routing them all
  * to srcDoc defeats the GrapesJS-default goal.
+ *
+ * This signal only controls the legacy iframe URL-load path. It must not
+ * disqualify GrapesJS edit mode: GrapesJS does not execute the artifact JS,
+ * and common click-time helpers such as copy fallbacks call `el.focus()`.
  */
 export function htmlNeedsFocusGuard(source: string): boolean {
   // Only literal inline `.focus(` calls remain. `autofocus` attributes and
@@ -225,7 +229,7 @@ export interface GrapesjsDecision {
   forceInline: boolean;
   /** Babel / Web Storage patterns need the srcDoc sandbox shim. */
   needsSandboxShim: boolean;
-  /** Source calls `.focus()` / has external scripts — needs srcDoc focus guard. */
+  /** Source calls `.focus()` and needs srcDoc focus guard on the legacy URL-load path. */
   needsFocusGuard: boolean;
 }
 
@@ -243,8 +247,9 @@ export interface GrapesjsDecision {
  * artifact keeps its `<script>` and runs normally in the real preview /
  * deployed page. Only load-bearing disqualifiers that GrapesJS cannot
  * represent (deck framework, multi-file modules, Babel sandbox shim,
- * focus guard, forceInline, React-component renderer) keep the iframe
- * path.
+ * forceInline, React-component renderer) keep the iframe path. Focus-guard
+ * signals are handled by shouldUrlLoadHtmlPreview for legacy iframes, but
+ * do not block GrapesJS edit mode because GrapesJS does not run artifact JS.
  */
 export function shouldUseGrapesjs(d: GrapesjsDecision): boolean {
   if (d.mode !== 'preview') return false;
@@ -253,7 +258,6 @@ export function shouldUseGrapesjs(d: GrapesjsDecision): boolean {
   if (d.isReactComponent) return false;
   if (d.forceInline) return false;
   if (d.needsSandboxShim) return false;
-  if (d.needsFocusGuard) return false;
   return true;
 }
 

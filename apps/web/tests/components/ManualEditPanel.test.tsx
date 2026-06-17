@@ -78,6 +78,46 @@ describe('ManualEditPanel', () => {
     expect(host.textContent).not.toContain('Advanced');
   });
 
+  it('commits a manually typed fill color after blur', () => {
+    const onStyleChange = vi.fn<OnStyleChange>();
+    renderPanel({
+      onStyleChange,
+      styles: { ...emptyManualEditStyles(), backgroundColor: '#000000' },
+    });
+    const colorInput = host.querySelector('.cc-color-compact input:not([type="color"])') as HTMLInputElement | null;
+    if (!colorInput) throw new Error('Color input not found');
+
+    act(() => {
+      colorInput.value = 'f6f6f6';
+      Simulate.change(colorInput);
+      Simulate.blur(colorInput);
+    });
+
+    expect(onStyleChange).toHaveBeenCalledWith(
+      'hero-title',
+      { backgroundColor: '#f6f6f6' },
+      'Style: Hero Title',
+    );
+  });
+
+  it('does not commit short hex while the user is still typing a full fill color', () => {
+    const onStyleChange = vi.fn<OnStyleChange>();
+    renderPanel({
+      onStyleChange,
+      styles: { ...emptyManualEditStyles(), backgroundColor: '#000000' },
+    });
+    const colorInput = host.querySelector('.cc-color-compact input:not([type="color"])') as HTMLInputElement | null;
+    if (!colorInput) throw new Error('Color input not found');
+
+    act(() => {
+      colorInput.value = 'f6f';
+      Simulate.change(colorInput);
+      Simulate.blur(colorInput);
+    });
+
+    expect(onStyleChange).not.toHaveBeenCalled();
+  });
+
   it('shows a readable selected element name in the titlebar', () => {
     renderPanel({
       selectedTarget: {

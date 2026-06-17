@@ -228,6 +228,7 @@ import {
   setMarkdownCodeBlockCopiedState,
   setPreviewViewportCached,
   readCanvasSizeFromSource,
+  readViewportPresetFromSource,
   writeCanvasSizeToSource,
   setSlideStateCached,
   shareUrlForDeployment,
@@ -242,6 +243,56 @@ function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
   if (viewport === 'mobile') return 'smartphone-line';
   return 'computer-line';
+}
+
+function htmlEditModeLabel(previewLabel: string): string {
+  if (previewLabel === '预览' || previewLabel === '預覽') return '编辑模式';
+  if (previewLabel === 'Preview') return 'Edit mode';
+  return previewLabel;
+}
+
+type ViewportSizeMap = Partial<Record<PreviewViewportId, { width: number; height: number }>>;
+
+function presetViewportSize(viewport: PreviewViewportId): { width: number; height: number } {
+  const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
+  if (preset?.width && preset.height) return { width: preset.width, height: preset.height };
+  return { width: 1920, height: 1080 };
+}
+
+function sanitizeSavedViewportSize(
+  viewport: PreviewViewportId,
+  size: { width: number; height: number },
+): { width: number; height: number } {
+  const preset = presetViewportSize(viewport);
+  if (viewport === 'mobile' && (size.width < 240 || size.width > 600)) {
+    return { ...size, width: preset.width };
+  }
+  if (viewport === 'tablet' && (size.width < 600 || size.width > 1200)) {
+    return { ...size, width: preset.width };
+  }
+  return size;
+}
+
+function canvasViewportStateFromSource(
+  source: string | null | undefined,
+  fallbackViewport: PreviewViewportId = 'desktop',
+): { viewport: PreviewViewportId | null; sizes: ViewportSizeMap } {
+  if (!source) return { viewport: null, sizes: {} };
+  const size = readCanvasSizeFromSource(source);
+  if (!size) return { viewport: null, sizes: {} };
+  const viewport = readViewportPresetFromSource(source) ?? fallbackViewport;
+  return { viewport, sizes: { [viewport]: sanitizeSavedViewportSize(viewport, size) } };
+}
+
+function resolvePreviewViewportPreset(
+  source: string | null | undefined,
+  stateKey: string,
+  aliasViewport?: PreviewViewportId,
+): PreviewViewportId {
+  return htmlPreviewViewportState.get(stateKey)
+    ?? aliasViewport
+    ?? readViewportPresetFromSource(source ?? '')
+    ?? 'desktop';
 }
 
 const PREVIEW_IFRAME_SANDBOX = 'allow-scripts allow-downloads';
@@ -468,6 +519,8 @@ interface Props {
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   onEditModeChange?: (active: boolean) => void;
   defaultEditMode?: boolean;
+  fileViewportPreset?: 'desktop' | 'tablet' | 'mobile';
+  onViewportPresetChange?: (preset: 'desktop' | 'tablet' | 'mobile') => void;
 }
 
 export function FileViewer({
@@ -495,6 +548,8 @@ export function FileViewer({
   slideNavRequest,
   onEditModeChange,
   defaultEditMode = false,
+  fileViewportPreset,
+  onViewportPresetChange,
 }: Props) {
   const rendererMatch = artifactRendererRegistry.resolve({
     file,
@@ -542,6 +597,8 @@ export function FileViewer({
         slideNavRequest={slideNavRequest}
         onEditModeChange={onEditModeChange}
         defaultEditMode={defaultEditMode}
+        fileViewportPreset={fileViewportPreset}
+        onViewportPresetChange={onViewportPresetChange}
       />
     );
   }
@@ -3967,6 +4024,8 @@ function HtmlViewer({
   slideNavRequest,
   onEditModeChange,
   defaultEditMode = false,
+  fileViewportPreset,
+  onViewportPresetChange,
 }: {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -3991,6 +4050,8 @@ function HtmlViewer({
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   onEditModeChange?: (active: boolean) => void;
   defaultEditMode?: boolean;
+  fileViewportPreset?: 'desktop' | 'tablet' | 'mobile';
+  onViewportPresetChange?: (preset: 'desktop' | 'tablet' | 'mobile') => void;
 }) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
@@ -4135,7 +4196,7 @@ function HtmlViewer({
   const zoomRef = useRef(100);
   const fileViewportKey = previewViewportStateKey(projectId, file);
   const [previewViewport, setPreviewViewportState] = useState<PreviewViewportId>(
-    () => htmlPreviewViewportState.get(fileViewportKey) ?? 'desktop',
+    () => resolvePreviewViewportPreset(liveHtml, fileViewportKey, fileViewportPreset),
   );
   const setPreviewViewport = useCallback((viewport: PreviewViewportId) => {
     setPreviewViewportCached(fileViewportKey, viewport);
@@ -4159,8 +4220,17 @@ function HtmlViewer({
   const [templateName, setTemplateName] = useState('');
 
   useEffect(() => {
-    setPreviewViewportState(htmlPreviewViewportState.get(fileViewportKey) ?? 'desktop');
-  }, [fileViewportKey]);
+    const cached = htmlPreviewViewportState.get(fileViewportKey);
+    if (cached) {
+      setPreviewViewportState(cached);
+      return;
+    }
+    if (fileViewportPreset) {
+      setPreviewViewportState(fileViewportPreset);
+      return;
+    }
+    setPreviewViewportState(readViewportPresetFromSource(liveHtml ?? '') ?? 'desktop');
+  }, [fileViewportKey, fileViewportPreset, liveHtml]);
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateSaveError, setTemplateSaveError] = useState<string | null>(null);
   const [deployment, setDeployment] = useState<WebDeploymentInfo | null>(null);
@@ -4305,12 +4375,17 @@ function HtmlViewer({
       window.removeEventListener('blur', onBlur);
     };
   }, [manualEditMode]);
-  // Custom viewport dimensions set through the PageInspector canvas size
-  // controls. When set, these override the preset values (e.g. 1920x1080
-  // for desktop) in the preview-viewport CSS variables and auto-fit math.
-  const [customViewportSize, setCustomViewportSize] = useState<{ width: number; height: number } | null>(
-    () => readCanvasSizeFromSource(liveHtml ?? ''),
+  // Custom viewport dimensions set through the page/canvas size controls.
+  // They are scoped by viewport preset so a mobile custom height (e.g. 1344)
+  // doesn't accidentally become the desktop canvas size on the next switch.
+  const [customViewportSizes, setCustomViewportSizes] = useState<ViewportSizeMap>(
+    () => canvasViewportStateFromSource(
+      liveHtml ?? '',
+      readViewportPresetFromSource(liveHtml ?? '') ?? fileViewportPreset ?? 'desktop',
+    ).sizes,
   );
+  const activeCustomViewportSize = customViewportSizes[previewViewport] ?? null;
+  const activeViewportSize = activeCustomViewportSize ?? presetViewportSize(previewViewport);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const urlPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const srcDocPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -4833,7 +4908,11 @@ function HtmlViewer({
       sourceFileKeyRef.current = sourceFileKey;
       setSource(liveHtml);
       sourceRef.current = liveHtml;
-      setCustomViewportSize(readCanvasSizeFromSource(liveHtml));
+      const savedPreset = readViewportPresetFromSource(liveHtml);
+      const resolvedViewport = resolvePreviewViewportPreset(liveHtml, fileViewportKey, fileViewportPreset);
+      const canvasState = canvasViewportStateFromSource(liveHtml, savedPreset ?? resolvedViewport);
+      setCustomViewportSizes(canvasState.sizes);
+      setPreviewViewportState(resolvedViewport);
       return;
     }
     const fileChanged = sourceFileKeyRef.current !== sourceFileKey;
@@ -4841,7 +4920,7 @@ function HtmlViewer({
     if (fileChanged) {
       setSource(null);
       sourceRef.current = null;
-      setCustomViewportSize(null);
+      setCustomViewportSizes({});
     }
     let cancelled = false;
     // Cache-bust the fetch on every mtime / reload / files-refresh bump.
@@ -4861,13 +4940,16 @@ function HtmlViewer({
       if (text == null) return;
       setSource(text);
       sourceRef.current = text;
-      const canvasSize = readCanvasSizeFromSource(text);
-      setCustomViewportSize(canvasSize);
+      const savedPreset = readViewportPresetFromSource(text);
+      const resolvedViewport = resolvePreviewViewportPreset(text, fileViewportKey, fileViewportPreset);
+      const canvasState = canvasViewportStateFromSource(text, savedPreset ?? resolvedViewport);
+      setCustomViewportSizes(canvasState.sizes);
+      setPreviewViewportState(resolvedViewport);
     });
     return () => {
       cancelled = true;
     };
-  }, [projectId, file.name, file.mtime, liveHtml, reloadKey, filesRefreshKey]);
+  }, [projectId, file.name, file.mtime, liveHtml, reloadKey, filesRefreshKey, fileViewportKey, fileViewportPreset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4888,15 +4970,7 @@ function HtmlViewer({
     };
   }, [projectId, file.name, deployProviderId]);
 
-  // Detect deck-shaped HTML even when the project's skill didn't declare
-  // `mode: deck`. Freeform projects often produce a deck because the user
-  // asked for one in plain prose; without this, prev/next and Present
-  // never surface and the deck becomes a static, unnavigable preview.
-  const looksLikeDeck = useMemo(() => {
-    if (!source) return false;
-    return /class\s*=\s*['"][^'"]*\bslide\b/i.test(source);
-  }, [source]);
-  const effectiveDeck = isDeck || looksLikeDeck;
+  const effectiveDeck = isDeck;
   const livePreviewSource = inlinedSource ?? source;
   // Freeze the iframe input on the snapshot taken at Edit-mode entry. Any
   // debounced source rewrites during edit stay
@@ -5047,16 +5121,19 @@ function HtmlViewer({
   // Drive the GrapesJS canvas frame when the viewport switch changes (desktop/
   // tablet/mobile). On the non-GrapesJS path the legacy previewViewportStyle
   // handles the frame; on the GrapesJS path we set the editor device size.
+  // Custom viewport sizes (set via PageInspector) override preset dimensions.
   useEffect(() => {
     if (!useGrapesjs || mode !== 'preview') return;
-    const sizes: Record<PreviewViewportId, [number, number]> = {
-      desktop: [1920, 1080],
-      tablet: [820, 1180],
-      mobile: [390, 844],
-    };
-    const [w, h] = sizes[previewViewport] ?? sizes.desktop;
-    grapesjsEditorRef.current?.setViewport(w, h);
-  }, [previewViewport, mode, useGrapesjs]);
+    grapesjsEditorRef.current?.setViewport(activeViewportSize.width, activeViewportSize.height);
+  }, [previewViewport, activeViewportSize.width, activeViewportSize.height, mode, useGrapesjs]);
+
+  // Remember the selected viewport preset through the file alias layer. The
+  // HTML <meta name="od-canvas"> is reserved for user-edited canvas sizes;
+  // changing a preset should not rewrite source or force GrapesJS to reload.
+  useEffect(() => {
+    if (mode !== 'preview') return;
+    onViewportPresetChange?.(previewViewport);
+  }, [previewViewport, mode, onViewportPresetChange]);
   // PR2: build a PreviewCommentSnapshot from a GrapesJS Component so the
   // comment overlay can render markers / hover cards without the iframe
   // postMessage bridge. Position is pixel-perfect in the canvas iframe
@@ -5160,6 +5237,7 @@ function HtmlViewer({
   // Canvas zoom from GrapesJS (0-100), drives the toolbar zoom % display on
   // the GrapesJS preview path. The non-GrapesJS path uses the legacy `zoom` state.
   const [grapesjsCanvasZoom, setGrapesjsCanvasZoom] = useState(100);
+  const displayedGrapesjsCanvasZoom = Number.isFinite(grapesjsCanvasZoom) ? grapesjsCanvasZoom : 100;
   const grapesjsLiveSource = previewSource ?? source ?? '';
   // Inject <base href> into the interactive-mode iframe srcDoc so relative CSS
   // / asset links resolve against the project root (same as the GrapesJS
@@ -6292,12 +6370,8 @@ function HtmlViewer({
   function manualEditViewportContentSize() {
     const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === previewViewport);
     return {
-      width: previewViewport === 'desktop'
-        ? customViewportSize?.width ?? preset?.width ?? 1920
-        : preset?.width ?? 390,
-      height: previewViewport === 'desktop'
-        ? customViewportSize?.height ?? preset?.height ?? 1080
-        : preset?.height ?? 844,
+      width: activeCustomViewportSize?.width ?? preset?.width ?? 1920,
+      height: activeCustomViewportSize?.height ?? preset?.height ?? 1080,
     };
   }
 
@@ -6314,7 +6388,7 @@ function HtmlViewer({
       nextScale,
       nextTransform,
       previewBodySize,
-      previewViewport === 'desktop' ? customViewportSize ?? undefined : undefined,
+      activeCustomViewportSize ?? undefined,
       interacting,
     );
     shell.style.removeProperty('zoom');
@@ -6333,8 +6407,8 @@ function HtmlViewer({
     previewViewport,
     previewBodySize?.width,
     previewBodySize?.height,
-    customViewportSize?.width,
-    customViewportSize?.height,
+    activeCustomViewportSize?.width,
+    activeCustomViewportSize?.height,
     zoom,
     manualEditViewportTransform.x,
     manualEditViewportTransform.y,
@@ -7615,16 +7689,17 @@ function HtmlViewer({
     return next;
   }
 
-  function selectMode(nextMode: 'preview' | 'source') {
+  function selectMode(nextMode: 'preview' | 'source'): boolean {
     if (nextMode === 'source') setDrawOverlayOpen(false);
     if (nextMode === 'source') syncGrapesjsDocumentToSource();
     if (nextMode !== mode && mode === 'source' && codeDirty) {
       const proceed = window.confirm(t('fileViewer.codeUnsavedConfirm'));
-      if (!proceed) return;
+      if (!proceed) return false;
       setCodeDirty(false);
       codeSavedSourceRef.current = source;
     }
     setMode(nextMode);
+    return true;
   }
 
   async function handleCodeSave() {
@@ -8446,6 +8521,8 @@ function HtmlViewer({
   };
   const boardAvailable = mode === 'preview' && source !== null;
   const showPreviewToolbarControls = mode === 'preview';
+  const useGrapesjsCanvasZoom = useGrapesjs && mode === 'preview' && !grapesjsViewMode;
+  const displayedCanvasZoom = useGrapesjsCanvasZoom ? displayedGrapesjsCanvasZoom : zoom;
   const commentPreviewLayoutClass = [
     'comment-preview-layer',
     localCommentSideDockActive ? 'comment-preview-layer-with-side-dock' : '',
@@ -8460,14 +8537,20 @@ function HtmlViewer({
   const manualEditPanelActive =
     mode === 'preview' && manualEditMode && (!!selectedManualEditTarget || manualEditPageCardActive);
   const activeViewportSizeOverride =
-    previewViewport === 'desktop' ? customViewportSize ?? undefined : undefined;
+    activeCustomViewportSize ?? undefined;
+  const activateGrapesjsEditMode = () => {
+    fireArtifactToolbarClick('preview');
+    if (selectMode('preview')) setGrapesjsViewMode(false);
+  };
+  const activateGrapesjsInteractiveMode = () => {
+    fireArtifactToolbarClick('preview');
+    if (selectMode('preview')) setGrapesjsViewMode(true);
+  };
   // The effective viewport dimensions shown in the PageInspector canvas
   // size inputs. Derived from the current preset unless the user has set
   // a custom size, and initialized from the preset on first entry.
   const currentViewportPreset = PREVIEW_VIEWPORT_PRESETS.find((p) => p.id === previewViewport);
-  const manualEditViewportSize = (
-    previewViewport === 'desktop' ? customViewportSize : null
-  ) ?? (
+  const manualEditViewportSize = activeCustomViewportSize ?? (
     currentViewportPreset?.width && currentViewportPreset.height
       ? { width: currentViewportPreset.width, height: currentViewportPreset.height }
       : { width: 1920, height: 1080 }
@@ -8486,11 +8569,14 @@ function HtmlViewer({
       pageStylesEnabled={manualEditPageStylesEnabled}
       viewportSize={manualEditViewportSize}
       onViewportSizeChange={(size) => {
-        setCustomViewportSize(size);
+        setCustomViewportSizes((current) => ({
+          ...current,
+          ...(size ? { [previewViewport]: size } : {}),
+        }));
         if (!size) return;
         const current = sourceRef.current;
         if (current == null) return;
-        const updated = writeCanvasSizeToSource(current, size);
+        const updated = writeCanvasSizeToSource(current, size, previewViewport);
         if (updated !== current) {
           manualEditExpectedSourceRef.current = updated;
           manualEditExternalSourceRef.current = null;
@@ -8751,41 +8837,63 @@ function HtmlViewer({
           >
             <Icon name="reload" size={14} />
           </button>
-          <div className="viewer-tabs" role="tablist" aria-label="View mode">
-            {([
-              ['preview', t('fileViewer.preview')],
-              ['source', t('fileViewer.source')],
-            ] as const).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                className={`viewer-tab ${mode === id ? 'active' : ''}`}
-                aria-selected={mode === id}
-                onClick={() => {
-                  fireArtifactToolbarClick(id);
-                  selectMode(id);
-                }}
-              >
-                {label}{id === 'source' && codeDirty ? <span className="viewer-tab-dirty" /> : null}
-              </button>
-            ))}
+          <div className={`viewer-tabs${useGrapesjs ? ' viewer-tabs-switch' : ''}`} role="tablist" aria-label="View mode">
+            {useGrapesjs ? (
+              <>
+                <button
+                  type="button"
+                  role="tab"
+                  className={`viewer-tab ${mode === 'preview' && !grapesjsViewMode ? 'active' : ''}`}
+                  aria-selected={mode === 'preview' && !grapesjsViewMode}
+                  onClick={activateGrapesjsEditMode}
+                >
+                  {htmlEditModeLabel(t('fileViewer.preview'))}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  className={`viewer-tab ${mode === 'preview' && grapesjsViewMode ? 'active' : ''}`}
+                  aria-selected={mode === 'preview' && grapesjsViewMode}
+                  onClick={activateGrapesjsInteractiveMode}
+                  data-testid="grapesjs-interactive-toggle"
+                  title={t('fileViewer.interactiveMode')}
+                >
+                  {t('fileViewer.interactiveMode')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  className={`viewer-tab ${mode === 'source' ? 'active' : ''}`}
+                  aria-selected={mode === 'source'}
+                  onClick={() => {
+                    fireArtifactToolbarClick('source');
+                    selectMode('source');
+                  }}
+                >
+                  {t('fileViewer.source')}{codeDirty ? <span className="viewer-tab-dirty" /> : null}
+                </button>
+              </>
+            ) : (
+              ([
+                ['preview', t('fileViewer.preview')],
+                ['source', t('fileViewer.source')],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  className={`viewer-tab ${mode === id ? 'active' : ''}`}
+                  aria-selected={mode === id}
+                  onClick={() => {
+                    fireArtifactToolbarClick(id);
+                    selectMode(id);
+                  }}
+                >
+                  {label}{id === 'source' && codeDirty ? <span className="viewer-tab-dirty" /> : null}
+                </button>
+              ))
+            )}
           </div>
-          {useGrapesjs && mode === 'preview' ? (
-            <>
-              <span className="viewer-divider" aria-hidden />
-              <button
-                type="button"
-                className={`viewer-tab ${grapesjsViewMode ? 'active' : ''}`}
-                onClick={() => setGrapesjsViewMode((v) => !v)}
-                aria-pressed={grapesjsViewMode}
-                data-testid="grapesjs-interactive-toggle"
-                title={t('fileViewer.interactiveMode')}
-              >
-                {t('fileViewer.interactiveMode')}
-              </button>
-            </>
-          ) : null}
           {showPreviewToolbarControls ? (
             <>
               <span className="viewer-divider" aria-hidden />
@@ -8926,7 +9034,7 @@ function HtmlViewer({
                       setZoomMenuOpen((v) => !v);
                     }}
                   >
-                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(useGrapesjs ? grapesjsCanvasZoom : zoom)}%</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(displayedCanvasZoom)}%</span>
                   </button>
                   {zoomMenuOpen ? (
                     <div className="zoom-menu-popover" role="menu">
@@ -8934,11 +9042,12 @@ function HtmlViewer({
                         <button
                           key={level}
                           type="button"
-                          className={`zoom-menu-item${Math.round(zoom) === level ? ' active' : ''}`}
+                          className={`zoom-menu-item${Math.round(displayedCanvasZoom) === level ? ' active' : ''}`}
                           role="menuitem"
                           onClick={() => {
-                            if (useGrapesjs) {
+                            if (useGrapesjsCanvasZoom) {
                               grapesjsEditorRef.current?.getEditor()?.Canvas?.setZoom?.(level);
+                              setGrapesjsCanvasZoom(level);
                             } else {
                               setZoom(level);
                             }
@@ -8946,7 +9055,7 @@ function HtmlViewer({
                           }}
                         >
                           <span style={{ fontVariantNumeric: 'tabular-nums' }}>{level}%</span>
-                          {Math.round(zoom) === level ? (
+                          {Math.round(displayedCanvasZoom) === level ? (
                             <Icon name="check" size={13} />
                           ) : null}
                         </button>
@@ -8996,13 +9105,31 @@ function HtmlViewer({
           >
             <Suspense fallback={<div className="viewer-empty">{t('fileViewer.loading')}</div>}>
               {grapesjsViewMode ? (
-                <iframe
-                  data-testid="grapesjs-interactive-frame"
-                  title={file.name}
-                  className="artifact-preview-grapesjs"
-                  style={{ width: '100%', height: '100%', border: 0, background: '#fff', display: 'block', overflow: 'hidden' }}
-                  srcDoc={interactiveSrcDoc}
-                />
+                <div
+                  className={`grapesjs-interactive-preview comment-preview-layer preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
+                  data-testid="grapesjs-interactive-viewport"
+                  style={previewViewportStyle(
+                    previewViewport,
+                    previewScale,
+                    previewBodySize,
+                    boardPreviewScaleOptions,
+                    activeViewportSizeOverride,
+                  )}
+                >
+                  <div className="comment-preview-canvas" data-testid="grapesjs-interactive-canvas">
+                    <div className="comment-frame-clip">
+                      <div style={previewScaleShellStyle(previewViewport, previewScale)}>
+                        <iframe
+                          data-testid="grapesjs-interactive-frame"
+                          title={file.name}
+                          className="artifact-preview-grapesjs"
+                          style={{ width: '100%', height: '100%', border: 0, background: '#fff', display: 'block', overflow: 'hidden' }}
+                          srcDoc={interactiveSrcDoc}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <GrapesjsEditor
                 ref={grapesjsEditorRef}
@@ -9191,7 +9318,45 @@ function HtmlViewer({
                   setGrapesjsSelection(info);
                 }}
                 onImageEditRequest={() => setImageEditSignal((n) => n + 1)}
-                onZoomChange={(z) => setGrapesjsCanvasZoom(z)}
+                onZoomChange={(z) => setGrapesjsCanvasZoom(Number.isFinite(z) ? z : 100)}
+                onViewportSizeChange={(width, height) => {
+                  // Persist only user-edited canvas dimensions into the HTML
+                  // file's <meta name="od-canvas"> so they survive reloads.
+                  // Preset switches are stored in the file alias layer and do
+                  // not rewrite the source or dirty the editor.
+                  if (!useGrapesjs || mode !== 'preview') return;
+                  setCustomViewportSizes((currentSizes) => ({
+                    ...currentSizes,
+                    [previewViewport]: { width, height },
+                  }));
+                  const current = sourceRef.current;
+                  if (current == null) return;
+                  const updated = writeCanvasSizeToSource(
+                    current,
+                    { width, height },
+                    previewViewport,
+                  );
+                  if (updated !== current) {
+                    sourceRef.current = updated;
+                    setSource(updated);
+                    setCodeDirty(true);
+                    if (grapesjsAutoSaveTimerRef.current) {
+                      clearTimeout(grapesjsAutoSaveTimerRef.current);
+                    }
+                    grapesjsAutoSaveTimerRef.current = setTimeout(() => {
+                      grapesjsAutoSaveTimerRef.current = null;
+                      syncGrapesjsDocumentToSource();
+                      void handleCodeSave();
+                    }, 1500);
+                  }
+                }}
+                initialViewport={(() => {
+                  // Seed the canvas size before first paint so the editor
+                  // doesn't flash the default device (~1280px) before the
+                  // apply-viewport effect corrects it. Active custom size is
+                  // scoped to the selected viewport; otherwise use the preset.
+                  return activeViewportSize;
+                })()}
                 className="artifact-preview-grapesjs"
               />
               )}

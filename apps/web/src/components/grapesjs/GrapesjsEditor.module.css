@@ -36,11 +36,15 @@
   background: var(--viewer-bg, #fafaf9);
 }
 
-.canvas :global(.gjs-cv-canvas__frames),
-.canvas :global(.gjs-frame-wrapper),
-.canvas :global(.gjs-frame) {
+.canvas :global(.gjs-cv-canvas__frames) {
   width: 100%;
   height: 100%;
+}
+
+.canvas :global(.gjs-frame-wrapper),
+.canvas :global(.gjs-frame) {
+  width: var(--od-gjs-frame-width, 100%);
+  height: var(--od-gjs-frame-height, 100%);
 }
 
 .loadingShell {
