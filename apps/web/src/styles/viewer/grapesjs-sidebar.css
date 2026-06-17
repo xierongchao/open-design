@@ -47,6 +47,7 @@
   outline-color: var(--accent) !important;
 }
 
+
 /* ── DnD insertion line ──
    GrapesJS renders the drag insertion indicator as `.gjs-placeholder`
    (+ `.horizontal` / `.vertical`) wrapping a `.gjs-placeholder-int` fill.

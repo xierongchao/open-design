@@ -402,6 +402,56 @@ export function calculateCanvasFitToViewport({
   return { zoom, x: 0, y };
 }
 
+export function getGrapesjsZoomStyleVars(zoom: number): {
+  zoomDecimal: number;
+  canvasHairline: string;
+  screenHairline: string;
+} {
+  const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 100;
+  const zoomDecimal = Math.max(0.01, safeZoom / 100);
+  return {
+    zoomDecimal,
+    canvasHairline: `${Number((1 / zoomDecimal).toFixed(4))}px`,
+    screenHairline: '1px',
+  };
+}
+
+export function getGrapesjsIframeSelectionOutlineCss(): string {
+  return `
+                  .gjs-selected,
+                  .gjs-hovered {
+                    outline: var(--od-gjs-hairline, 1px) solid #3b82f6 !important;
+                    outline-offset: calc(-1 * var(--od-gjs-hairline, 1px)) !important;
+                  }
+                  .gjs-com-dashed * {
+                    outline-width: var(--od-gjs-hairline, 1px) !important;
+                  }
+  `;
+}
+
+export function getGrapesjsIframeSelectionStyleCss(hoverClass: string): string {
+  return `
+                  .${hoverClass} {
+                    outline: var(--od-gjs-hairline, 1px) dashed #3b82f6 !important;
+                    outline-offset: var(--od-gjs-hairline, 1px) !important;
+                  }
+                  ${getGrapesjsIframeSelectionOutlineCss()}
+  `;
+}
+
+export function upsertGrapesjsIframeSelectionStyle(doc: Document, hoverClass: string): boolean {
+  const head = doc.head;
+  if (!head) return false;
+  const selector = 'style[data-od-flex-child-hover]';
+  const styleEl = (
+    head.querySelector(selector) as HTMLStyleElement | null
+  ) ?? doc.createElement('style');
+  styleEl.setAttribute('data-od-flex-child-hover', 'true');
+  styleEl.textContent = getGrapesjsIframeSelectionStyleCss(hoverClass);
+  if (!styleEl.parentNode) head.appendChild(styleEl);
+  return true;
+}
+
 function fitCanvasFrameToViewport(editor: GrapesjsEditorInstance) {
   const size = readCanvasFrameSize(editor);
   const canvasEl = editor.Canvas.getElement?.() as HTMLElement | null | undefined;
@@ -1044,11 +1094,64 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const overrideStyle = doc.createElement('style');
             overrideStyle.id = STYLE_ID;
             overrideStyle.textContent = `
-              .gjs-selected, .gjs-hovered { outline-color: var(--accent, #c96442) !important; }
+              .gjs-selected, .gjs-hovered {
+                outline-color: var(--accent, #c96442) !important;
+                outline-width: var(--od-gjs-screen-hairline, 1px) !important;
+                outline-offset: calc(-1 * var(--od-gjs-screen-hairline, 1px)) !important;
+              }
+              .gjs-cv-canvas .gjs-highlighter {
+                outline: var(--od-gjs-screen-hairline, 1px) solid var(--gjs-color-blue) !important;
+                outline-offset: calc(-1 * var(--od-gjs-screen-hairline, 1px)) !important;
+              }
+              .gjs-cv-canvas .gjs-highlighter-sel {
+                display: none !important;
+                outline: 0 !important;
+                box-shadow: none !important;
+                border: 0 !important;
+              }
               .gjs-cv-canvas__frame, .gjs-clm-tags { border-color: var(--accent, #c96442) !important; }
+              .gjs-resizer {
+                border: 0 !important;
+                outline: 0 !important;
+                box-shadow: none !important;
+                pointer-events: none !important;
+              }
               .gjs-resizer-h {
-                background-color: #fff !important;
-                border: 2px solid var(--gjs-color-blue) !important;
+                background: transparent !important;
+                border: 0 !important;
+                box-sizing: border-box !important;
+                opacity: 1 !important;
+                pointer-events: auto !important;
+              }
+              .gjs-resizer-h-tl,
+              .gjs-resizer-h-tr,
+              .gjs-resizer-h-bl,
+              .gjs-resizer-h-br {
+                width: 10px !important;
+                height: 10px !important;
+                margin: -5px !important;
+                background: #fff !important;
+                border: var(--od-gjs-screen-hairline, 1px) solid var(--gjs-color-blue) !important;
+                border-radius: 2px !important;
+                z-index: 2;
+              }
+              .gjs-resizer-h-tc,
+              .gjs-resizer-h-bc {
+                left: 0 !important;
+                right: 0 !important;
+                width: 100% !important;
+                height: 12px !important;
+                margin: -6px 0 !important;
+                z-index: 1;
+              }
+              .gjs-resizer-h-cl,
+              .gjs-resizer-h-cr {
+                top: 0 !important;
+                bottom: 0 !important;
+                width: 12px !important;
+                height: 100% !important;
+                margin: 0 -6px !important;
+                z-index: 1;
               }
               .od-dimension-badge {
                 position: absolute;
@@ -1065,6 +1168,15 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 border-radius: 3px;
                 pointer-events: none;
                 z-index: 11;
+                display: none;
+              }
+              .od-selection-stroke {
+                position: absolute;
+                inset: 0;
+                box-sizing: border-box;
+                border: var(--od-gjs-screen-hairline, 1px) solid var(--gjs-color-blue);
+                pointer-events: none;
+                z-index: 10;
                 display: none;
               }
             `;
@@ -1090,7 +1202,26 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           // are zoom-scaled screen px, so we divide by the zoom decimal to
           // show the element's real CSS dimensions. We only act on the
           // `global` type (the actual selection); `local` is hover.
+          let selectionStroke: HTMLDivElement | null = null;
           let dimensionBadge: HTMLDivElement | null = null;
+          const ensureSelectionStroke = () => {
+            if (selectionStroke) return selectionStroke;
+            try {
+              const toolsEl = (editor.Canvas as unknown as {
+                getToolsEl?: (view?: unknown) => HTMLElement | null;
+              }).getToolsEl?.();
+              if (!toolsEl) return null;
+              const hostDoc = toolsEl.ownerDocument;
+              const stroke = hostDoc.createElement('div');
+              stroke.className = 'od-selection-stroke';
+              stroke.setAttribute('aria-hidden', 'true');
+              toolsEl.appendChild(stroke);
+              selectionStroke = stroke;
+              return stroke;
+            } catch {
+              return null;
+            }
+          };
           const ensureDimensionBadge = () => {
             if (dimensionBadge) return dimensionBadge;
             try {
@@ -1112,6 +1243,8 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           type ToolsUpdatePayload = { type?: string; width?: number; height?: number };
           const onToolsUpdate = (opts: ToolsUpdatePayload) => {
             if (!opts || opts.type !== 'global') return;
+            const stroke = ensureSelectionStroke();
+            if (stroke) stroke.style.display = 'block';
             const badge = ensureDimensionBadge();
             if (!badge) return;
             const w = typeof opts.width === 'number' ? opts.width : 0;
@@ -1131,6 +1264,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           };
           const hideDimensionBadge = () => {
             if (dimensionBadge) dimensionBadge.style.display = 'none';
+            if (selectionStroke) selectionStroke.style.display = 'none';
           };
           editor.on('canvas:tools:update', onToolsUpdate);
           editor.on('component:deselected', hideDimensionBadge);
@@ -1138,6 +1272,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // Ensure the badge shows even when tools:update fires before the
             // badge element existed (first selection right after load).
             ensureDimensionBadge();
+            ensureSelectionStroke();
           });
           // ── Spacing guides: draggable padding / gap / margin overlays ──
           // The visible guide is a thin line while the hit target stays large
@@ -1177,6 +1312,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             gap: 'repeating-linear-gradient(45deg, rgba(168,85,247,0.45) 0 2px, rgba(168,85,247,0.10) 2px 6px)',
           };
           const SOLID: Record<SpacingKind, string> = { padding: '#3b82f6', margin: '#eab308', gap: '#a855f7' };
+          const SPACING_GUIDE_LENGTH = 16;
+          const SPACING_HIT_THICKNESS = 10;
+          const SPACING_GUIDE_THICKNESS = 2;
+          const SPACING_GUIDE_OUTLINE = '0 0 0 1px rgba(255,255,255,0.96), 0 1px 2px rgba(15,23,42,0.22)';
           const allSpacingItems = () => [...spacingItems, ...gapSpacingItems];
           const pxOf = (s: string | undefined): number => {
             if (!s) return 0;
@@ -1218,10 +1357,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               item.band.removeAttribute('data-od-spacing-index');
             }
             item.handle.style.cursor = isHorizontal ? 'ns-resize' : 'ew-resize';
+            item.line.style.background = SOLID[item.kind];
+            item.line.style.borderRadius = '999px';
+            item.line.style.boxShadow = SPACING_GUIDE_OUTLINE;
             item.line.style.left = isHorizontal ? '0' : '50%';
             item.line.style.top = isHorizontal ? '50%' : '0';
-            item.line.style.width = isHorizontal ? '100%' : '1px';
-            item.line.style.height = isHorizontal ? '1px' : '100%';
+            item.line.style.width = isHorizontal ? '100%' : `${SPACING_GUIDE_THICKNESS}px`;
+            item.line.style.height = isHorizontal ? `${SPACING_GUIDE_THICKNESS}px` : '100%';
             item.line.style.transform = isHorizontal ? 'translateY(-50%)' : 'translateX(-50%)';
           };
           const showSpacingTip = (item: SpacingItem, clientX?: number, clientY?: number) => {
@@ -1346,8 +1488,6 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             try { cs = win.getComputedStyle(el); } catch { return; }
             const boxW = toolsEl.clientWidth;
             const boxH = toolsEl.clientHeight;
-            const GUIDE_LENGTH = 24;
-            const HIT_THICKNESS = 8;
             const layoutSide = (
               item: SpacingItem,
               cssValue: number,
@@ -1361,10 +1501,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               const isHorizontal = item.side === 'top' || item.side === 'bottom';
               setSpacingRect(
                 item.handle,
-                guideX - (isHorizontal ? GUIDE_LENGTH / 2 : HIT_THICKNESS / 2),
-                guideY - (isHorizontal ? HIT_THICKNESS / 2 : GUIDE_LENGTH / 2),
-                isHorizontal ? GUIDE_LENGTH : HIT_THICKNESS,
-                isHorizontal ? HIT_THICKNESS : GUIDE_LENGTH,
+                guideX - (isHorizontal ? SPACING_GUIDE_LENGTH / 2 : SPACING_HIT_THICKNESS / 2),
+                guideY - (isHorizontal ? SPACING_HIT_THICKNESS / 2 : SPACING_GUIDE_LENGTH / 2),
+                isHorizontal ? SPACING_GUIDE_LENGTH : SPACING_HIT_THICKNESS,
+                isHorizontal ? SPACING_HIT_THICKNESS : SPACING_GUIDE_LENGTH,
               );
               item.band.style.display = 'block';
               item.handle.style.display = 'block';
@@ -1387,10 +1527,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const mR = mRCss * zoom;
             for (const it of spacingItems) {
               if (it.kind === 'padding') {
-                if (it.side === 'top') layoutSide(it, pTCss, 0, 0, boxW, pT, boxW / 2, pT);
-                else if (it.side === 'bottom') layoutSide(it, pBCss, 0, boxH - pB, boxW, pB, boxW / 2, boxH - pB);
-                else if (it.side === 'left') layoutSide(it, pLCss, 0, 0, pL, boxH, pL, boxH / 2);
-                else layoutSide(it, pRCss, boxW - pR, 0, pR, boxH, boxW - pR, boxH / 2);
+                if (it.side === 'top' && pTCss > 0) layoutSide(it, pTCss, 0, 0, boxW, pT, boxW / 2, pT);
+                else if (it.side === 'bottom' && pBCss > 0) layoutSide(it, pBCss, 0, boxH - pB, boxW, pB, boxW / 2, boxH - pB);
+                else if (it.side === 'left' && pLCss > 0) layoutSide(it, pLCss, 0, 0, pL, boxH, pL, boxH / 2);
+                else if (it.side === 'right' && pRCss > 0) layoutSide(it, pRCss, boxW - pR, 0, pR, boxH, boxW - pR, boxH / 2);
               } else {
                 // Margin guide lines sit OUTSIDE the border box by ~10px so they
                 // don't overlap the selection outline even when margin is 0.
@@ -1439,7 +1579,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 const guideX = (crossStart + crossEnd) / 2;
                 const guideY = (gapStart + gapEnd) / 2;
                 setSpacingRect(item.band, crossStart, gapStart, Math.max(0, crossEnd - crossStart), Math.max(0, gapEnd - gapStart));
-                setSpacingRect(item.handle, guideX - GUIDE_LENGTH / 2, guideY - HIT_THICKNESS / 2, GUIDE_LENGTH, HIT_THICKNESS);
+                setSpacingRect(
+                  item.handle,
+                  guideX - SPACING_GUIDE_LENGTH / 2,
+                  guideY - SPACING_HIT_THICKNESS / 2,
+                  SPACING_GUIDE_LENGTH,
+                  SPACING_HIT_THICKNESS,
+                );
               } else {
                 const gapStart = (first.right - containerRect.left) * zoom;
                 const gapEnd = (second.left - containerRect.left) * zoom;
@@ -1448,7 +1594,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 const guideX = (gapStart + gapEnd) / 2;
                 const guideY = (crossStart + crossEnd) / 2;
                 setSpacingRect(item.band, gapStart, crossStart, Math.max(0, gapEnd - gapStart), Math.max(0, crossEnd - crossStart));
-                setSpacingRect(item.handle, guideX - HIT_THICKNESS / 2, guideY - GUIDE_LENGTH / 2, HIT_THICKNESS, GUIDE_LENGTH);
+                setSpacingRect(
+                  item.handle,
+                  guideX - SPACING_HIT_THICKNESS / 2,
+                  guideY - SPACING_GUIDE_LENGTH / 2,
+                  SPACING_HIT_THICKNESS,
+                  SPACING_GUIDE_LENGTH,
+                );
               }
               item.band.style.display = 'block';
               item.handle.style.display = 'block';
@@ -1747,6 +1899,23 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           })();
 
           const spaceDownRef = { current: false };
+          const applyZoomStyleVars = (zoom: number) => {
+            const { zoomDecimal, canvasHairline, screenHairline } = getGrapesjsZoomStyleVars(zoom);
+            try {
+              rootRef.current?.style.setProperty('--od-gjs-zoom-decimal', String(zoomDecimal));
+              rootRef.current?.style.setProperty('--od-gjs-hairline', canvasHairline);
+              rootRef.current?.style.setProperty('--od-gjs-screen-hairline', screenHairline);
+              canvasEl?.style.setProperty('--od-gjs-zoom-decimal', String(zoomDecimal));
+              canvasEl?.style.setProperty('--od-gjs-hairline', canvasHairline);
+              canvasEl?.style.setProperty('--od-gjs-screen-hairline', screenHairline);
+              const doc = editor.Canvas.getDocument?.();
+              doc?.documentElement?.style.setProperty('--od-gjs-zoom-decimal', String(zoomDecimal));
+              doc?.documentElement?.style.setProperty('--od-gjs-hairline', canvasHairline);
+              doc?.documentElement?.style.setProperty('--od-gjs-screen-hairline', screenHairline);
+            } catch {
+              // ignore
+            }
+          };
           // Mirror the live canvas zoom onto the container as a data attribute.
           // This is a cheap observability hook (no DOM layout, no React state):
           // tests can assert the user-visible zoom without reaching into
@@ -1757,16 +1926,19 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (typeof z === 'number' && Number.isFinite(z)) {
                 if (z < 25) {
                   editor.Canvas.setZoom?.(100);
+                  applyZoomStyleVars(100);
                   if (rootRef.current) rootRef.current.dataset.odCanvasZoom = '100';
                   onZoomChangeRef.current?.(100);
                   return;
                 }
+                applyZoomStyleVars(z);
                 if (rootRef.current) {
                   rootRef.current.dataset.odCanvasZoom = String(Number(z.toFixed(3)));
                 }
                 onZoomChangeRef.current?.(z);
               } else {
                 editor.Canvas.setZoom?.(100);
+                applyZoomStyleVars(100);
                 if (rootRef.current) rootRef.current.dataset.odCanvasZoom = '100';
                 onZoomChangeRef.current?.(100);
               }
@@ -1816,6 +1988,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           syncZoomAttr();
           syncCoordsAttr();
           editor.on('canvas:zoom', () => { syncZoomAttr(); syncCoordsAttr(); });
+          editor.on('canvas:frame:load:body', syncZoomAttr);
           syncZoomAttrRef.current = syncZoomAttr;
           syncCoordsAttrRef.current = syncCoordsAttr;
           const onKeyDownCanvas = (ev: KeyboardEvent) => {
@@ -2604,8 +2777,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           //     flex/grid container (so multi-level auto-layout behaves like a
           //     single frame). Non-flex layouts fall through to GrapesJS's
           //     default innermost-select.
+          //   • Shift+click → toggle the INNERMOST component into selection,
+          //     bypassing GrapesJS's Shift = sibling range selection.
           //   • Cmd/Ctrl+click → select the INNERMOST component (deep select),
-          //     bypassing GrapesJS's Cmd+click = multi-select-toggle branch.
+          //     bypassing GrapesJS's Cmd/Ctrl = container-level multi-select
+          //     toggle branch.
           //   • double-click on a non-text container → select its first child
           //     ("enter" one level). Text components keep their native
           //     dblclick→RTE behaviour, so we don't intercept those.
@@ -2617,6 +2793,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               try { return editor.Canvas.getDocument(); } catch { return null; }
             })();
             if (!doc) return;
+            const FLEX_CHILD_HOVER_CLASS = 'od-flex-child-hover';
+            try {
+              upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS);
+            } catch { /* ignore */ }
             if ((doc as unknown as { __odNestedSelect?: true }).__odNestedSelect) return;
             (doc as unknown as { __odNestedSelect?: true }).__odNestedSelect = true;
             // The React host document (outside the canvas iframe) — used so the
@@ -2665,22 +2845,147 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               }
               return null;
             };
+            const selectedComponents = (): Component[] => {
+              try { return (editor.getSelectedAll?.() ?? []) as Component[]; } catch { return []; }
+            };
+            const componentParents = (comp: Component): Component[] => {
+              try { return comp.parents?.() ?? []; } catch { return []; }
+            };
+            const componentDepth = (comp: Component): number => componentParents(comp).length;
+            const componentChildren = (comp: Component): Component[] => {
+              try {
+                const children = comp.components?.();
+                const out: Component[] = [];
+                const length = typeof children?.length === 'number' ? children.length : 0;
+                for (let i = 0; i < length; i += 1) {
+                  const child = children.get(i) as Component | undefined;
+                  if (child) out.push(child);
+                }
+                return out;
+              } catch {
+                return [];
+              }
+            };
+            const rootComponents = (): Component[] => {
+              try {
+                const roots = editor.Components.getComponents();
+                const out: Component[] = [];
+                for (let i = 0; i < roots.length; i += 1) {
+                  const root = roots.get(i) as Component | undefined;
+                  if (root) out.push(root);
+                }
+                return out;
+              } catch {
+                return [];
+              }
+            };
+            const componentContainsCanvasPoint = (comp: Component, clientX: number, clientY: number): boolean => {
+              const el = getElementFromComponent(comp) as HTMLElement | null;
+              if (!el) return false;
+              const rect = el.getBoundingClientRect();
+              return (
+                rect.width > 0 &&
+                rect.height > 0 &&
+                clientX >= rect.left &&
+                clientX <= rect.right &&
+                clientY >= rect.top &&
+                clientY <= rect.bottom
+              );
+            };
+            const deepestComponentAtCanvasPoint = (clientX: number, clientY: number): Component | null => {
+              let best: Component | null = null;
+              let bestDepth = -1;
+              const visit = (comp: Component) => {
+                if (!componentContainsCanvasPoint(comp, clientX, clientY)) return;
+                if (comp.parent?.()) {
+                  const depth = componentDepth(comp);
+                  if (depth >= bestDepth) {
+                    best = comp;
+                    bestDepth = depth;
+                  }
+                }
+                for (const child of componentChildren(comp)) visit(child);
+              };
+              for (const root of rootComponents()) visit(root);
+              return best;
+            };
+            const canvasZoomDecimal = (): number => {
+              try {
+                const z = (editor.Canvas as unknown as { getZoomDecimal?: () => number }).getZoomDecimal?.();
+                if (typeof z === 'number' && z > 0) return z;
+                const zoom = editor.Canvas.getZoom?.();
+                return typeof zoom === 'number' && zoom > 0 ? zoom / 100 : 1;
+              } catch {
+                return 1;
+              }
+            };
+            const componentFromHostPoint = (clientX: number, clientY: number): Component | null => {
+              try {
+                const frame = editor.Canvas.getFrameEl?.();
+                if (!frame) return null;
+                const rect = frame.getBoundingClientRect();
+                const zoom = canvasZoomDecimal();
+                const x = (clientX - rect.left) / zoom;
+                const y = (clientY - rect.top) / zoom;
+                if (x < 0 || y < 0 || x > rect.width / zoom || y > rect.height / zoom) return null;
+                return deepestComponentAtCanvasPoint(x, y) ?? getComponentFromElement(doc.elementFromPoint(x, y));
+              } catch {
+                return null;
+              }
+            };
+            const selectDeepComponent = (comp: Component, additive: boolean) => {
+              if (!additive) {
+                editor.select(comp);
+                return;
+              }
+              const selected = selectedComponents();
+              if (selected.includes(comp)) {
+                editor.selectRemove(comp);
+                return;
+              }
+              const parents = componentParents(comp);
+              selected.forEach((sel) => {
+                const selectedParents = componentParents(sel);
+                if (parents.includes(sel) || selectedParents.includes(comp)) {
+                  editor.selectRemove(sel);
+                }
+              });
+              editor.selectAdd(comp);
+            };
+            let suppressClickAfterMarquee = false;
 
             const onClick = (ev: MouseEvent) => {
               if (readOnlyRef.current) return;
-              if (isTextInputTarget(ev.target)) return;
-              // Cmd/Ctrl+click = deep select (innermost). Cmd/Ctrl+Shift
-              // keeps the current selection and adds the innermost target,
-              // useful for piercing flex frames while building a multi-select.
-              // Stop propagation so GrapesJS's own click→select (which treats
-              // Cmd as a container-level multi-select toggle) doesn't run.
-              if (ev.metaKey || ev.ctrlKey) {
-                const inner = getComponentFromElement(ev.target as Element | null);
+              const isDeepPick = ev.shiftKey || ev.metaKey || ev.ctrlKey;
+              if (!isDeepPick && isTextInputTarget(ev.target)) return;
+              if (suppressClickAfterMarquee) {
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+                return;
+              }
+              // Shift+click is OD's deep multi-select gesture. GrapesJS's
+              // native Shift behaviour selects a sibling range, which fights
+              // the flex-frame selection model and blocks picking inner nodes.
+              if (ev.shiftKey) {
+                const inner = deepestComponentAtCanvasPoint(ev.clientX, ev.clientY)
+                  ?? getComponentFromElement(ev.target as Element | null);
                 if (!inner) return;
                 ev.preventDefault();
                 ev.stopImmediatePropagation();
-                if (ev.shiftKey) editor.selectAdd(inner);
-                else editor.select(inner);
+                selectDeepComponent(inner, true);
+                return;
+              }
+              // Cmd/Ctrl+click = deep select (innermost), replacing the
+              // current selection. Shift+click above owns additive deep-select.
+              // Stop propagation so GrapesJS's own click→select (which treats
+              // Cmd as a container-level multi-select toggle) doesn't run.
+              if (ev.metaKey || ev.ctrlKey) {
+                const inner = deepestComponentAtCanvasPoint(ev.clientX, ev.clientY)
+                  ?? getComponentFromElement(ev.target as Element | null);
+                if (!inner) return;
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+                selectDeepComponent(inner, false);
                 return;
               }
               // Plain click: if the clicked element sits INSIDE a flex
@@ -2699,6 +3004,21 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               // No event arg → avoids GrapesJS's Cmd/Shift multi-select branch.
               editor.select(ancestor);
             };
+            const onHostChromeClick = (ev: MouseEvent) => {
+              if (readOnlyRef.current || cropModeRef.current) return;
+              if (!(ev.metaKey || ev.ctrlKey)) return;
+              if (isTextInputTarget(ev.target)) return;
+              const canvasRoot = (() => {
+                try { return editor.Canvas.getElement?.() ?? containerRef.current; } catch { return containerRef.current; }
+              })();
+              const target = ev.target as Node | null;
+              if (!canvasRoot || !target || !canvasRoot.contains(target)) return;
+              const inner = componentFromHostPoint(ev.clientX, ev.clientY);
+              if (!inner) return;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              selectDeepComponent(inner, ev.shiftKey);
+            };
 
             // Flex-aware hover: when the pointer is over an element that lives
             // INSIDE a flex container, redirect the GrapesJS hover highlight to
@@ -2707,19 +3027,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // child under the cursor. This removes the jarring mismatch where
             // hovering a flex child drew the hover outline on the child but
             // clicking selected the container.
-            const FLEX_CHILD_HOVER_CLASS = 'od-flex-child-hover';
-            // Inject the outline style into the canvas iframe document (the
-            // child element lives inside the iframe, so a host-side stylesheet
-            // wouldn't reach it). Idempotent via a marker attribute.
-            try {
-              const head = doc.head;
-              if (head && !head.querySelector('style[data-od-flex-child-hover]')) {
-                const styleEl = doc.createElement('style');
-                styleEl.setAttribute('data-od-flex-child-hover', 'true');
-                styleEl.textContent = `.${FLEX_CHILD_HOVER_CLASS}{outline:1px dashed #3b82f6 !important;outline-offset:1px !important;}`;
-                head.appendChild(styleEl);
-              }
-            } catch { /* ignore */ }
+            // The iframe style is refreshed at the top of attachNestedSelect,
+            // before the duplicate-listener guard, so HMR/stale frames pick up
+            // outline fixes without needing a full frame reload.
             let lastChildHoverEl: HTMLElement | null = null;
             const clearChildHover = () => {
               if (lastChildHoverEl) {
@@ -2857,18 +3167,214 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               });
             };
 
+            type MarqueeState = {
+              startX: number;
+              startY: number;
+              currentX: number;
+              currentY: number;
+              additive: boolean;
+              deep: boolean;
+              moved: boolean;
+              box: HTMLDivElement | null;
+              pointerId: number;
+            };
+            let marqueeState: MarqueeState | null = null;
+            const MARQUEE_THRESHOLD = 4;
+            const ensureMarqueeStyle = () => {
+              try {
+                const head = doc.head;
+                if (!head || head.querySelector('style[data-od-marquee-style]')) return;
+                const styleEl = doc.createElement('style');
+                styleEl.setAttribute('data-od-marquee-style', 'true');
+                styleEl.textContent = `
+                  [data-od-marquee] {
+                    position: fixed;
+                    z-index: 2147483647;
+                    pointer-events: none;
+                    box-sizing: border-box;
+                    border: var(--od-gjs-hairline, 1px) solid #3b82f6;
+                    background: rgba(59, 130, 246, 0.14);
+                  }
+                `;
+                head.appendChild(styleEl);
+              } catch { /* ignore */ }
+            };
+            const marqueeRect = (state: MarqueeState) => {
+              const left = Math.min(state.startX, state.currentX);
+              const top = Math.min(state.startY, state.currentY);
+              const right = Math.max(state.startX, state.currentX);
+              const bottom = Math.max(state.startY, state.currentY);
+              return { left, top, right, bottom, width: right - left, height: bottom - top };
+            };
+            const updateMarqueeBox = (state: MarqueeState) => {
+              ensureMarqueeStyle();
+              if (!state.box) {
+                const box = doc.createElement('div');
+                box.setAttribute('data-od-marquee', 'true');
+                doc.body.appendChild(box);
+                state.box = box;
+              }
+              const rect = marqueeRect(state);
+              state.box.style.left = `${rect.left}px`;
+              state.box.style.top = `${rect.top}px`;
+              state.box.style.width = `${rect.width}px`;
+              state.box.style.height = `${rect.height}px`;
+            };
+            const removeMarqueeBox = () => {
+              marqueeState?.box?.remove();
+              if (marqueeState) marqueeState.box = null;
+            };
+            const rectsIntersect = (
+              a: { left: number; top: number; right: number; bottom: number },
+              b: DOMRect,
+            ): boolean => (
+              a.left <= b.right &&
+              a.right >= b.left &&
+              a.top <= b.bottom &&
+              a.bottom >= b.top
+            );
+            const uniqueComponents = (items: Component[]): Component[] => {
+              const out: Component[] = [];
+              for (const item of items) {
+                if (!out.includes(item)) out.push(item);
+              }
+              return out;
+            };
+            const removeNestedRedundancy = (items: Component[], preferDeep: boolean): Component[] => {
+              const ordered = [...uniqueComponents(items)].sort((a, b) => (
+                preferDeep ? componentDepth(b) - componentDepth(a) : componentDepth(a) - componentDepth(b)
+              ));
+              const out: Component[] = [];
+              for (const item of ordered) {
+                const parents = componentParents(item);
+                const conflicts = out.some((chosen) => parents.includes(chosen) || componentParents(chosen).includes(item));
+                if (!conflicts) out.push(item);
+              }
+              return out.sort((a, b) => componentDepth(a) - componentDepth(b));
+            };
+            const collectMarqueeComponents = (rect: ReturnType<typeof marqueeRect>, deep: boolean): Component[] => {
+              const hits: Component[] = [];
+              const seen = new Set<Component>();
+              const elements = Array.from(doc.body.querySelectorAll('*'));
+              for (const el of elements) {
+                const comp = getComponentFromElement(el as Element | null);
+                if (!comp || seen.has(comp)) continue;
+                seen.add(comp);
+                if (!comp.parent?.()) continue;
+                const domEl = getElementFromComponent(comp) as HTMLElement | null;
+                if (!domEl) continue;
+                const r = domEl.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0) continue;
+                if (!rectsIntersect(rect, r)) continue;
+                hits.push(deep ? comp : (findNearestFlexAncestor(comp) ?? comp));
+              }
+              return removeNestedRedundancy(hits, deep);
+            };
+            const applyMarqueeSelection = (picked: Component[], additive: boolean, deep: boolean) => {
+              const nextPicked = removeNestedRedundancy(picked, deep);
+              if (!additive) {
+                editor.select(nextPicked.length > 0 ? nextPicked : undefined);
+                return;
+              }
+              const selected = selectedComponents().filter((sel) => (
+                !nextPicked.some((pick) => {
+                  const pickParents = componentParents(pick);
+                  const selParents = componentParents(sel);
+                  return pickParents.includes(sel) || selParents.includes(pick);
+                })
+              ));
+              editor.select(uniqueComponents([...selected, ...nextPicked]));
+            };
+            const startMarquee = (ev: PointerEvent) => {
+              if (readOnlyRef.current || cropModeRef.current) return;
+              const isDeepPointer = ev.shiftKey || ev.metaKey || ev.ctrlKey;
+              if (ev.button !== 0 || (!isDeepPointer && isTextInputTarget(ev.target))) return;
+              const startComp = getComponentFromElement(ev.target as Element | null);
+              const startsOnCanvas = !startComp || !startComp.parent?.();
+              const deep = ev.metaKey || ev.ctrlKey;
+              if (!deep && !startsOnCanvas) return;
+              marqueeState = {
+                startX: ev.clientX,
+                startY: ev.clientY,
+                currentX: ev.clientX,
+                currentY: ev.clientY,
+                additive: ev.shiftKey,
+                deep,
+                moved: false,
+                box: null,
+                pointerId: ev.pointerId,
+              };
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              try { doc.documentElement.setPointerCapture?.(ev.pointerId); } catch { /* ignore */ }
+            };
+            const moveMarquee = (ev: PointerEvent) => {
+              const state = marqueeState;
+              if (!state) return;
+              state.currentX = ev.clientX;
+              state.currentY = ev.clientY;
+              const dx = state.currentX - state.startX;
+              const dy = state.currentY - state.startY;
+              if (!state.moved && Math.hypot(dx, dy) < MARQUEE_THRESHOLD) return;
+              state.moved = true;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              updateMarqueeBox(state);
+            };
+            const finishMarquee = (ev: PointerEvent) => {
+              const state = marqueeState;
+              if (!state) return;
+              try { doc.documentElement.releasePointerCapture?.(state.pointerId); } catch { /* ignore */ }
+              if (state.moved) {
+                state.currentX = ev.clientX;
+                state.currentY = ev.clientY;
+                const rect = marqueeRect(state);
+                const picked = collectMarqueeComponents(rect, state.deep);
+                applyMarqueeSelection(picked, state.additive, state.deep);
+                suppressClickAfterMarquee = true;
+                setTimeout(() => { suppressClickAfterMarquee = false; }, 0);
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+              } else if (state.deep) {
+                const picked = deepestComponentAtCanvasPoint(state.startX, state.startY)
+                  ?? getComponentFromElement(doc.elementFromPoint(state.startX, state.startY));
+                if (picked) selectDeepComponent(picked, state.additive);
+                suppressClickAfterMarquee = true;
+                setTimeout(() => { suppressClickAfterMarquee = false; }, 0);
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+              }
+              removeMarqueeBox();
+              marqueeState = null;
+            };
+            const cancelMarquee = () => {
+              removeMarqueeBox();
+              marqueeState = null;
+            };
+
             doc.addEventListener('click', onClick, true);
+            hostDocument.addEventListener('click', onHostChromeClick, true);
             doc.addEventListener('dblclick', onDblClick, true);
             doc.addEventListener('contextmenu', onCtxMenu, true);
             doc.addEventListener('mouseover', onMouseOver, true);
             doc.addEventListener('mouseout', onMouseOut, true);
+            doc.addEventListener('pointerdown', startMarquee, true);
+            doc.addEventListener('pointermove', moveMarquee, true);
+            doc.addEventListener('pointerup', finishMarquee, true);
+            doc.addEventListener('pointercancel', cancelMarquee, true);
             detachNestedSelect = () => {
               try {
                 doc.removeEventListener('click', onClick, true);
+                hostDocument.removeEventListener('click', onHostChromeClick, true);
                 doc.removeEventListener('dblclick', onDblClick, true);
                 doc.removeEventListener('contextmenu', onCtxMenu, true);
                 doc.removeEventListener('mouseover', onMouseOver, true);
                 doc.removeEventListener('mouseout', onMouseOut, true);
+                doc.removeEventListener('pointerdown', startMarquee, true);
+                doc.removeEventListener('pointermove', moveMarquee, true);
+                doc.removeEventListener('pointerup', finishMarquee, true);
+                doc.removeEventListener('pointercancel', cancelMarquee, true);
+                cancelMarquee();
                 clearChildHover();
                 delete (doc as unknown as { __odNestedSelect?: true }).__odNestedSelect;
               } catch { /* ignore */ }
@@ -3040,6 +3546,8 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             detachNestedSelect?.();
             try { editor.off('canvas:tools:update', onToolsUpdate); } catch { /* ignore */ }
             try { editor.off('component:deselected', hideDimensionBadge); } catch { /* ignore */ }
+            try { selectionStroke?.remove(); } catch { /* ignore */ }
+            selectionStroke = null;
             try { dimensionBadge?.remove(); } catch { /* ignore */ }
             dimensionBadge = null;
             detachSpacingHandles?.();

@@ -5,22 +5,36 @@ import type { Component, Editor } from 'grapesjs';
  *
  * GrapesJS ships resize handles off by default (`Component.resizable` is
  * `false`, grapes.mjs:27036); only image/svg/frame opt in. For a Figma-style
- * editor every selectable element should be resizable, so this plugin flips
- * `resizable: true` on every component. The Resizer itself already defaults
- * to all 8 handles (tl/tc/tr/cl/cr/bl/bc/br), so `true` is enough — no need
- * to spell out the handle map.
- *
- * `true` (vs an object) is intentional: `CommandSelectComponent.initResize`
- * treats a truthy non-object `resizable` as "use the resizer defaults"
- * (grapes.mjs:49619), which is exactly the 8-handle layout we want.
+ * editor every selectable element should be resizable. We keep all 8 GrapesJS
+ * handles, but turn `ratioDefault` on so corner handles preserve aspect ratio
+ * by default while center-edge handles still resize one axis.
  */
 
 const PLUGIN_KEY = 'od-resizable';
 
+const RESIZABLE_OPTIONS = {
+  ratioDefault: true,
+  tl: true,
+  tc: true,
+  tr: true,
+  cl: true,
+  cr: true,
+  bl: true,
+  bc: true,
+  br: true,
+} as const;
+
 function setResizable(comp: Component): void {
   try {
-    if (comp.get('resizable')) return;
-    comp.set('resizable', true);
+    const current = comp.get('resizable');
+    if (
+      current &&
+      typeof current === 'object' &&
+      (current as { ratioDefault?: unknown }).ratioDefault === true
+    ) {
+      return;
+    }
+    comp.set('resizable', RESIZABLE_OPTIONS);
   } catch {
     // ignore — some synthetic components reject the write.
   }
