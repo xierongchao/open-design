@@ -884,29 +884,36 @@
   background: var(--bg-panel);
 }
 .app .split:not(.split-focus) {
-  grid-template-columns: minmax(320px, 1fr) 8px minmax(345px, var(--chat-panel-width, 760px));
+  grid-template-columns:
+    var(--project-workspace-panel-track, minmax(0, 1fr))
+    8px
+    var(--project-chat-panel-width, 760px);
 }
 .app .split.split-focus {
   grid-template-columns: minmax(0, 1fr);
 }
 .app .split-chat-slot {
-  justify-content: center;
+  justify-content: stretch;
   align-items: stretch;
   padding: 5px;
   background: color-mix(in srgb, var(--bg-subtle) 48%, var(--bg-panel));
 }
 .app .split-chat-slot > .pane {
-  width: min(100%, 860px);
+  width: 100%;
+  max-width: none;
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   box-shadow: 0 12px 34px color-mix(in srgb, var(--text) 8%, transparent);
   background: var(--bg-panel);
 }
 .app .workspace-side-panel-shell {
-  width: min(100%, 900px);
+  width: 100%;
+  min-width: 0;
   background: var(--bg-panel);
 }
 .app .workspace-side-chat-view > .pane {
+  width: 100%;
+  max-width: none;
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -976,8 +983,9 @@
 .app .chat-composer-slot,
 .app .chat-pinned-todo,
 .app .queued-send-strip {
-  width: min(100%, 760px);
-  margin-inline: auto;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
 }
 
 .app .chat-log-wrap {

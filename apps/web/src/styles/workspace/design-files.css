@@ -655,13 +655,15 @@
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--df-tree-pane-width, 280px) 5px minmax(0, 1fr);
+  grid-template-columns: minmax(0, var(--df-tree-pane-width, 280px)) 5px minmax(0, 1fr);
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
   background: color-mix(in srgb, var(--bg-panel) 94%, var(--bg-subtle));
 }
 
 .df-tree-pane {
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -670,10 +672,13 @@
 }
 
 .df-tree-resize-handle {
+  grid-column: 2;
+  grid-row: 1;
   position: relative;
   width: 1px;
   min-width: 1px;
   cursor: col-resize;
+  touch-action: none;
   background: transparent;
   z-index: 2;
   transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1);
@@ -1248,6 +1253,8 @@
 }
 
 .df-content-pane {
+  grid-column: 3;
+  grid-row: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -1409,7 +1416,7 @@
 
 @container (max-width: 620px) {
   .df-browser {
-    grid-template-columns: minmax(170px, 42%) minmax(0, 1fr);
+    grid-template-columns: minmax(0, var(--df-tree-pane-width, 280px)) 5px minmax(0, 1fr);
   }
 
   .df-empty {

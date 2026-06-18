@@ -801,3 +801,36 @@ describe('DesignFilesPanel persisted (empty) folders', () => {
     expect(nestedDirs).toContain('icons');
   });
 });
+
+describe('DesignFilesPanel tree pane resize', () => {
+  afterEach(() => {
+    document.body.classList.remove('od-pane-resizing');
+    cleanup();
+  });
+
+  it('allows the tree pane to collapse to zero while suppressing canvas pointer events during drag', async () => {
+    const { container } = renderPanel([file({ name: 'index.html', kind: 'html' })]);
+    const browser = container.querySelector('.df-browser') as HTMLElement | null;
+    const handle = container.querySelector('.df-tree-resize-handle') as HTMLElement | null;
+
+    expect(browser).toBeTruthy();
+    expect(handle).toBeTruthy();
+
+    fireEvent.pointerDown(handle!, { button: 0, clientX: 280 });
+    expect(document.body.classList.contains('od-pane-resizing')).toBe(true);
+
+    fireEvent.pointerMove(window, { clientX: -80 });
+
+    await waitFor(() => {
+      expect(browser!.style.getPropertyValue('--df-tree-pane-width')).toBe('0px');
+    });
+
+    expect(localStorage.getItem('open-design:design-files-tree-pane-width:v1:test-project')).toBe('0');
+
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(document.body.classList.contains('od-pane-resizing')).toBe(false);
+    });
+  });
+});

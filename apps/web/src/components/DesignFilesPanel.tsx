@@ -1580,22 +1580,30 @@ export function DesignFilesPanel({
 
   useEffect(() => {
     if (!resizingTreePane) return;
+    document.body.classList.add('od-pane-resizing');
     function onPointerMove(event: PointerEvent) {
+      event.preventDefault();
       const ref = treePaneResizeRef.current;
       if (!ref) return;
       const delta = event.clientX - ref.startX;
-      const nextWidth = Math.max(200, Math.min(600, ref.startWidth + delta));
+      const nextWidth = normalizeTreePaneWidth(ref.startWidth + delta);
       setTreePaneWidth(nextWidth);
     }
     function onPointerUp() {
+      document.body.classList.remove('od-pane-resizing');
       setResizingTreePane(false);
       treePaneResizeRef.current = null;
     }
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    window.addEventListener('blur', onPointerUp);
     return () => {
+      document.body.classList.remove('od-pane-resizing');
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+      window.removeEventListener('blur', onPointerUp);
     };
   }, [resizingTreePane]);
 
@@ -1862,12 +1870,14 @@ export function DesignFilesPanel({
             </aside>
             <div
               className={`df-tree-resize-handle${resizingTreePane ? ' is-resizing' : ''}`}
-              onMouseDown={(event) => {
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
                 event.preventDefault();
                 treePaneResizeRef.current = {
                   startX: event.clientX,
                   startWidth: treePaneWidth,
                 };
+                document.body.classList.add('od-pane-resizing');
                 setResizingTreePane(true);
               }}
             />
@@ -2599,15 +2609,21 @@ function dirnameForPath(path: string): string {
 }
 
 const TREE_PANE_WIDTH_STORAGE_PREFIX = 'open-design:design-files-tree-pane-width:v1:';
+const DEFAULT_TREE_PANE_WIDTH = 280;
+
+function normalizeTreePaneWidth(width: number): number {
+  if (!Number.isFinite(width)) return DEFAULT_TREE_PANE_WIDTH;
+  return Math.max(0, Math.round(width));
+}
 
 function readTreePaneWidth(projectId: string): number {
-  if (typeof window === 'undefined') return 280;
+  if (typeof window === 'undefined') return DEFAULT_TREE_PANE_WIDTH;
   try {
     const raw = window.localStorage.getItem(`${TREE_PANE_WIDTH_STORAGE_PREFIX}${projectId}`);
     const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-    return Number.isFinite(parsed) ? Math.max(200, Math.min(600, parsed)) : 280;
+    return Number.isFinite(parsed) ? normalizeTreePaneWidth(parsed) : DEFAULT_TREE_PANE_WIDTH;
   } catch {
-    return 280;
+    return DEFAULT_TREE_PANE_WIDTH;
   }
 }
 
@@ -2616,7 +2632,7 @@ function writeTreePaneWidth(projectId: string, width: number): void {
   try {
     window.localStorage.setItem(
       `${TREE_PANE_WIDTH_STORAGE_PREFIX}${projectId}`,
-      String(Math.max(200, Math.min(600, Math.round(width)))),
+      String(normalizeTreePaneWidth(width)),
     );
   } catch {
     /* localStorage may be disabled */

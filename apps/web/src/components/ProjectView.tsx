@@ -295,10 +295,10 @@ interface QueuedChatSendUpdate {
 let liveArtifactEventSequence = 0;
 const CHAT_PANEL_WIDTH_STORAGE_KEY = 'open-design.project.chatPanelWidth.v2';
 const DEFAULT_CHAT_PANEL_WIDTH = 500;
-const MIN_CHAT_PANEL_WIDTH = 345;
-const MAX_CHAT_PANEL_WIDTH = 1040;
+const UNBOUNDED_PANEL_WIDTH = Number.MAX_SAFE_INTEGER;
+const MIN_CHAT_PANEL_WIDTH = 0;
 const COMMENT_INSPECTOR_PANEL_WIDTH = 320;
-const MIN_WORKSPACE_PANEL_WIDTH = 320;
+const MIN_WORKSPACE_PANEL_WIDTH = 0;
 const SPLIT_RESIZE_HANDLE_WIDTH = 8;
 const CHAT_PANEL_KEYBOARD_STEP = 16;
 const DESIGN_SYSTEM_AUDIT_AUTO_REPAIR_ATTEMPTS = 2;
@@ -306,8 +306,6 @@ const DESIGN_SYSTEM_AUDIT_AUTO_REPAIR_ATTEMPTS = 2;
 // Embedded-browser navigation bursts settle well within this; the local cache
 // is written immediately so nothing is lost if the daemon write is coalesced.
 const TAB_PERSIST_DEBOUNCE_MS = 400;
-const MIN_NORMAL_SPLIT_WIDTH =
-  MIN_CHAT_PANEL_WIDTH + SPLIT_RESIZE_HANDLE_WIDTH + MIN_WORKSPACE_PANEL_WIDTH;
 type DesignSystemReviewEntry = NonNullable<ProjectMetadata['designSystemReview']>[string];
 type DesignSystemReviewAgentTask = NonNullable<DesignSystemReviewEntry['agentTask']>;
 interface DesignSystemReviewDetails {
@@ -317,25 +315,25 @@ interface DesignSystemReviewDetails {
 }
 
 function workspacePanelMinWidthForSplit(splitWidth: number): number {
-  if (!Number.isFinite(splitWidth) || splitWidth <= 0) return MIN_WORKSPACE_PANEL_WIDTH;
-  return splitWidth < MIN_NORMAL_SPLIT_WIDTH ? 0 : MIN_WORKSPACE_PANEL_WIDTH;
+  return Number.isFinite(splitWidth) && splitWidth > 0 ? MIN_WORKSPACE_PANEL_WIDTH : 0;
 }
 
 function maxChatPanelWidthForSplit(splitWidth: number): number {
-  if (!Number.isFinite(splitWidth) || splitWidth <= 0) return MAX_CHAT_PANEL_WIDTH;
-  const workspaceMinWidth = workspacePanelMinWidthForSplit(splitWidth);
-  const viewportAwareMax = splitWidth - SPLIT_RESIZE_HANDLE_WIDTH - workspaceMinWidth;
-  return Math.max(0, Math.min(MAX_CHAT_PANEL_WIDTH, Math.floor(viewportAwareMax)));
+  if (!Number.isFinite(splitWidth) || splitWidth <= 0) return UNBOUNDED_PANEL_WIDTH;
+  const viewportAwareMax = splitWidth - SPLIT_RESIZE_HANDLE_WIDTH;
+  return Math.max(0, Math.floor(viewportAwareMax));
 }
 
 function clampPreferredChatPanelWidth(width: number): number {
-  return Math.min(MAX_CHAT_PANEL_WIDTH, Math.max(MIN_CHAT_PANEL_WIDTH, Math.round(width)));
+  if (!Number.isFinite(width)) return DEFAULT_CHAT_PANEL_WIDTH;
+  return Math.max(MIN_CHAT_PANEL_WIDTH, Math.round(width));
 }
 
-function clampChatPanelWidth(width: number, maxWidth = MAX_CHAT_PANEL_WIDTH): number {
-  const effectiveMax = Math.max(0, Math.min(MAX_CHAT_PANEL_WIDTH, Math.floor(maxWidth)));
+function clampChatPanelWidth(width: number, maxWidth = UNBOUNDED_PANEL_WIDTH): number {
+  const effectiveMax = Math.max(0, Math.floor(maxWidth));
   const effectiveMin = Math.min(MIN_CHAT_PANEL_WIDTH, effectiveMax);
-  return Math.min(effectiveMax, Math.max(effectiveMin, Math.round(width)));
+  const next = Number.isFinite(width) ? Math.round(width) : DEFAULT_CHAT_PANEL_WIDTH;
+  return Math.min(effectiveMax, Math.max(effectiveMin, next));
 }
 
 function designSystemFeedbackAttachments(
@@ -977,7 +975,7 @@ export function ProjectView({
   const [autoAuditRepairSeed, setAutoAuditRepairSeed] =
     useState<{ id: string; value: string } | null>(null);
   const [chatPanelWidth, setChatPanelWidth] = useState(readSavedChatPanelWidth);
-  const [chatPanelMaxWidth, setChatPanelMaxWidth] = useState(MAX_CHAT_PANEL_WIDTH);
+  const [chatPanelMaxWidth, setChatPanelMaxWidth] = useState(UNBOUNDED_PANEL_WIDTH);
   const [workspacePanelMinWidth, setWorkspacePanelMinWidth] = useState(MIN_WORKSPACE_PANEL_WIDTH);
   const [resizingChatPanel, setResizingChatPanel] = useState(false);
   const splitRef = useRef<HTMLDivElement | null>(null);
@@ -4897,6 +4895,7 @@ export function ProjectView({
   }, [renderPreferredChatPanelWidth]);
 
   const finishChatPanelResize = useCallback((saveFinalWidth = true) => {
+    document.body.classList.remove('od-pane-resizing');
     pointerCleanupRef.current?.();
     pointerCleanupRef.current = null;
     if (pointerFrameRef.current !== null) {
@@ -4920,6 +4919,14 @@ export function ProjectView({
   useEffect(() => {
     chatPanelMaxWidthRef.current = chatPanelMaxWidth;
   }, [chatPanelMaxWidth]);
+
+  useEffect(() => {
+    if (!resizingChatPanel) return undefined;
+    document.body.classList.add('od-pane-resizing');
+    return () => {
+      document.body.classList.remove('od-pane-resizing');
+    };
+  }, [resizingChatPanel]);
 
   useLayoutEffect(() => {
     const split = splitRef.current;
@@ -4957,6 +4964,7 @@ export function ProjectView({
     event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerCleanupRef.current?.();
+    document.body.classList.add('od-pane-resizing');
     setResizingChatPanel(true);
     resizeStartPreferredWidthRef.current = preferredChatPanelWidthRef.current;
 

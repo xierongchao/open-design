@@ -70,12 +70,44 @@ describe('Design Files preview list styles', () => {
     );
   });
 
-  it('defaults the project split to a wider chat panel and narrower file rail', () => {
+  it('keeps the file tree resize handle and content pane on one row when narrow', () => {
+    const treePane = cssDeclarations(designFilesCss, '.df-tree-pane');
+    const resizeHandle = cssDeclarations(designFilesCss, '.df-tree-resize-handle');
+    const contentPane = cssDeclarations(designFilesCss, '.df-content-pane');
+
+    expect(ruleValue(treePane, 'grid-column')).toBe('1');
+    expect(ruleValue(resizeHandle, 'grid-column')).toBe('2');
+    expect(ruleValue(contentPane, 'grid-column')).toBe('3');
+    expect(designFilesCss).toMatch(
+      /@container[^{]*max-width:\s*620px[^{]*\{[\s\S]*?\.df-browser\s*\{\s*grid-template-columns:\s*minmax\(0,\s*var\(--df-tree-pane-width,\s*280px\)\)\s+5px\s+minmax\(0,\s*1fr\);/,
+    );
+    expect(designFilesCss).not.toContain('grid-template-columns: minmax(170px, 42%) minmax(0, 1fr);');
+  });
+
+  it('lets the project split follow the resizable project panel tracks', () => {
     const split = cssDeclarations(routinesCss, '.app .split:not(.split-focus)');
 
     const cols = ruleValue(split, 'grid-template-columns');
-    expect(cols).toContain('var(--chat-panel-width, 760px)');
-    expect(cols).toContain('minmax(320px, 1fr)');
+    expect(cols).toContain('var(--project-workspace-panel-track, minmax(0, 1fr))');
+    expect(cols).toContain('var(--project-chat-panel-width, 760px)');
+  });
+
+  it('lets the project side chat fill the resized panel width', () => {
+    const splitChatSlot = cssDeclarations(routinesCss, '.app .split-chat-slot');
+    const splitPane = cssDeclarations(routinesCss, '.app .split-chat-slot > .pane');
+    const sidePanel = cssDeclarations(routinesCss, '.app .workspace-side-panel-shell');
+    const chatLogWrap = cssDeclarations(routinesCss, '.app .chat-log-wrap');
+    const composerSlot = cssDeclarations(routinesCss, '.app .chat-composer-slot');
+
+    expect(ruleValue(splitChatSlot, 'justify-content')).toBe('stretch');
+    expect(ruleValue(splitPane, 'width')).toBe('100%');
+    expect(ruleValue(splitPane, 'max-width')).toBe('none');
+    expect(ruleValue(sidePanel, 'width')).toBe('100%');
+    expect(ruleValue(sidePanel, 'min-width')).toBe('0');
+    expect(ruleValue(chatLogWrap, 'width')).toBe('100%');
+    expect(ruleValue(chatLogWrap, 'max-width')).toBe('none');
+    expect(ruleValue(composerSlot, 'width')).toBe('100%');
+    expect(ruleValue(composerSlot, 'max-width')).toBe('none');
   });
 
   it('opens the working directory menu below the top chrome instead of behind it', () => {

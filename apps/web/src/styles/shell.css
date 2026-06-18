@@ -1219,7 +1219,7 @@ a.avatar-item:visited {
 /* -------- Split / panes -------------------------------------------- */
 .split {
   --project-chat-panel-width: 760px;
-  --project-workspace-panel-track: minmax(320px, 1fr);
+  --project-workspace-panel-track: minmax(0, 1fr);
   display: grid;
   grid-template-columns:
     var(--project-workspace-panel-track)
@@ -1237,6 +1237,16 @@ a.avatar-item:visited {
 }
 .split.is-resizing-chat iframe {
   pointer-events: none;
+}
+body.od-pane-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.od-pane-resizing iframe,
+body.od-pane-resizing .artifact-preview-grapesjs,
+body.od-pane-resizing .gjs-cv-canvas,
+body.od-pane-resizing .gjs-cv-canvas__frames {
+  pointer-events: none !important;
 }
 .split.is-resizing-chat .workspace,
 .split.is-resizing-chat .viewer,
