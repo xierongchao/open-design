@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import type { ToolPackConfig } from "../config.js";
 import { PRODUCT_NAME } from "./constants.js";
+import { execFileAsync } from "./commands.js";
 import { pathExists, scrubMacExtendedAttributes } from "./fs.js";
+import { resolveMacInstallIdentity } from "./identity.js";
 import { readPackagedVersion } from "./manifest.js";
 import { sanitizeNamespace } from "./paths.js";
 import type { MacPackResult, MacPaths } from "./types.js";
@@ -34,6 +36,47 @@ async function cleanBuilderScratchMetadata(paths: MacPaths): Promise<void> {
         await rm(join(paths.appBuilderOutputRoot, entry), { force: true, recursive: true });
       }),
   );
+}
+
+export async function createMacDmgArtifact(
+  config: ToolPackConfig,
+  paths: MacPaths,
+): Promise<string> {
+  if (!(await pathExists(paths.appPath))) {
+    throw new Error(`no mac app bundle produced at ${paths.appPath}`);
+  }
+
+  const identity = resolveMacInstallIdentity(config);
+  // Bare "Open Design" volume names can collide with stale /Volumes state during hdiutil creation.
+  const volumeName = basename(paths.dmgPath, ".dmg");
+  const tempRoot = await mkdtemp(join("/tmp", "open-design-tools-pack-dmg-"));
+  const stageRoot = join(tempRoot, "stage");
+  const tempDmgPath = join(tempRoot, basename(paths.dmgPath));
+  const stagedAppPath = join(stageRoot, identity.publicAppBundleName);
+
+  try {
+    await mkdir(stageRoot, { recursive: true });
+    await execFileAsync("ditto", [paths.appPath, stagedAppPath]);
+    await symlink("/Applications", join(stageRoot, "Applications"));
+    await execFileAsync("hdiutil", [
+      "create",
+      "-volname",
+      volumeName,
+      "-srcfolder",
+      stageRoot,
+      "-ov",
+      "-format",
+      "UDZO",
+      tempDmgPath,
+    ]);
+    await mkdir(dirname(paths.dmgPath), { recursive: true });
+    await rm(paths.dmgPath, { force: true, recursive: true });
+    await rename(tempDmgPath, paths.dmgPath);
+    await scrubMacExtendedAttributes(paths.dmgPath);
+    return paths.dmgPath;
+  } finally {
+    await rm(tempRoot, { force: true, recursive: true });
+  }
 }
 
 async function writeLocalLatestMacYml(config: ToolPackConfig, paths: MacPaths): Promise<void> {
@@ -71,11 +114,7 @@ export async function finalizeMacArtifacts(
   let zipPath: string | null = null;
 
   if (config.to === "dmg" || config.to === "all") {
-    dmgPath = await moveBuilderArtifact({
-      destinationPath: paths.dmgPath,
-      label: "dmg artifact",
-      sourcePath: join(paths.appBuilderOutputRoot, `${PRODUCT_NAME}-${namespaceToken}.dmg`),
-    });
+    dmgPath = await createMacDmgArtifact(config, paths);
   }
 
   if (config.to === "zip" || config.to === "all") {

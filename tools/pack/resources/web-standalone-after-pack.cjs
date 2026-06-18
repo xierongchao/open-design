@@ -6,7 +6,15 @@ const { promisify } = require("node:util");
 
 const CONFIG_ENV = "OD_TOOLS_PACK_WEB_STANDALONE_HOOK_CONFIG";
 const STANDALONE_RESOURCE_NAME = "open-design-web-standalone";
-const REQUIRED_MODULES = ["next/package.json", "react/package.json", "react-dom/package.json", "styled-jsx/package.json"];
+const REQUIRED_MODULES = [
+  "@next/env/package.json",
+  "next/package.json",
+  "react/package.json",
+  "react-dom/package.json",
+  "styled-jsx/package.json",
+];
+const APP_LOCAL_NEXT_RUNTIME_PACKAGES = ["@next/env"];
+const WIN32_STANDALONE_RESOURCE_RELATIVE_PATH_BUDGET = 190;
 const execFileAsync = promisify(execFile);
 
 function isRecord(value) {
@@ -361,6 +369,29 @@ function isPrunableImgEntry(name) {
   return name === "colour" || name.startsWith("sharp-");
 }
 
+function isPnpmNextPackageEntry(name) {
+  return name.startsWith("next@");
+}
+
+function pnpmStoreEntryPrefixForPackage(packageName) {
+  return `${packageName.split("/").join("+")}@`;
+}
+
+function packagePathUnderNodeModules(nodeModulesRoot, packageName) {
+  return path.join(nodeModulesRoot, ...packageName.split("/"));
+}
+
+async function findPnpmStorePackageRoot(pnpmRoot, packageName) {
+  const prefix = pnpmStoreEntryPrefixForPackage(packageName);
+  const entries = await readdir(pnpmRoot).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const candidate = packagePathUnderNodeModules(path.join(pnpmRoot, entry, "node_modules"), packageName);
+    if (await pathExists(path.join(candidate, "package.json"))) return candidate;
+  }
+  return null;
+}
+
 async function pruneImgScope(scopePath, reason, removedPaths) {
   const entries = await readdir(scopePath).catch(() => []);
   for (const entry of entries) {
@@ -395,12 +426,36 @@ async function pruneCopiedSharp(destinationRoot) {
   return removedPaths;
 }
 
+async function ensureAppLocalNextRuntimeDependencies(destinationRoot, destinationWebRoot, platformName) {
+  const pnpmRoot = path.join(destinationRoot, "node_modules", ".pnpm");
+  const webNodeModulesRoot = path.join(destinationWebRoot, "node_modules");
+  const copiedPaths = [];
+
+  for (const packageName of APP_LOCAL_NEXT_RUNTIME_PACKAGES) {
+    const destinationPath = packagePathUnderNodeModules(webNodeModulesRoot, packageName);
+    if (await pathExists(path.join(destinationPath, "package.json"))) {
+      copiedPaths.push({ copied: false, packageName, path: destinationPath });
+      continue;
+    }
+
+    const sourcePath = await findPnpmStorePackageRoot(pnpmRoot, packageName);
+    if (sourcePath == null) {
+      throw new Error(`[tools-pack web-standalone] copied standalone missing pnpm store package required by app-local Next: ${packageName}`);
+    }
+    await copyRequired(sourcePath, destinationPath, { dereference: platformName === "win32" });
+    copiedPaths.push({ copied: true, packageName, path: destinationPath, sourcePath });
+  }
+
+  return copiedPaths;
+}
+
 async function dedupeCopiedStandaloneNext(destinationRoot, destinationWebRoot, platformName) {
   if (platformName !== "win32") return null;
 
   const nodeModulesRoot = path.join(destinationRoot, "node_modules");
+  const pnpmRoot = path.join(nodeModulesRoot, ".pnpm");
   const rootNextRoot = path.join(nodeModulesRoot, "next");
-  const pnpmHoistedNextRoot = path.join(nodeModulesRoot, ".pnpm", "node_modules", "next");
+  const pnpmHoistedNextRoot = path.join(pnpmRoot, "node_modules", "next");
   const webNextRoot = path.join(destinationWebRoot, "node_modules", "next");
   const removedPaths = [];
 
@@ -418,6 +473,17 @@ async function dedupeCopiedStandaloneNext(destinationRoot, destinationWebRoot, p
     "copied standalone pnpm-hoisted next duplicate superseded by app-local next",
     removedPaths,
   );
+
+  const pnpmEntries = await readdir(pnpmRoot).catch(() => []);
+  for (const entry of pnpmEntries) {
+    if (isPnpmNextPackageEntry(entry)) {
+      await removePathAndRecord(
+        path.join(pnpmRoot, entry),
+        "copied standalone pnpm next package duplicate superseded by app-local next",
+        removedPaths,
+      );
+    }
+  }
 
   return {
     removedPaths,
@@ -722,10 +788,15 @@ async function auditCopiedStandaloneNextDedupe(installResult, platformName) {
   const serverPath = path.join(installResult.destinationWebRoot, "server.js");
   const retainedNextRoot = path.join(installResult.destinationWebRoot, "node_modules", "next");
   const retainedNextPackagePath = path.join(retainedNextRoot, "package.json");
+  const copiedPnpmRoot = path.join(installResult.destinationRoot, "node_modules", ".pnpm");
   const checkedPaths = [
     path.join(installResult.destinationRoot, "node_modules", "next"),
-    path.join(installResult.destinationRoot, "node_modules", ".pnpm", "node_modules", "next"),
+    path.join(copiedPnpmRoot, "node_modules", "next"),
   ];
+  const pnpmEntries = await readdir(copiedPnpmRoot).catch(() => []);
+  for (const entry of pnpmEntries) {
+    if (isPnpmNextPackageEntry(entry)) checkedPaths.push(path.join(copiedPnpmRoot, entry));
+  }
   const remainingPaths = [];
 
   for (const checkedPath of checkedPaths) {
@@ -753,6 +824,56 @@ async function auditCopiedStandaloneNextDedupe(installResult, platformName) {
     remainingPaths,
     resolvedNextPackagePath,
     retainedNextRoot,
+  };
+}
+
+async function auditWin32StandaloneResourcePathBudget(resourcesRoot, installResult, platformName) {
+  if (platformName !== "win32") return null;
+
+  const overBudgetPaths = [];
+  let maxRelativePath = "";
+  let maxRelativePathLength = 0;
+
+  async function visit(current) {
+    let metadata;
+    try {
+      metadata = await lstat(current);
+    } catch {
+      return;
+    }
+
+    const relativePath = path.relative(resourcesRoot, current).split(path.sep).join("/");
+    if (relativePath.length > 0) {
+      if (relativePath.length > maxRelativePathLength) {
+        maxRelativePath = relativePath;
+        maxRelativePathLength = relativePath.length;
+      }
+      if (relativePath.length > WIN32_STANDALONE_RESOURCE_RELATIVE_PATH_BUDGET) {
+        overBudgetPaths.push(relativePath);
+      }
+    }
+
+    if (!metadata.isDirectory()) return;
+
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      await visit(path.join(current, entry.name));
+    }
+  }
+
+  await visit(installResult.destinationRoot);
+
+  if (overBudgetPaths.length > 0) {
+    throw new Error(
+      `[tools-pack web-standalone] copied standalone has ${overBudgetPaths.length} win32 paths longer than ${WIN32_STANDALONE_RESOURCE_RELATIVE_PATH_BUDGET} chars; longest is ${maxRelativePathLength}: ${maxRelativePath}`,
+    );
+  }
+
+  return {
+    budget: WIN32_STANDALONE_RESOURCE_RELATIVE_PATH_BUDGET,
+    maxRelativePath,
+    maxRelativePathLength,
+    overBudgetCount: overBudgetPaths.length,
   };
 }
 
@@ -888,6 +1009,11 @@ async function runWebStandaloneAfterPack(context) {
 
   const appNodeModulesRoot = resolveRootAppNodeModulesRoot(resourcesRoot);
   const installResult = await installStandaloneResource(config, resourcesRoot, context.electronPlatformName);
+  const copiedNextRuntimeDependencies = await ensureAppLocalNextRuntimeDependencies(
+    installResult.destinationRoot,
+    installResult.destinationWebRoot,
+    context.electronPlatformName,
+  );
   const copiedPrune = config.pruneCopiedSharp ? await pruneCopiedSharp(installResult.destinationRoot) : [];
   const copiedNextDedupe = await dedupeCopiedStandaloneNext(
     installResult.destinationRoot,
@@ -904,6 +1030,11 @@ async function runWebStandaloneAfterPack(context) {
     "copied broken symlink",
   );
   const copiedNextDedupeAudit = await auditCopiedStandaloneNextDedupe(
+    installResult,
+    context.electronPlatformName,
+  );
+  const copiedWin32PathBudgetAudit = await auditWin32StandaloneResourcePathBudget(
+    resourcesRoot,
     installResult,
     context.electronPlatformName,
   );
@@ -942,7 +1073,9 @@ async function runWebStandaloneAfterPack(context) {
     copiedBuildResiduePrune,
     copiedNextDedupe,
     copiedNextDedupeAudit,
+    copiedNextRuntimeDependencies,
     copiedPrune,
+    copiedWin32PathBudgetAudit,
     generatedAt: new Date().toISOString(),
     macAdhocBundleSign,
     platformName: context.electronPlatformName,

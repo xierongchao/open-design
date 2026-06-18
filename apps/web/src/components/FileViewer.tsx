@@ -96,6 +96,7 @@ import { buildReactComponentSrcdoc } from '../runtime/react-component';
 import { shouldConsumeSlideNav } from '../runtime/slide-nav';
 import { findHtmlEntriesReferencing } from '../runtime/jsx-module-refs';
 import { buildLazySrcdocTransport, buildSrcdoc, canActivateSrcDocTransport } from '../runtime/srcdoc';
+import { isMacPlatform } from '../utils/platform';
 import {
   hasTweaksTemplate,
   hasUrlModeBridge,
@@ -241,6 +242,7 @@ import {
 } from './viewer-utils';
 
 const GrapesjsEditor = lazy(() => import('./grapesjs/GrapesjsEditor').then((m) => ({ default: m.default })));
+const GRAPESJS_SOURCE_STATE_SYNC_DELAY_MS = 500;
 
 function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
@@ -5041,6 +5043,7 @@ function HtmlViewer({
 
   const effectiveDeck = isDeck;
   const livePreviewSource = inlinedSource ?? source;
+  const reloadHtmlPreviewRef = useRef<() => void>(() => undefined);
   // Freeze the iframe input on the snapshot taken at Edit-mode entry. Any
   // debounced source rewrites during edit stay
   // invisible to the iframe — live updates flow through od-edit-preview-style
@@ -5256,11 +5259,45 @@ function HtmlViewer({
   useEffect(() => {
     grapesjsSelectionStoreRef.current.invalidate();
   }, [file.name, source]);
+  const htmlFileSaveControllerRef = useRef(htmlFileSaveController);
+  useEffect(() => {
+    htmlFileSaveControllerRef.current = htmlFileSaveController;
+  }, [htmlFileSaveController]);
+  const grapesjsSourceStateSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const grapesjsPendingSourceStateRef = useRef<string | null>(null);
+  function clearGrapesjsSourceStateSyncTimer() {
+    if (grapesjsSourceStateSyncTimerRef.current) {
+      clearTimeout(grapesjsSourceStateSyncTimerRef.current);
+      grapesjsSourceStateSyncTimerRef.current = null;
+    }
+  }
+  function cancelGrapesjsSourceStateSync() {
+    clearGrapesjsSourceStateSyncTimer();
+    grapesjsPendingSourceStateRef.current = null;
+  }
+  function flushGrapesjsSourceState(next?: string) {
+    clearGrapesjsSourceStateSyncTimer();
+    const pending = next ?? grapesjsPendingSourceStateRef.current;
+    grapesjsPendingSourceStateRef.current = null;
+    if (pending == null) return;
+    setSource((current) => (current === pending ? current : pending));
+  }
+  function queueGrapesjsSourceStateSync(next: string) {
+    grapesjsPendingSourceStateRef.current = next;
+    clearGrapesjsSourceStateSyncTimer();
+    grapesjsSourceStateSyncTimerRef.current = setTimeout(() => {
+      flushGrapesjsSourceState();
+    }, GRAPESJS_SOURCE_STATE_SYNC_DELAY_MS);
+  }
   // Flush pending edits when the file changes or the component unmounts.
   // Keyed on projectId + file.name so switching files in the tree triggers
   // the cleanup (and save) before the new file's content loads.
+  // Do not key this on mtime: our own autosave changes mtime, and treating
+  // that as a leave-file cleanup re-saves the GrapesJS document in a loop.
   useEffect(() => {
     return () => {
+      const controller = htmlFileSaveControllerRef.current;
+      cancelGrapesjsSourceStateSync();
       if (grapesjsInspectDebounceRef.current) {
         clearTimeout(grapesjsInspectDebounceRef.current);
       }
@@ -5268,16 +5305,16 @@ function HtmlViewer({
         const next = grapesjsEditorRef.current?.getDocument();
         if (next && next !== sourceRef.current) {
           sourceRef.current = next;
-          htmlFileSaveController.cancelScheduledSave();
-          void htmlFileSaveController.saveBestEffort(next, 'grapesjs-autosave-flush');
+          controller.cancelScheduledSave();
+          void controller.saveBestEffort(next, 'grapesjs-autosave-flush');
           return;
         }
       } catch {
         // ignore — best-effort flush below still preserves scheduled source
       }
-      void htmlFileSaveController.flushScheduledSave('grapesjs-autosave-flush');
+      void controller.flushScheduledSave('grapesjs-autosave-flush');
     };
-  }, [file.mtime, htmlFileSaveController]);
+  }, [file.name, projectId]);
   const [grapesjsViewMode, setGrapesjsViewModeState] = useState(false);
   // Wrap setGrapesjsViewMode so that switching to interactive mode flushes any
   // pending canvas edits before the GrapesjsEditor unmounts. Without this, the
@@ -5293,7 +5330,7 @@ function HtmlViewer({
         const doc = grapesjsEditorRef.current?.getDocument();
         if (doc && doc !== sourceRef.current) {
           sourceRef.current = doc;
-          setSource(doc);
+          flushGrapesjsSourceState(doc);
           setCodeDirty(true);
           void htmlFileSaveController.saveBestEffort(doc, 'grapesjs-view-mode-flush');
         }
@@ -7715,11 +7752,25 @@ function HtmlViewer({
     openInNewTab();
   }
 
-  function reloadHtmlPreview() {
+  async function reloadHtmlPreview() {
     fireArtifactToolbarClick('reload');
     capturePreviewScrollPosition();
     imageExportSnapshotDataUrlRef.current = null;
     setInlinedSource(null);
+    if (useGrapesjs) {
+      const next = syncGrapesjsDocumentToSource() ?? sourceRef.current ?? source;
+      if (next) {
+        htmlFileSaveController.cancelScheduledSave();
+        await htmlFileSaveController.saveBestEffort(next, 'grapesjs-autosave-flush');
+        grapesjsSelectionStoreRef.current.invalidate();
+        setGrapesjsSelectionActive(false);
+        setGrapesjsSelection(null);
+        setActiveInspectTarget(null);
+        grapesjsEditorRef.current?.setHtml(next);
+      }
+      setReloadKey((key) => key + 1);
+      return;
+    }
     setReloadKey((key) => key + 1);
     if (!useUrlLoadPreview) {
       activatedSrcDocTransportHtmlRef.current = null;
@@ -7728,15 +7779,35 @@ function HtmlViewer({
     }
   }
 
+  useEffect(() => {
+    reloadHtmlPreviewRef.current = () => {
+      void reloadHtmlPreview();
+    };
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const primary = isMacPlatform()
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
+      if (!primary || event.altKey || event.key.toLowerCase() !== 'r') return;
+      if (event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      reloadHtmlPreviewRef.current();
+    };
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
+  }, []);
+
   function syncGrapesjsDocumentToSource(): string | null {
     if (!useGrapesjs) return null;
     const next = grapesjsEditorRef.current?.getDocument();
     if (!next) return null;
-    if (next !== sourceRef.current) {
-      sourceRef.current = next;
-      setSource(next);
-      setCodeDirty(true);
-    }
+    const changed = next !== sourceRef.current || next !== source;
+    sourceRef.current = next;
+    flushGrapesjsSourceState(next);
+    if (changed) setCodeDirty(true);
     return next;
   }
 
@@ -9280,7 +9351,7 @@ function HtmlViewer({
                 onChange={(next) => {
                   grapesjsSelectionStoreRef.current.invalidate();
                   sourceRef.current = next;
-                  setSource(next);
+                  queueGrapesjsSourceStateSync(next);
                   setCodeDirty(true);
                   if (useGrapesjs && mode === 'preview') {
                     htmlFileSaveController.scheduleSave(next, 'grapesjs-autosave-flush');
@@ -9290,6 +9361,7 @@ function HtmlViewer({
                   syncGrapesjsDocumentToSource();
                   void handleCodeSave();
                 }}
+                onReload={() => void reloadHtmlPreview()}
                 onSelectTargets={(ids) => {
                   grapesjsSelectionStoreRef.current.invalidate();
                   const hasSelection = ids.length > 0;
@@ -9456,7 +9528,7 @@ function HtmlViewer({
                   );
                   if (updated !== current) {
                     sourceRef.current = updated;
-                    setSource(updated);
+                    queueGrapesjsSourceStateSync(updated);
                     setCodeDirty(true);
                     htmlFileSaveController.scheduleSave(updated, 'grapesjs-autosave-flush');
                   }

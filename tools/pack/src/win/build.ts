@@ -34,6 +34,14 @@ function logWinBuildProgress(message: string, fields: Record<string, unknown> = 
   process.stderr.write(`[tools-pack win] ${message}${suffix.length === 0 ? "" : ` ${suffix}`}\n`);
 }
 
+export function shouldBuildWinLauncherPayloadArtifact(
+  platform: NodeJS.Platform,
+  to: ToolPackConfig["to"],
+): boolean {
+  if (platform === "win32") return true;
+  return shouldBuildWinNsisInstaller(to);
+}
+
 async function writeLocalLatestYml(config: ToolPackConfig, paths: WinPaths): Promise<void> {
   if (!(await pathExists(paths.setupPath))) return;
   const packagedVersion = await readPackagedVersion(config);
@@ -65,6 +73,7 @@ export async function packWin(config: ToolPackConfig): Promise<WinPackResult> {
   const segments: WinPackTiming[] = [];
   const hasNsisTarget = shouldBuildWinNsisInstaller(config.to);
   const hasZipTarget = shouldBuildWinPortableZip(config.to);
+  const hasLauncherPayloadTarget = shouldBuildWinLauncherPayloadArtifact(process.platform, config.to);
   const runPhase = async <T>(phase: string, task: () => Promise<T>): Promise<T> => {
     const startedAt = Date.now();
     logWinBuildProgress("phase:start", { phase });
@@ -121,6 +130,18 @@ export async function packWin(config: ToolPackConfig): Promise<WinPackResult> {
   });
   const builtApp = await readBuiltAppManifest(paths);
   await runPhase("payload-artifact", async () => {
+    if (!hasLauncherPayloadTarget) {
+      segments.push({
+        details: {
+          platform: process.platform,
+          reason: "launcher payload archive requires Windows",
+          target: config.to,
+        },
+        durationMs: 0,
+        phase: "launcher-payload:skipped",
+      });
+      return;
+    }
     if (builtApp == null) throw new Error("cannot build Windows launcher payload without a built app manifest");
     segments.push(...await buildWinLauncherPayloadArchive(config, paths, builtApp, cache));
   });

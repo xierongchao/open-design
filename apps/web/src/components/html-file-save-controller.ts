@@ -54,9 +54,14 @@ export function createHtmlFileSaveController({
     return result;
   }
 
-  function cancelScheduledSave() {
+  function clearScheduledTimer() {
     if (scheduledTimer) clearTimeout(scheduledTimer);
     scheduledTimer = null;
+  }
+
+  function cancelScheduledSave() {
+    clearScheduledTimer();
+    scheduledSave = null;
   }
 
   async function saveBestEffort(source: string, reason: HtmlFileSaveReason): Promise<boolean> {
@@ -78,7 +83,7 @@ export function createHtmlFileSaveController({
     },
     scheduleSave(source, reason, delayMs = 1500) {
       scheduledSave = { source, reason };
-      cancelScheduledSave();
+      clearScheduledTimer();
       scheduledTimer = setTimeout(() => {
         const pending = scheduledSave;
         scheduledTimer = null;
@@ -88,7 +93,7 @@ export function createHtmlFileSaveController({
     },
     async flushScheduledSave(reason) {
       const pending = scheduledSave;
-      cancelScheduledSave();
+      clearScheduledTimer();
       scheduledSave = null;
       if (!pending) return true;
       return saveBestEffort(pending.source, reason ?? pending.reason);

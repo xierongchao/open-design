@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ImageFillControl,
+  ImageFillSummary,
   bgSizeFromOption,
+  fillSizeToObjectFit,
+  imageUrlFromCssUrl,
+  objectFitToFillSize,
   optionFromBgSize,
 } from '../../../src/components/grapesjs/image-fill-control';
 import { readImageFileToDataUrl } from '../../../src/components/grapesjs/image-upload';
@@ -25,6 +29,25 @@ describe('image-fill-control', () => {
     expect(optionFromBgSize('auto')).toBe('od-crop');
     expect(optionFromBgSize('320px 180px')).toBe('od-crop');
     expect(optionFromBgSize('contain')).toBe('contain');
+  });
+
+  it('normalizes image urls and img object-fit fill modes', () => {
+    expect(imageUrlFromCssUrl('url("data:image/png;base64,abc")')).toBe('data:image/png;base64,abc');
+    expect(imageUrlFromCssUrl('none')).toBe('');
+    expect(objectFitToFillSize('none')).toBe('od-crop');
+    expect(objectFitToFillSize('contain')).toBe('contain');
+    expect(fillSizeToObjectFit('auto')).toBe('none');
+    expect(fillSizeToObjectFit('100% 100%')).toBe('fill');
+  });
+
+  it('renders a compact image fill summary that opens the fill popover', () => {
+    const onOpen = vi.fn();
+
+    render(<ImageFillSummary url="data:image/png;base64,current" onOpen={onOpen} />);
+    fireEvent.click(screen.getByRole('button', { name: '打开图片填充' }));
+
+    expect(screen.getByText('图片')).toBeTruthy();
+    expect(onOpen).toHaveBeenCalled();
   });
 
   it('uploads images through the extracted fill control interface', async () => {
@@ -56,22 +79,23 @@ describe('image-fill-control', () => {
     });
   });
 
-  it('keeps crop controls and upload available in crop mode', () => {
+  it('keeps upload available in crop mode without showing panel crop controls', () => {
+    const onCropModeChange = vi.fn();
+
     render(
       <ImageFillControl
         url="data:image/png;base64,current"
         size="od-crop"
         repeat="no-repeat"
-        position="12px 8px"
-        cropSize="200px 120px"
         onUrlChange={vi.fn()}
         onSizeChange={vi.fn()}
         onRepeatChange={vi.fn()}
-        onCrop={vi.fn()}
+        onCropModeChange={onCropModeChange}
       />,
     );
 
     expect(screen.getByRole('button', { name: '点击替换图片' })).toBeTruthy();
-    expect(screen.getByLabelText('图片缩放')).toBeTruthy();
+    expect(screen.queryByLabelText('图片缩放')).toBeNull();
+    expect(onCropModeChange).toHaveBeenCalledWith(true);
   });
 });

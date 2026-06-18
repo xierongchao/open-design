@@ -68,11 +68,11 @@ export function resolveElectronBuilderTargets(to: MacBuildOutput): ElectronBuild
     case "app":
       return ["dir"];
     case "dmg":
-      return ["dir", "dmg"];
+      return ["dir"];
     case "zip":
       return ["dir", "zip"];
     case "all":
-      return ["dir", "dmg", "zip"];
+      return ["dir", "zip"];
   }
 }
 
@@ -100,6 +100,21 @@ export async function runElectronBuilder(
       output: paths.appBuilderOutputRoot,
     },
     dmg: {
+      contents: [
+        {
+          name: identity.publicAppBundleName,
+          path: paths.appPath,
+          type: "file",
+          x: 130,
+          y: 220,
+        },
+        {
+          path: "/Applications",
+          type: "link",
+          x: 410,
+          y: 220,
+        },
+      ],
       icon: macResources.icon,
       iconSize: 96,
       title: identity.installerTitle,

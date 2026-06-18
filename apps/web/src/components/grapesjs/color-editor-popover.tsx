@@ -291,12 +291,9 @@ export function ColorEditor({
           url={imageState?.url ?? ''}
           size={imageState?.size ?? 'cover'}
           repeat={imageState?.repeat ?? 'no-repeat'}
-          position={imageState?.position ?? 'center'}
-          cropSize={imageState?.cropSize}
           onUrlChange={(url) => onImageChange({ url })}
           onSizeChange={(size) => onImageChange({ size: bgSizeFromOption(size) })}
           onRepeatChange={(repeat) => onImageChange({ repeat })}
-          onCrop={(cssSize, cssPosition) => onImageChange({ size: cssSize, position: cssPosition })}
           onCropModeChange={(on) => onCropModeToggle?.(on)}
         />
       ) : (

@@ -807,6 +807,7 @@ export async function runElectronBuilder(
           invalidate: async () => null,
           key: hashJson({
             archiveCacheVersion: WIN_ARCHIVE_CACHE_VERSION,
+            builderDirKey: key,
             namespace: config.namespace,
             packagedAppKey,
             packagedVersion,

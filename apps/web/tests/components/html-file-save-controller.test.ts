@@ -110,6 +110,25 @@ describe('createHtmlFileSaveController', () => {
     expect(write).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
+
+  it('does not flush a save after canceling the pending source', async () => {
+    vi.useFakeTimers();
+    const file = htmlFile();
+    const write = vi.fn<HtmlFileSaveWriter>(async () => ({ ok: true, file }));
+    const controller = createHtmlFileSaveController({
+      projectId: 'project-1',
+      fileName: 'index.html',
+      write,
+    });
+
+    controller.scheduleSave('<html>pending</html>', 'grapesjs-autosave-flush', 1000);
+    controller.cancelScheduledSave();
+    await expect(controller.flushScheduledSave('grapesjs-view-mode-flush')).resolves.toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(write).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });
 
 describe('formatHtmlFileSaveError', () => {

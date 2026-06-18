@@ -101,6 +101,33 @@ export function readCanvasBodyStyleOverrides(parsed: ParsedDocument | null): Rec
   return styles;
 }
 
+export function applyCanvasBodyAttributes(
+  doc: Document | null,
+  parsed: ParsedDocument | null,
+): void {
+  if (!doc?.body || !parsed) return;
+  const body = doc.body;
+  const mirroredAttrMarker = 'data-od-grapesjs-body-attrs';
+  const previous = (body.getAttribute(mirroredAttrMarker) ?? '')
+    .split(/\s+/)
+    .filter(Boolean);
+  for (const attr of previous) {
+    body.removeAttribute(attr);
+  }
+
+  const mirrored: string[] = [];
+  const attrs = parseTagAttributes(parsed.bodyOpen);
+  for (const [attr, value] of Object.entries(attrs)) {
+    if (!shouldMirrorBodyAttribute(attr)) continue;
+    if (value === null) body.setAttribute(attr, '');
+    else body.setAttribute(attr, value);
+    mirrored.push(attr);
+  }
+
+  if (mirrored.length > 0) body.setAttribute(mirroredAttrMarker, mirrored.join(' '));
+  else body.removeAttribute(mirroredAttrMarker);
+}
+
 /**
  * Rebuild a `<body ...>` open tag, preserving existing attributes (class, id,
  * data-*) and merging the given inline styles on top of any existing style
@@ -129,6 +156,20 @@ function parseTagAttributes(tag: string): Record<string, string | null> {
     else if (match[4]) attrs[match[4].toLowerCase()] = null;
   }
   return attrs;
+}
+
+function shouldMirrorBodyAttribute(attr: string): boolean {
+  const lower = attr.toLowerCase();
+  if (lower === 'style' || lower === 'data-od-grapesjs-body-attrs') return false;
+  return (
+    lower === 'class' ||
+    lower === 'id' ||
+    lower === 'dir' ||
+    lower === 'lang' ||
+    lower === 'role' ||
+    lower.startsWith('data-') ||
+    lower.startsWith('aria-')
+  );
 }
 
 function styleBlocksFromHead(head: string): string[] {
@@ -209,7 +250,7 @@ export function resolveCanvasAssetUrl(
   baseHref?: string,
   env: CanvasUrlEnvironment | null = getBrowserUrlEnvironment(),
 ): string {
-  const trimmed = assetUrl.trim();
+  const trimmed = decodeHtmlAttributeEntities(assetUrl).trim();
   if (!trimmed) return trimmed;
   if (/^(?:https?:|data:|blob:|mailto:|tel:|#)/i.test(trimmed)) return trimmed;
   if (/^\/\//.test(trimmed)) return env ? `${env.protocol}${trimmed}` : trimmed;
@@ -221,6 +262,51 @@ export function resolveCanvasAssetUrl(
   } catch {
     return trimmed;
   }
+}
+
+export function restoreCanvasAssetUrl(
+  assetUrl: string,
+  baseHref?: string,
+  env: CanvasUrlEnvironment | null = getBrowserUrlEnvironment(),
+): string {
+  const trimmed = decodeHtmlAttributeEntities(assetUrl).trim();
+  if (!trimmed) return trimmed;
+  if (/^(?:data:|blob:|mailto:|tel:|#)/i.test(trimmed)) return trimmed;
+  if (!baseHref || !env) return trimmed;
+
+  const resolvedBase = resolveCanvasBaseHref(baseHref, env);
+  if (!resolvedBase) return trimmed;
+
+  try {
+    const base = new URL(resolvedBase);
+    const target = new URL(trimmed, env.origin);
+    if (target.origin !== base.origin) return trimmed;
+
+    const rawPrefix = rawRoutePrefix(base.pathname);
+    if (!rawPrefix || !target.pathname.startsWith(rawPrefix)) return trimmed;
+
+    const ownerDirPath = decodePathname(base.pathname.slice(rawPrefix.length));
+    const targetPath = decodePathname(target.pathname.slice(rawPrefix.length));
+    return `${relativePathFromDir(ownerDirPath, targetPath)}${target.search}${target.hash}`;
+  } catch {
+    return trimmed;
+  }
+}
+
+export function resolveCanvasBodyAssetUrls(
+  bodyHtml: string,
+  baseHref?: string,
+  env: CanvasUrlEnvironment | null = getBrowserUrlEnvironment(),
+): string {
+  return rewriteCanvasBodyAssetUrls(bodyHtml, (value) => resolveCanvasAssetUrl(value, baseHref, env));
+}
+
+export function restoreCanvasBodyAssetUrls(
+  bodyHtml: string,
+  baseHref?: string,
+  env: CanvasUrlEnvironment | null = getBrowserUrlEnvironment(),
+): string {
+  return rewriteCanvasBodyAssetUrls(bodyHtml, (value) => restoreCanvasAssetUrl(value, baseHref, env));
 }
 
 export function applyCanvasHeadAssets(
@@ -279,6 +365,127 @@ function resolveCanvasBaseHref(
   } catch {
     return trimmed;
   }
+}
+
+function rewriteCanvasBodyAssetUrls(
+  bodyHtml: string,
+  transform: (value: string) => string,
+): string {
+  if (!bodyHtml) return bodyHtml;
+  return bodyHtml.replace(/<[^>]*>/g, (tag) =>
+    tag.replace(
+      /\s(src|href|xlink:href|poster|srcset|style)\s*=\s*(["'])([\s\S]*?)\2/gi,
+      (full, attrName: string, quote: string, value: string) => {
+        const lower = attrName.toLowerCase();
+        const next = lower === 'srcset'
+          ? rewriteSrcsetUrls(value, transform)
+          : lower === 'style'
+            ? rewriteCssUrls(value, transform)
+            : transform(value);
+        if (next === value) return full;
+        return ` ${attrName}=${quote}${escapeHtmlAttrValue(next, quote)}${quote}`;
+      },
+    ));
+}
+
+function rewriteSrcsetUrls(
+  value: string,
+  transform: (value: string) => string,
+): string {
+  if (/\bdata:/i.test(value)) return value;
+  return value
+    .split(',')
+    .map((entry) => {
+      const match = entry.match(/^(\s*)(\S+)([\s\S]*?)$/);
+      if (!match) return entry;
+      const leading = match[1] ?? '';
+      const url = match[2] ?? '';
+      const descriptor = match[3] ?? '';
+      return `${leading}${transform(url)}${descriptor}`;
+    })
+    .join(',');
+}
+
+function rewriteCssUrls(
+  value: string,
+  transform: (value: string) => string,
+): string {
+  return value.replace(
+    /url\(\s*(?:(['"])([\s\S]*?)\1|&quot;([\s\S]*?)&quot;|([^)]*?))\s*\)/gi,
+    (_match, _quote: string | undefined, quoted: string | undefined, entityQuoted: string | undefined, unquoted: string | undefined) => {
+      const raw = quoted ?? entityQuoted ?? unquoted ?? '';
+      const next = transform(raw);
+      return `url("${escapeCssString(next)}")`;
+    },
+  );
+}
+
+function rawRoutePrefix(pathname: string): string | null {
+  const marker = '/raw/';
+  const index = pathname.indexOf(marker);
+  if (index < 0) return null;
+  return pathname.slice(0, index + marker.length);
+}
+
+function decodePathname(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+}
+
+function relativePathFromDir(ownerDirPath: string, targetPath: string): string {
+  const ownerParts = normalizedPathParts(ownerDirPath);
+  const targetParts = normalizedPathParts(targetPath);
+  let common = 0;
+  while (
+    common < ownerParts.length &&
+    common < targetParts.length &&
+    ownerParts[common] === targetParts[common]
+  ) {
+    common += 1;
+  }
+  const up = new Array(ownerParts.length - common).fill('..');
+  const down = targetParts.slice(common);
+  const relative = [...up, ...down].join('/');
+  return relative || '.';
+}
+
+function normalizedPathParts(pathname: string): string[] {
+  const out: string[] = [];
+  for (const part of pathname.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (out.length > 0) out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return out;
+}
+
+function decodeHtmlAttributeEntities(value: string): string {
+  return value
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&');
+}
+
+function escapeHtmlAttrValue(value: string, quote: string): string {
+  let escaped = value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;');
+  if (quote === '"') {
+    escaped = escaped.replace(/"/g, '&quot;');
+  } else {
+    escaped = escaped.replace(/'/g, '&#39;');
+  }
+  return escaped;
+}
+
+function escapeCssString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 function getBrowserUrlEnvironment(): CanvasUrlEnvironment | null {

@@ -10,6 +10,8 @@ const runWebStandaloneAfterPack = require("../resources/web-standalone-after-pac
 
 const CONFIG_ENV = "OD_TOOLS_PACK_WEB_STANDALONE_HOOK_CONFIG";
 const darwinSymlinkIt = process.platform === "win32" ? it.skip : it;
+const LONG_NEXT_PNPM_DIRECTORY =
+  "next@16.2.9_@opentelemetry+api@1.9.1_@playwright+test@1.60.0_react-dom@18.3.1_react@18.3.1__react@18.3.1";
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -40,6 +42,16 @@ async function writePnpmLinkedPackage(standaloneRoot: string, packageName: strin
   return packageRoot;
 }
 
+async function writePnpmPackageStoreEntry(
+  standaloneRoot: string,
+  packageName: string,
+  packageDirectoryName = `${packageName}@0.0.0`.split("/").join("+"),
+): Promise<string> {
+  const packageRoot = join(standaloneRoot, "node_modules", ".pnpm", packageDirectoryName, "node_modules", packageName);
+  await writePackage(packageRoot, packageName);
+  return packageRoot;
+}
+
 async function writeRootWebPackage(resourcesRoot: string): Promise<void> {
   const webPackageRoot = join(resourcesRoot, "app", "node_modules", "@open-design", "web");
   await mkdir(join(webPackageRoot, "dist", "sidecar"), { recursive: true });
@@ -49,7 +61,13 @@ async function writeRootWebPackage(resourcesRoot: string): Promise<void> {
 
 async function writeStandaloneFixture(
   workspaceRoot: string,
-  options: { includeHoistedNext: boolean; includeWebNext: boolean; useAbsolutePnpmSymlinks?: boolean },
+  options: {
+    includeHoistedNext: boolean;
+    includeWebNext: boolean;
+    nextPnpmDirectoryName?: string;
+    useAbsolutePnpmSymlinks?: boolean;
+    writeLongNextPnpmPath?: boolean;
+  },
 ): Promise<string> {
   const standaloneRoot = join(workspaceRoot, "apps", "web", ".next", "standalone");
   const sourceWebRoot = join(standaloneRoot, "apps", "web");
@@ -57,6 +75,7 @@ async function writeStandaloneFixture(
 
   if (options.useAbsolutePnpmSymlinks) {
     const nextPackageRoot = options.includeHoistedNext ? await writePnpmLinkedPackage(standaloneRoot, "next") : null;
+    await writePnpmLinkedPackage(standaloneRoot, "@next/env");
     await writePnpmLinkedPackage(standaloneRoot, "react");
     await writePnpmLinkedPackage(standaloneRoot, "react-dom");
     await writePnpmLinkedPackage(standaloneRoot, "styled-jsx");
@@ -66,8 +85,26 @@ async function writeStandaloneFixture(
     }
   } else {
     if (options.includeHoistedNext) {
+      const nextPackageRoot = await writePnpmPackageStoreEntry(
+        standaloneRoot,
+        "next",
+        options.nextPnpmDirectoryName,
+      );
+      if (options.writeLongNextPnpmPath) {
+        const longRuntimePath = join(
+          nextPackageRoot,
+          "dist",
+          "client",
+          "components",
+          "router-reducer",
+          "reducers",
+        );
+        await mkdir(longRuntimePath, { recursive: true });
+        await writeFile(join(longRuntimePath, "has-interception-route-in-current-tree.js"), "module.exports = true;\n", "utf8");
+      }
       await writePackage(join(hoistRoot, "next"), "next");
     }
+    await writePnpmPackageStoreEntry(standaloneRoot, "@next/env");
     await writePackage(join(hoistRoot, "react"), "react");
     await writePackage(join(hoistRoot, "react-dom"), "react-dom");
     await writePackage(join(hoistRoot, "styled-jsx"), "styled-jsx");
@@ -90,11 +127,13 @@ async function runFixture(options: {
   includeHoistedNext?: boolean;
   includeWebNext: boolean;
   macAdhocBundleSign?: boolean;
+  nextPnpmDirectoryName?: string;
   omitMacAdhocBundleSign?: boolean;
   omitRootWebPackage?: boolean;
   platformName?: "darwin" | "win32";
   requireRootWebPackageAudit?: boolean;
   useAbsolutePnpmSymlinks?: boolean;
+  writeLongNextPnpmPath?: boolean;
   writeMacCodeBundleFixture?: boolean;
 }): Promise<{
   appOutDir: string;
@@ -107,7 +146,9 @@ async function runFixture(options: {
   const standaloneSourceRoot = await writeStandaloneFixture(workspaceRoot, {
     includeHoistedNext: options.includeHoistedNext ?? true,
     includeWebNext: options.includeWebNext,
+    nextPnpmDirectoryName: options.nextPnpmDirectoryName,
     useAbsolutePnpmSymlinks: options.useAbsolutePnpmSymlinks,
+    writeLongNextPnpmPath: options.writeLongNextPnpmPath,
   });
   const platformName = options.platformName ?? "win32";
   const appOutDir = join(root, "builder", platformName === "darwin" ? "mac-arm64" : "win-unpacked");
@@ -193,30 +234,84 @@ describe("web standalone afterPack hook", () => {
     try {
       expect(await pathExists(join(fixture.destinationRoot, "node_modules", "next"))).toBe(false);
       expect(await pathExists(join(fixture.destinationRoot, "node_modules", ".pnpm", "node_modules", "next"))).toBe(false);
+      expect(await pathExists(join(fixture.destinationRoot, "node_modules", ".pnpm", "next@0.0.0"))).toBe(false);
       expect(await pathExists(join(fixture.destinationRoot, "apps", "web", "node_modules", "next", "package.json"))).toBe(true);
+      expect(await pathExists(join(fixture.destinationRoot, "apps", "web", "node_modules", "@next", "env", "package.json"))).toBe(true);
 
       const report = JSON.parse(await readFile(fixture.auditReportPath, "utf8")) as {
         copiedAudit: { resolvedModules: Record<string, string>; brokenSymlinks: string[] };
         copiedNextDedupe: { removedPaths: Array<{ reason: string }>; retainedPath: string };
         copiedNextDedupeAudit: { resolvedNextPackagePath: string; remainingPaths: string[] };
+        copiedNextRuntimeDependencies: Array<{ copied: boolean; packageName: string; path: string }>;
+        copiedWin32PathBudgetAudit: { budget: number; maxRelativePathLength: number; overBudgetCount: number };
       };
       const resolvedNextPath = report.copiedNextDedupeAudit.resolvedNextPackagePath.split(path.sep).join("/");
 
       expect(report.copiedNextDedupe.removedPaths.map((entry) => entry.reason)).toEqual([
         "copied standalone root next public-hoist duplicate",
         "copied standalone pnpm-hoisted next duplicate superseded by app-local next",
+        "copied standalone pnpm next package duplicate superseded by app-local next",
       ]);
       expect(report.copiedNextDedupe.retainedPath.split(path.sep).join("/")).toMatch(
         /apps\/web\/node_modules\/next$/,
       );
       expect(report.copiedNextDedupeAudit.remainingPaths).toEqual([]);
+      expect(report.copiedNextRuntimeDependencies).toEqual([
+        expect.objectContaining({ copied: true, packageName: "@next/env" }),
+      ]);
+      expect(report.copiedWin32PathBudgetAudit.overBudgetCount).toBe(0);
+      expect(report.copiedWin32PathBudgetAudit.maxRelativePathLength).toBeLessThanOrEqual(
+        report.copiedWin32PathBudgetAudit.budget,
+      );
       expect(resolvedNextPath).toMatch(
         /open-design-web-standalone\/apps\/web\/node_modules\/next\/package\.json$/,
+      );
+      expect(report.copiedAudit.resolvedModules["@next/env/package.json"].split(path.sep).join("/")).toMatch(
+        /open-design-web-standalone\/apps\/web\/node_modules\/@next\/env\/package\.json$/,
       );
       expect(report.copiedAudit.brokenSymlinks).toEqual([]);
       expect(report.copiedAudit.resolvedModules["next/package.json"].split(path.sep).join("/")).toMatch(
         /open-design-web-standalone\/apps\/web\/node_modules\/next\/package\.json$/,
       );
+    } finally {
+      await rm(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("prunes win32 copied standalone Next pnpm store paths before path budget audit", async () => {
+    const fixture = await runFixture({
+      includeWebNext: true,
+      nextPnpmDirectoryName: LONG_NEXT_PNPM_DIRECTORY,
+      writeLongNextPnpmPath: true,
+    });
+
+    try {
+      expect(await pathExists(join(
+        fixture.destinationRoot,
+        "node_modules",
+        ".pnpm",
+        LONG_NEXT_PNPM_DIRECTORY,
+      ))).toBe(false);
+
+      const report = JSON.parse(await readFile(fixture.auditReportPath, "utf8")) as {
+        copiedNextDedupe: { removedPaths: Array<{ path: string; reason: string }> };
+        copiedWin32PathBudgetAudit: {
+          budget: number;
+          maxRelativePath: string;
+          maxRelativePathLength: number;
+          overBudgetCount: number;
+        };
+      };
+      const removedNextStorePaths = report.copiedNextDedupe.removedPaths
+        .filter((entry) => entry.reason === "copied standalone pnpm next package duplicate superseded by app-local next")
+        .map((entry) => entry.path.split(path.sep).join("/"));
+
+      expect(removedNextStorePaths).toContainEqual(expect.stringContaining(LONG_NEXT_PNPM_DIRECTORY));
+      expect(report.copiedWin32PathBudgetAudit.overBudgetCount).toBe(0);
+      expect(report.copiedWin32PathBudgetAudit.maxRelativePathLength).toBeLessThanOrEqual(
+        report.copiedWin32PathBudgetAudit.budget,
+      );
+      expect(report.copiedWin32PathBudgetAudit.maxRelativePath).not.toContain(LONG_NEXT_PNPM_DIRECTORY);
     } finally {
       await rm(fixture.root, { force: true, recursive: true });
     }

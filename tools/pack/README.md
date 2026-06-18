@@ -8,6 +8,7 @@ The active slice is mac-first local packaging and smoke lifecycle control:
 - `tools-pack mac build --to app|dmg|zip`
 - `tools-pack mac build --to all --signed`
 - `tools-pack mac build --to all --portable` for release artifacts that must not bake local tools-pack runtime paths
+- `tools-pack mac build --portable --to dmg` for tester DMGs that must resolve runtime paths on the user's Mac
 - `tools-pack mac install`
 - `tools-pack mac start`
 - `tools-pack mac stop`
@@ -75,6 +76,7 @@ Local lifecycle commands:
 - `tools-pack win build --to dir` for fast unpacked smoke builds.
 - `tools-pack win build --to nsis` for installer builds.
 - `tools-pack win build --to all` for both outputs.
+- `tools-pack win build --portable --to zip` for tester portable zips that must not bake local tools-pack runtime paths.
 - `tools-pack win install`
 - `tools-pack win start`
 - `tools-pack win inspect --expr "document.title"`
@@ -88,6 +90,20 @@ Build artifacts are namespace-scoped under `.tmp/tools-pack/out/win/namespaces/<
 Packaged runtime state is namespace-scoped under `.tmp/tools-pack/runtime/win/namespaces/<namespace>/`.
 `--to dir` may point `built-app.json` at an immutable cached `win-unpacked` executable while keeping
 namespace-local config and runtime paths outside that cache entry.
+
+Do not create tester zips by manually archiving `.tmp/tools-pack/cache/entries/.../win-unpacked`; cache entries can
+belong to older non-portable builds and may contain the build machine's `namespaceBaseRoot`. Use
+`tools-pack win build --portable --to zip` and distribute the generated `portableZipPath` instead. The archive should
+contain `resources/open-design-config.json` without `namespaceBaseRoot`, `/Users`, or `tools-pack/runtime`.
+
+Windows portable zips also need to stay under common Windows extraction path limits. The `web-standalone` afterPack hook
+prunes the copied root `.pnpm/next@...` store package and writes `copiedWin32PathBudgetAudit` to
+`.tmp/tools-pack/out/win/namespaces/<namespace>/web-standalone-after-pack-audit.json`. If a tester sees the splash screen
+and then the app exits after extracting the zip, inspect the archive before debugging runtime code: it should contain no
+`resources/open-design-web-standalone/node_modules/.pnpm/next@...` entries, and the longest archive path should leave
+room for typical `Downloads` or `Desktop` extraction directories. The audit must also resolve
+`@next/env/package.json` from `open-design-web-standalone/apps/web/node_modules/@next/env`, because app-local Next still
+requires that runtime package after the long root `.pnpm/next@...` duplicate is pruned.
 
 ## Linux
 

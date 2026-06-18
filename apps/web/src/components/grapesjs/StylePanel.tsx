@@ -58,6 +58,8 @@ import {
 import {
   ColorEditor,
   type ColorEditorFillContext,
+  type FillMode,
+  type ImageFillState,
 } from './color-editor-popover';
 import {
   ColorProperty,
@@ -67,8 +69,10 @@ import {
 } from './color-fields';
 import type { GrapesjsEditorHandle, SelectionSnapshot } from './GrapesjsEditor';
 import {
-  ImageFillControl,
-  bgSizeFromOption,
+  ImageFillSummary,
+  fillSizeToObjectFit,
+  imageUrlFromCssUrl,
+  objectFitToFillSize,
   optionFromBgSize,
 } from './image-fill-control';
 import {
@@ -404,9 +408,14 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     [apply],
   );
 
+  const isImgElement = (selection?.tagName ?? '').toLowerCase() === 'img';
   const gradientFill = isGradient(selectedStyles.backgroundImage);
-  const [fillMode, setFillMode] = useState<'solid' | 'gradient' | 'image'>(
-    gradientFill ? 'gradient' : (selectedStyles.backgroundImage && selectedStyles.backgroundImage !== 'none' && !gradientFill ? 'image' : 'solid')
+  const backgroundImageUrl = imageUrlFromCssUrl(selectedStyles.backgroundImage);
+  const selectedImageUrl = isImgElement
+    ? (selectedImgSrc || editorRef.current?.getSelectedSrc() || '')
+    : backgroundImageUrl;
+  const [fillMode, setFillMode] = useState<FillMode>(
+    gradientFill ? 'gradient' : (isImgElement || backgroundImageUrl ? 'image' : 'solid')
   );
   const [gradient, setGradient] = useState<GradientValue>(() =>
     gradientFill && selectedStyles.backgroundImage
@@ -414,12 +423,12 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
       : createDefaultGradient(),
   );
   useEffect(() => {
-    setFillMode(isGradient(selectedStyles.backgroundImage) ? 'gradient' : (selectedStyles.backgroundImage && selectedStyles.backgroundImage !== 'none' && !isGradient(selectedStyles.backgroundImage) ? 'image' : 'solid'));
+    setFillMode(isGradient(selectedStyles.backgroundImage) ? 'gradient' : (isImgElement || backgroundImageUrl ? 'image' : 'solid'));
     if (selectedStyles.backgroundImage && isGradient(selectedStyles.backgroundImage)) {
       const parsed = parseGradientCss(selectedStyles.backgroundImage);
       if (parsed) setGradient(parsed);
     }
-  }, [selectedStyles.backgroundImage]);
+  }, [backgroundImageUrl, isImgElement, selectedStyles.backgroundImage]);
   const onGradientChange = useCallback(
     (nextGradient: GradientValue) => {
       setGradient(nextGradient);
@@ -447,6 +456,139 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     [],
   );
 
+  const buildImageFillState = useCallback((): ImageFillState => {
+    if (isImgElement) {
+      return {
+        url: selectedImgSrc || editorRef.current?.getSelectedSrc() || '',
+        size: objectFitToFillSize(selectedStyles.objectFit),
+        repeat: 'no-repeat',
+        position: selectedStyles.objectPosition ?? 'center',
+        cropSize: selectedStyles.objectFit === 'none' ? 'auto' : selectedStyles.objectFit ?? 'cover',
+      };
+    }
+    return {
+      url: backgroundImageUrl,
+      size: optionFromBgSize(selectedStyles.backgroundSize ?? 'cover'),
+      repeat: selectedStyles.backgroundRepeat ?? 'no-repeat',
+      position: selectedStyles.backgroundPosition ?? 'center',
+      cropSize: selectedStyles.backgroundSize ?? 'cover',
+    };
+  }, [
+    backgroundImageUrl,
+    editorRef,
+    isImgElement,
+    selectedImgSrc,
+    selectedStyles.backgroundPosition,
+    selectedStyles.backgroundRepeat,
+    selectedStyles.backgroundSize,
+    selectedStyles.objectFit,
+    selectedStyles.objectPosition,
+  ]);
+
+  const handleImageFillChange = useCallback((patch: Partial<ImageFillState>) => {
+    const updateOpenImageState = (statePatch: Partial<ImageFillState>) => {
+      setColorEditor((current) => current && current.fill
+        ? { ...current, fill: { ...current.fill, imageState: { ...current.fill.imageState, ...statePatch } } }
+        : current);
+    };
+
+    if (isImgElement) {
+      const nextStyles: StyleMap = {};
+      if (patch.url !== undefined) {
+        editorRef.current?.setSelectedSrc(patch.url);
+        setSelectedImgSrc(patch.url);
+      }
+      if (patch.size !== undefined) {
+        nextStyles.objectFit = fillSizeToObjectFit(patch.size);
+        if (nextStyles.objectFit === 'none' && !selectedStyles.objectPosition) nextStyles.objectPosition = 'center';
+      }
+      if (patch.position !== undefined) nextStyles.objectPosition = patch.position;
+      const nextImageState: Partial<ImageFillState> = { ...patch };
+      if (patch.size !== undefined) {
+        nextImageState.size = objectFitToFillSize(fillSizeToObjectFit(patch.size));
+        nextImageState.cropSize = patch.size;
+      }
+      updateOpenImageState(nextImageState);
+      if (Object.keys(nextStyles).length > 0) apply(nextStyles);
+      return;
+    }
+
+    const url = patch.url !== undefined ? patch.url : backgroundImageUrl;
+    const size = patch.size !== undefined ? patch.size : (selectedStyles.backgroundSize ?? 'cover');
+    const repeat = patch.repeat !== undefined ? patch.repeat : (selectedStyles.backgroundRepeat ?? 'no-repeat');
+    const position = patch.position !== undefined ? patch.position : (selectedStyles.backgroundPosition ?? 'center');
+    if (url) {
+      updateOpenImageState({
+        ...patch,
+        url,
+        size: optionFromBgSize(size),
+        cropSize: size,
+        repeat,
+        position,
+      });
+      apply({
+        backgroundImage: `url("${url}")`,
+        backgroundSize: size,
+        backgroundPosition: position,
+        backgroundRepeat: repeat,
+      });
+    } else {
+      updateOpenImageState({ ...patch, url: '' });
+      apply({ backgroundImage: 'none' });
+    }
+  }, [
+    apply,
+    backgroundImageUrl,
+    editorRef,
+    isImgElement,
+    selectedStyles.backgroundPosition,
+    selectedStyles.backgroundRepeat,
+    selectedStyles.backgroundSize,
+    selectedStyles.objectPosition,
+  ]);
+
+  const handleFillModeChange = useCallback((nextMode: FillMode) => {
+    setFillMode(nextMode);
+    setColorEditor((current) => current && current.fill
+      ? { ...current, fill: { ...current.fill, mode: nextMode } }
+      : current);
+    if (nextMode === 'solid') {
+      apply({ backgroundImage: 'none', backgroundColor: previousFill.current });
+    } else if (nextMode === 'gradient') {
+      apply({ backgroundImage: gradientToCss(gradient), backgroundColor: '' });
+    }
+  }, [apply, gradient]);
+
+  const openFillEditor = useCallback((anchor: HTMLElement, mode: FillMode = fillMode) => {
+    openColorEditor(
+      '填充',
+      selectedStyles.backgroundColor ?? previousFill.current,
+      (value) => {
+        previousFill.current = value;
+        apply({ backgroundColor: value, backgroundImage: 'none' });
+      },
+      anchor,
+      {
+        mode,
+        onModeChange: handleFillModeChange,
+        gradient,
+        onGradientChange,
+        imageState: buildImageFillState(),
+        onImageChange: handleImageFillChange,
+      },
+    );
+  }, [
+    apply,
+    buildImageFillState,
+    fillMode,
+    gradient,
+    handleFillModeChange,
+    handleImageFillChange,
+    onGradientChange,
+    openColorEditor,
+    selectedStyles.backgroundColor,
+  ]);
+
   const style = selectedStyles;
   const selectedStrokeLinecap = style.strokeLinecap ?? style['stroke-linecap'];
   const selectedStrokeLinejoin = style.strokeLinejoin ?? style['stroke-linejoin'];
@@ -457,10 +599,6 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     if (nextLinecap) setStrokeLinecap(nextLinecap);
     if (nextLinejoin) setStrokeLinejoin(nextLinejoin);
   }, [selectedStrokeLinecap, selectedStrokeLinejoin]);
-
-  // Whether the current selection is an <img>. Computed up here (before the
-  // image-edit effect) so the effect and the fill section both see it.
-  const isImgElement = (selection?.tagName ?? '').toLowerCase() === 'img';
 
   // Respond to a double-click-on-<img> request: open the floating fill
   // editor with the image tab selected so the user uploads a replacement
@@ -473,70 +611,10 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     if (!hasSelection) return;
     setFillMode('image');
     setFillExpanded(true);
-    // Anchor the floating panel on the panel root (the fill swatch may not be
-    // mounted in image mode, so the root is the stable anchor).
     const anchor = panelRootRef.current;
     if (!anchor) return;
-    const currentSrc = editorRef.current?.getSelectedSrc() ?? '';
-    openColorEditor(
-      '填充',
-      currentSrc,
-      (value) => {
-        if (isImgElement) {
-          editorRef.current?.setSelectedSrc(value);
-          setSelectedImgSrc(value);
-        } else {
-          apply({ backgroundImage: value ? `url("${value}")` : 'none', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' });
-        }
-      },
-      anchor,
-      {
-        mode: 'image',
-        onModeChange: (nextMode) => {
-          setFillMode(nextMode);
-          setColorEditor((current) => current && current.fill
-            ? { ...current, fill: { ...current.fill, mode: nextMode } }
-            : current);
-          if (nextMode === 'solid') {
-            apply({ backgroundImage: 'none', backgroundColor: previousFill.current });
-          } else if (nextMode === 'gradient') {
-            apply({ backgroundImage: gradientToCss(gradient), backgroundColor: '' });
-          }
-        },
-        gradient,
-        onGradientChange,
-        imageState: {
-          url: isImgElement
-            ? currentSrc
-            : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? ''),
-          size: optionFromBgSize(selectedStyles.backgroundSize ?? 'cover'),
-          repeat: selectedStyles.backgroundRepeat ?? 'no-repeat',
-          position: selectedStyles.backgroundPosition ?? 'center',
-          cropSize: selectedStyles.backgroundSize ?? 'cover',
-        },
-        onImageChange: (patch) => {
-          if (isImgElement) {
-            if (patch.url !== undefined) {
-              const nextUrl = patch.url;
-              editorRef.current?.setSelectedSrc(nextUrl);
-              setSelectedImgSrc(nextUrl);
-              setColorEditor((cur) => cur && cur.fill ? { ...cur, fill: { ...cur.fill, imageState: { ...cur.fill.imageState, url: nextUrl } } } : cur);
-            }
-          } else {
-            const url = patch.url !== undefined ? patch.url : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? '');
-            const size = patch.size !== undefined ? bgSizeFromOption(patch.size) : (selectedStyles.backgroundSize ?? 'cover');
-            const repeat = patch.repeat !== undefined ? patch.repeat : (selectedStyles.backgroundRepeat ?? 'no-repeat');
-            const position = patch.position !== undefined ? patch.position : (selectedStyles.backgroundPosition ?? 'center');
-            if (url) {
-              apply({ backgroundImage: `url("${url}")`, backgroundSize: size, backgroundPosition: position, backgroundRepeat: repeat });
-            } else {
-              apply({ backgroundImage: 'none' });
-            }
-          }
-        },
-      },
-    );
-  }, [imageEditSignal, hasSelection, isImgElement, selectedStyles, gradient, apply, openColorEditor, editorRef]);
+    openFillEditor(anchor, 'image');
+  }, [imageEditSignal, hasSelection, openFillEditor]);
 
   // Keep the previewed <img> src in sync whenever the selection changes.
   useEffect(() => {
@@ -1153,40 +1231,11 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
               anchor,
               {
                 mode: fillMode,
-                onModeChange: (nextMode) => {
-                  setFillMode(nextMode);
-                  // Sync the open color editor's mode so the active button
-                  // highlight and the rendered editor (gradient/image/solid)
-                  // follow the switch inside the floating panel.
-                  setColorEditor((current) => current && current.fill
-                    ? { ...current, fill: { ...current.fill, mode: nextMode } }
-                    : current);
-                  if (nextMode === 'solid') {
-                    apply({ backgroundImage: 'none', backgroundColor: previousFill.current });
-                  } else if (nextMode === 'gradient') {
-                    apply({ backgroundImage: gradientToCss(gradient), backgroundColor: '' });
-                  }
-                },
+                onModeChange: handleFillModeChange,
                 gradient,
                 onGradientChange,
-                imageState: {
-                  url: isImgElement ? (editorRef.current?.getSelectedSrc() ?? '') : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? ''),
-                  size: optionFromBgSize(selectedStyles.backgroundSize ?? 'cover'),
-                  repeat: selectedStyles.backgroundRepeat ?? 'no-repeat',
-                  position: selectedStyles.backgroundPosition ?? 'center',
-                  cropSize: selectedStyles.backgroundSize ?? 'cover',
-                },
-                onImageChange: (patch) => {
-                  const url = patch.url !== undefined ? patch.url : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? '');
-                  const size = patch.size !== undefined ? patch.size : (selectedStyles.backgroundSize ?? 'cover');
-                  const repeat = patch.repeat !== undefined ? patch.repeat : (selectedStyles.backgroundRepeat ?? 'no-repeat');
-                  const position = patch.position !== undefined ? patch.position : (selectedStyles.backgroundPosition ?? 'center');
-                  if (url) {
-                    apply({ backgroundImage: `url("${url}")`, backgroundSize: size, backgroundPosition: position, backgroundRepeat: repeat });
-                  } else {
-                    apply({ backgroundImage: 'none' });
-                  }
-                },
+                imageState: buildImageFillState(),
+                onImageChange: handleImageFillChange,
               },
             )}
           />
@@ -1194,47 +1243,13 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
           <div className={styles.gradientWrap}>
             <GradientEditor value={gradient} onChange={onGradientChange} />
           </div>
-        ) : isImgElement ? (
-          <ImageFillControl
-            url={selectedImgSrc}
-            size={optionFromBgSize(selectedStyles.backgroundSize ?? 'cover')}
-            repeat={selectedStyles.backgroundRepeat ?? 'no-repeat'}
-            position={selectedStyles.backgroundPosition ?? 'center'}
-            cropSize={selectedStyles.backgroundSize ?? 'cover'}
-            onUrlChange={(url) => {
-              // For <img>, uploading replaces the src attribute (not a
-              // background-image fill), matching "set this image" intent.
-              editorRef.current?.setSelectedSrc(url);
-              setSelectedImgSrc(url);
-            }}
-            onSizeChange={(size) => apply({ backgroundSize: bgSizeFromOption(size) })}
-            onRepeatChange={(repeat) => apply({ backgroundRepeat: repeat })}
-            onCrop={(cssSize, cssPosition) => apply({ backgroundSize: cssSize, backgroundPosition: cssPosition })}
-            onCropModeChange={(on) => editorRef.current?.setCropMode(on)}
-          />
         ) : (
-          <ImageFillControl
-            url={selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? ''}
-            size={optionFromBgSize(selectedStyles.backgroundSize ?? 'cover')}
-            repeat={selectedStyles.backgroundRepeat ?? 'no-repeat'}
-            position={selectedStyles.backgroundPosition ?? 'center'}
-            cropSize={selectedStyles.backgroundSize ?? 'cover'}
-            onUrlChange={(url) => {
-              if (url) {
-                const keepCrop = optionFromBgSize(selectedStyles.backgroundSize ?? 'cover') === 'od-crop';
-                apply({
-                  backgroundImage: `url("${url}")`,
-                  backgroundSize: keepCrop ? 'auto' : 'cover',
-                  backgroundPosition: 'center',
-                  backgroundRepeat: 'no-repeat',
-                });
-              }
-              else apply({ backgroundImage: 'none' });
+          <ImageFillSummary
+            url={selectedImageUrl}
+            onOpen={(anchor) => {
+              setFillMode('image');
+              openFillEditor(anchor, 'image');
             }}
-            onSizeChange={(size) => apply({ backgroundSize: bgSizeFromOption(size) })}
-            onRepeatChange={(repeat) => apply({ backgroundRepeat: repeat })}
-            onCrop={(cssSize, cssPosition) => apply({ backgroundSize: cssSize, backgroundPosition: cssPosition })}
-            onCropModeChange={(on) => editorRef.current?.setCropMode(on)}
           />
         )}
       </PropertySection>

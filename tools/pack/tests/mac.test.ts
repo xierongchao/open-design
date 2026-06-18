@@ -1,6 +1,6 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os, { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import process from "node:process";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,7 +12,7 @@ import {
   renderMacPackagedConfig,
   validateMacNativeRebuildOutput,
 } from "../src/mac/app.js";
-import { runElectronBuilder } from "../src/mac/builder.js";
+import { resolveElectronBuilderTargets, runElectronBuilder } from "../src/mac/builder.js";
 import { resolveSeededAppConfigPaths, seedPackagedAppConfig, writeLaunchPackagedConfig } from "../src/mac/index.js";
 import { resolveMacPaths } from "../src/mac/paths.js";
 
@@ -223,6 +223,25 @@ describe("renderMacPackagedConfig", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  it("omits namespaceBaseRoot for portable mac distribution artifacts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const config = makeConfig(root, { portable: true });
+
+      const packagedConfig = JSON.parse(
+        renderMacPackagedConfig({
+          appVersion: "1.2.3",
+          config,
+          usePrebundledStandaloneWeb: true,
+        }),
+      ) as Record<string, unknown>;
+
+      expect(packagedConfig).not.toHaveProperty("namespaceBaseRoot");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });
 
 describe("runElectronBuilder", () => {
@@ -243,6 +262,9 @@ describe("runElectronBuilder", () => {
 
     return JSON.parse(await readFile(paths.appBuilderConfigPath, "utf8")) as {
       afterSign?: string;
+      dmg?: {
+        contents?: Array<Record<string, unknown>>;
+      };
       mac?: {
         notarize?: boolean;
       };
@@ -271,6 +293,52 @@ describe("runElectronBuilder", () => {
     } finally {
       await rm(root, { force: true, recursive: true });
     }
+  });
+
+  it("pins DMG contents so the app bundle is included alongside the Applications link", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const config = makeConfig(root, {
+        appVersion: "1.2.3.nightly.4",
+        electronBuilderCliPath: join(root, "fake-electron-builder.mjs"),
+        signed: true,
+        webOutputMode: "server",
+      });
+      await writeFile(config.electronBuilderCliPath, "process.exit(0);\n", "utf8");
+      const paths = resolveMacPaths(config);
+
+      await runElectronBuilder(config, paths, ["dir"]);
+
+      const builderConfig = JSON.parse(await readFile(paths.appBuilderConfigPath, "utf8")) as {
+        dmg?: { contents?: Array<Record<string, unknown>> };
+      };
+      expect(builderConfig.dmg?.contents).toEqual([
+        {
+          name: basename(paths.appPath),
+          path: paths.appPath,
+          type: "file",
+          x: 130,
+          y: 220,
+        },
+        {
+          path: "/Applications",
+          type: "link",
+          x: 410,
+          y: 220,
+        },
+      ]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("resolveElectronBuilderTargets", () => {
+  it("leaves DMG creation to the tools-pack hdiutil artifact step", () => {
+    expect(resolveElectronBuilderTargets("app")).toEqual(["dir"]);
+    expect(resolveElectronBuilderTargets("dmg")).toEqual(["dir"]);
+    expect(resolveElectronBuilderTargets("zip")).toEqual(["dir", "zip"]);
+    expect(resolveElectronBuilderTargets("all")).toEqual(["dir", "zip"]);
   });
 });
 

@@ -3,11 +3,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyCanvasBodyAttributes,
   applyCanvasHeadAssets,
   extractCanvasHeadAssets,
   parseHtmlDocument,
   readCanvasBodyStyleOverrides,
   resolveCanvasAssetUrl,
+  resolveCanvasBodyAssetUrls,
+  restoreCanvasBodyAssetUrls,
 } from '../../src/components/grapesjs/html-document';
 
 describe('GrapesJS HTML document helpers', () => {
@@ -66,6 +69,72 @@ describe('GrapesJS HTML document helpers', () => {
       'http://localhost:17573/api/projects/sf1/raw/css/admin-kit.css',
     );
     expect(doc.head.querySelector('style')?.textContent).toBe('body { margin: 0; }');
+  });
+
+  it('mirrors safe body attributes into the GrapesJS canvas document', () => {
+    const parsed = parseHtmlDocument(`<!doctype html>
+<html>
+  <head></head>
+  <body class="bg-black text-white" data-theme="dark" onload="alert(1)"><main>审批页</main></body>
+</html>`);
+    const doc = document.implementation.createHTMLDocument('canvas');
+
+    applyCanvasBodyAttributes(doc, parsed);
+
+    expect(doc.body.getAttribute('class')).toBe('bg-black text-white');
+    expect(doc.body.getAttribute('data-theme')).toBe('dark');
+    expect(doc.body.getAttribute('onload')).toBeNull();
+
+    const nextParsed = parseHtmlDocument(`<!doctype html>
+<html>
+  <head></head>
+  <body class="bg-white"><main>审批页</main></body>
+</html>`);
+
+    applyCanvasBodyAttributes(doc, nextParsed);
+
+    expect(doc.body.getAttribute('class')).toBe('bg-white');
+    expect(doc.body.getAttribute('data-theme')).toBeNull();
+  });
+
+  it('resolves body image assets before GrapesJS parses canvas components', () => {
+    const body = [
+      '<section style="background-image: url(\'../assets/hero.jpg\')">',
+      '  <img src="../assets/logo.svg" srcset="../assets/logo-small.svg 1x, https://cdn.example/logo.svg 2x">',
+      '  <video poster="./poster.png"></video>',
+      '</section>',
+    ].join('');
+
+    expect(resolveCanvasBodyAssetUrls(
+      body,
+      '/api/projects/sf1/raw/%E7%9B%B4%E6%92%AD%E6%A8%A1%E5%9D%97/%E7%8B%AC%E7%AB%8B%E7%9B%B4%E6%92%AD/%E5%B0%8F%E7%A8%8B%E5%BA%8F%E9%A1%B5%E9%9D%A2/',
+      env,
+    )).toBe([
+      '<section style="background-image: url(&quot;http://localhost:17573/api/projects/sf1/raw/%E7%9B%B4%E6%92%AD%E6%A8%A1%E5%9D%97/%E7%8B%AC%E7%AB%8B%E7%9B%B4%E6%92%AD/assets/hero.jpg&quot;)">',
+      '  <img src="http://localhost:17573/api/projects/sf1/raw/%E7%9B%B4%E6%92%AD%E6%A8%A1%E5%9D%97/%E7%8B%AC%E7%AB%8B%E7%9B%B4%E6%92%AD/assets/logo.svg" srcset="http://localhost:17573/api/projects/sf1/raw/%E7%9B%B4%E6%92%AD%E6%A8%A1%E5%9D%97/%E7%8B%AC%E7%AB%8B%E7%9B%B4%E6%92%AD/assets/logo-small.svg 1x, https://cdn.example/logo.svg 2x">',
+      '  <video poster="http://localhost:17573/api/projects/sf1/raw/%E7%9B%B4%E6%92%AD%E6%A8%A1%E5%9D%97/%E7%8B%AC%E7%AB%8B%E7%9B%B4%E6%92%AD/%E5%B0%8F%E7%A8%8B%E5%BA%8F%E9%A1%B5%E9%9D%A2/poster.png"></video>',
+      '</section>',
+    ].join(''));
+  });
+
+  it('restores canvas raw URLs back to project-relative paths before saving', () => {
+    const body = [
+      '<section style="background-image: url(&quot;http://localhost:17573/api/projects/sf1/raw/%E7%9B%B4%E6%92%AD%E6%A8%A1%E5%9D%97/%E7%8B%AC%E7%AB%8B%E7%9B%B4%E6%92%AD/assets/hero.jpg&quot;)">',
+      '  <img src="http://localhost:17573/api/projects/sf1/raw/%E7%9B%B4%E6%92%AD%E6%A8%A1%E5%9D%97/%E7%8B%AC%E7%AB%8B%E7%9B%B4%E6%92%AD/assets/logo.svg">',
+      '  <img src="https://cdn.example/remote.svg">',
+      '</section>',
+    ].join('');
+
+    expect(restoreCanvasBodyAssetUrls(
+      body,
+      '/api/projects/sf1/raw/%E7%9B%B4%E6%92%AD%E6%A8%A1%E5%9D%97/%E7%8B%AC%E7%AB%8B%E7%9B%B4%E6%92%AD/%E5%B0%8F%E7%A8%8B%E5%BA%8F%E9%A1%B5%E9%9D%A2/',
+      env,
+    )).toBe([
+      '<section style="background-image: url(&quot;../assets/hero.jpg&quot;)">',
+      '  <img src="../assets/logo.svg">',
+      '  <img src="https://cdn.example/remote.svg">',
+      '</section>',
+    ].join(''));
   });
 
   it('reads body appearance styles from the original document CSS', () => {

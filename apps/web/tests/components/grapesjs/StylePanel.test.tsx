@@ -30,20 +30,27 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderPanel(styles: Record<string, string> = {}) {
+function renderPanel(
+  styles: Record<string, string> = {},
+  options: { tagName?: string; selector?: string; selectedSrc?: string } = {},
+) {
   const applyStyle = vi.fn();
+  const setSelectedSrc = vi.fn();
+  const getSelectedSrc = vi.fn(() => options.selectedSrc ?? '');
   const editorRef = {
     current: {
       applyStyle,
       replaceColors: vi.fn(),
       reselectCurrent: vi.fn(),
       setCropMode: vi.fn(),
+      setSelectedSrc,
+      getSelectedSrc,
     } as unknown as GrapesjsEditorHandle,
   };
   const selection: SelectionSnapshot = {
     hasSelection: true,
-    tagName: 'div',
-    selector: 'div.color-grid',
+    tagName: options.tagName ?? 'div',
+    selector: options.selector ?? 'div.color-grid',
     styles: {
       display: 'block',
       width: '320px',
@@ -59,7 +66,7 @@ function renderPanel(styles: Record<string, string> = {}) {
   };
 
   render(<StylePanel editorRef={editorRef} selection={selection} />);
-  return { applyStyle };
+  return { applyStyle, getSelectedSrc, setSelectedSrc };
 }
 
 function renderCanvasPanel(styles: Record<string, string> = { backgroundColor: 'rgb(246, 246, 246)', fontSize: '16px' }) {
@@ -271,8 +278,12 @@ describe('StylePanel', () => {
       backgroundRepeat: 'no-repeat',
     });
 
+    expect(screen.getByRole('button', { name: '打开图片填充' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: '填充颜色值' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '打开图片填充' }));
+
     expect(screen.getByRole('button', { name: '点击替换图片' })).toBeTruthy();
-    expect(screen.getByLabelText('图片缩放')).toBeTruthy();
+    expect(screen.queryByLabelText('图片缩放')).toBeNull();
   });
 
   it('uploads replacement images from crop mode without leaving crop sizing', async () => {
@@ -289,6 +300,7 @@ describe('StylePanel', () => {
     });
     const file = new File(['img'], 'next.png', { type: 'image/png' });
 
+    fireEvent.click(screen.getByRole('button', { name: '打开图片填充' }));
     fireEvent.change(screen.getByLabelText('选择图片文件'), {
       target: { files: [file] },
     });
@@ -301,5 +313,29 @@ describe('StylePanel', () => {
         'background-repeat': 'no-repeat',
       });
     });
+  });
+
+  it('shows img selections as image fills and opens the image tab', () => {
+    const { applyStyle, getSelectedSrc } = renderPanel({
+      objectFit: 'cover',
+      objectPosition: 'center',
+    }, {
+      tagName: 'img',
+      selector: 'img.hero',
+      selectedSrc: 'data:image/png;base64,current',
+    });
+
+    expect(getSelectedSrc).toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '打开图片填充' })).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: '填充颜色值' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '打开图片填充' }));
+    expect(screen.getByRole('button', { name: '图片填充' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.change(screen.getByRole('combobox', { name: '尺寸' }), {
+      target: { value: 'od-crop' },
+    });
+
+    expect(screen.queryByLabelText('图片缩放')).toBeNull();
+    expect(applyStyle).toHaveBeenCalledWith({ 'object-fit': 'none' });
   });
 });

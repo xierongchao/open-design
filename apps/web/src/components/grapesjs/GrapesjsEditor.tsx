@@ -13,11 +13,14 @@ import { odStableIdPlugin, odStableIdPluginKey } from './od-stable-id-plugin';
 import { odResizablePlugin, odResizablePluginKey } from './od-resizable-plugin';
 import CanvasContextMenu, { type CanvasCtxMenuState } from './CanvasContextMenu';
 import {
+  applyCanvasBodyAttributes,
   applyCanvasHeadAssets,
   areDocumentsEqual,
   parseHtmlDocument,
   readCanvasBodyStyleOverrides,
   reassembleDocument,
+  resolveCanvasBodyAssetUrls,
+  restoreCanvasBodyAssetUrls,
   type ParsedDocument,
 } from './html-document';
 import {
@@ -164,13 +167,18 @@ function readCanvasWrapperStyle(editor: GrapesjsEditorInstance): Record<string, 
 function buildEditorDocument(
   editor: GrapesjsEditorInstance,
   parsed: ParsedDocument,
+  baseHref?: string,
 ): string {
   return reassembleDocument(
     parsed,
-    editor.getHtml(),
+    restoreCanvasBodyAssetUrls(editor.getHtml(), baseHref),
     editor.getCss() ?? '',
     readCanvasWrapperStyle(editor),
   );
+}
+
+function canvasComponentHtml(parsed: ParsedDocument, baseHref?: string): string {
+  return resolveCanvasBodyAssetUrls(parsed.bodyInner || '<div></div>', baseHref);
 }
 
 function applyCanvasFrameSize(
@@ -486,6 +494,8 @@ export interface GrapesjsEditorProps {
   onDirtyChange?: (dirty: boolean) => void;
   /** Cmd/Ctrl+S handler — wired in addition to GrapesJS's own keymap. */
   onSave?: () => void;
+  /** Cmd/Ctrl+R handler — refreshes the host preview without reloading the app. */
+  onReload?: () => void;
   /** Optional className for the root container. */
   className?: string;
   /** Host-controlled selection color: default editor blue or element-picker green. */
@@ -567,6 +577,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       onChange,
       onDirtyChange,
       onSave,
+      onReload,
       className,
       selectionTone = 'default',
       selectionChrome = 'edit',
@@ -594,6 +605,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const onChangeRef = useRef(onChange);
     const onDirtyChangeRef = useRef(onDirtyChange);
     const onSaveRef = useRef(onSave);
+    const onReloadRef = useRef(onReload);
     const onSelectTargetsRef = useRef(onSelectTargets);
     const onHoverTargetRef = useRef(onHoverTarget);
     const onStyleUpdateRef = useRef(onStyleUpdate);
@@ -621,6 +633,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const refreshSelectionSnapshotRef = useRef<(() => void) | null>(null);
     const syncZoomAttrRef = useRef<(() => void) | null>(null);
     const syncCoordsAttrRef = useRef<(() => void) | null>(null);
+    const syncCropOverlayRef = useRef<(() => void) | null>(null);
     const selectionColorCollectorRef = useRef(createSelectionColorCollector());
     const currentCanvasSizeRef = useRef<{ width: number; height: number } | null>(
       initialViewport ? { width: initialViewport.width, height: initialViewport.height } : null,
@@ -646,6 +659,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     useEffect(() => {
       onSaveRef.current = onSave;
     }, [onSave]);
+    useEffect(() => {
+      onReloadRef.current = onReload;
+    }, [onReload]);
     useEffect(() => {
       onSelectTargetsRef.current = onSelectTargets;
     }, [onSelectTargets]);
@@ -744,7 +760,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     }, []);
     useEffect(() => {
       baseHrefRef.current = baseHref;
-      applyCanvasHeadAssets(editorRef.current?.Canvas.getDocument() ?? null, parsedRef.current, baseHref);
+      const doc = editorRef.current?.Canvas.getDocument() ?? null;
+      applyCanvasHeadAssets(doc, parsedRef.current, baseHref);
+      applyCanvasBodyAttributes(doc, parsedRef.current);
       const editor = editorRef.current;
       if (editor) applyCanvasBodyStyleOverrides(editor, currentCanvasStylesRef.current);
     }, [baseHref]);
@@ -771,7 +789,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       const editor = editorRef.current;
       const parsed = parsedRef.current;
       if (!editor || !parsed) return;
-      const full = buildEditorDocument(editor, parsed);
+      const full = buildEditorDocument(editor, parsed, baseHrefRef.current);
       if (areDocumentsEqual(full, lastEmittedRef.current)) return;
       lastEmittedRef.current = full;
       // CRITICAL loop-break: sync the emitted value to lastExternalHtmlRef so
@@ -807,7 +825,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // We feed GrapesJS just the body so <head>/<script>/external
             // CSS survive round-trips. The full document is reassembled
             // in emitChange().
-            components: parsed.bodyInner || '<div></div>',
+            components: canvasComponentHtml(parsed, baseHrefRef.current),
             style: '',
             height: '100%',
             width: '100%',
@@ -1115,7 +1133,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           // addSpot() call is deferred to `load` (below) so the wrapper
           // component exists; the eager call here may race a cold iframe.
           const applyCurrentCanvasHead = () => {
-            applyCanvasHeadAssets(editor.Canvas.getDocument(), parsedRef.current, baseHrefRef.current);
+            const doc = editor.Canvas.getDocument();
+            applyCanvasHeadAssets(doc, parsedRef.current, baseHrefRef.current);
+            applyCanvasBodyAttributes(doc, parsedRef.current);
             applyCanvasBodyStyleOverrides(editor, currentCanvasStylesRef.current);
           };
 
@@ -2280,6 +2300,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               }
               // Undo/Redo inside the canvas iframe (focus is here after a
               // canvas click, so the host-window handler won't fire).
+              if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && (ev.key === 'r' || ev.key === 'R')) {
+                ev.preventDefault();
+                onReloadRef.current?.();
+                return;
+              }
               if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && (ev.key === 'z' || ev.key === 'Z')) {
                 ev.preventDefault();
                 try { ev.shiftKey ? editor.runCommand('core:redo') : editor.runCommand('core:undo'); } catch { /* ignore */ }
@@ -2590,10 +2615,36 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (ev.code !== 'Space' || isTextInputTarget(ev.target)) return;
               consumeCanvasEvent(ev);
             };
-            // ── 裁剪 mode: drag the selected element to pan its background-image,
-            //    wheel to scale its background-size. Active only while
-            //    cropModeRef.current is true and the pointer is over the
-            //    selected component (which must have a background-image).
+            // ── 裁剪 mode: drag the selected element to pan its image fill.
+            //    Background-image fills use background-position/size; <img>
+            //    fills use object-position so the visible element box acts as
+            //    the crop viewport. During interaction we mutate only the
+            //    canvas DOM for immediate feedback, then commit once on
+            //    pointerup to avoid GrapesJS re-rendering the target mid-drag.
+            type CropTarget = { el: HTMLElement; kind: 'background' | 'image' };
+            type CropHandle = 'nw' | 'ne' | 'se' | 'sw';
+            type CropPatch = {
+              position?: string;
+              size?: string;
+              objectPosition?: string;
+            };
+            type CropInteraction = {
+              type: 'pan' | 'resize';
+              handle?: CropHandle;
+              startX: number;
+              startY: number;
+              posX: number;
+              posY: number;
+              sizeW: number;
+              sizeH: number;
+              ratio: number;
+              zoom: number;
+              pending: CropPatch;
+            };
+            const cropOverlayState = {
+              root: null as HTMLDivElement | null,
+            };
+            const cropNaturalSizeCache = new Map<string, { w: number; h: number }>();
             const cropSelectedEl = (): HTMLElement | null => {
               try {
                 const sel = editor.getSelected?.() as Component | undefined;
@@ -2601,10 +2652,63 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 return getElementFromComponent(sel) as HTMLElement | null;
               } catch { return null; }
             };
-            const readBgPos = (el: HTMLElement): { x: number; y: number } => {
-              const st = el.style;
-              // background-position is stored as e.g. "12px -30px" or keywords.
-              const v = String(st.backgroundPosition || st.getPropertyValue('background-position') || '0px 0px');
+            const readComputedStyleValue = (el: HTMLElement, property: string): string => {
+              try {
+                return el.ownerDocument.defaultView?.getComputedStyle(el).getPropertyValue(property) ?? '';
+              } catch {
+                return '';
+              }
+            };
+            const readBackgroundImage = (el: HTMLElement): string => {
+              return String(el.style.backgroundImage || el.style.getPropertyValue('background-image') || readComputedStyleValue(el, 'background-image') || '');
+            };
+            const readCssUrl = (value: string): string => {
+              const match = value.trim().match(/^url\((['"]?)(.*)\1\)$/);
+              return match?.[2] ?? '';
+            };
+            const readCropImageUrl = (target: CropTarget): string => {
+              if (target.kind === 'image') {
+                const img = target.el as HTMLImageElement;
+                return img.getAttribute('src') || img.currentSrc || img.src || '';
+              }
+              return readCssUrl(readBackgroundImage(target.el));
+            };
+            const cropSelectedTarget = (): CropTarget | null => {
+              const el = cropSelectedEl();
+              if (!el) return null;
+              if (el.tagName === 'IMG') {
+                const img = el as HTMLImageElement;
+                const src = img.getAttribute('src') || img.currentSrc || img.src || '';
+                return src ? { el, kind: 'image' } : null;
+              }
+              const bg = readBackgroundImage(el);
+              return bg && bg !== 'none' ? { el, kind: 'background' } : null;
+            };
+            const pointInElementRect = (el: HTMLElement, ev: PointerEvent | WheelEvent | MouseEvent): boolean => {
+              const rect = el.getBoundingClientRect();
+              return ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top && ev.clientY <= rect.bottom;
+            };
+            const eventTargetInCropOverlay = (ev: Event): boolean => {
+              const node = ev.target as Element | null;
+              return !!node?.closest?.('[data-od-crop-overlay]');
+            };
+            const cropEventInInteractionArea = (ev: PointerEvent | WheelEvent | MouseEvent): boolean => {
+              if (eventTargetInCropOverlay(ev)) return true;
+              const target = cropSelectedTarget();
+              return target ? pointInElementRect(target.el, ev) : false;
+            };
+            const clearGrapesjsHoverForCrop = () => {
+              try {
+                (editor as unknown as { setHovered?: (cmp: Component | null) => void }).setHovered?.(null);
+              } catch { /* ignore */ }
+              onHoverTargetRef.current?.(null);
+            };
+            const readCropPos = (target: CropTarget): { x: number; y: number } => {
+              const st = target.el.style;
+              const property = target.kind === 'image' ? 'object-position' : 'background-position';
+              // Position is stored as e.g. "12px -30px"; keywords fall back to
+              // 0,0 so the first drag converts them into explicit pixel values.
+              const v = String(st.getPropertyValue(property) || readComputedStyleValue(target.el, property) || '0px 0px');
               const parts = v.split(/\s+/);
               const num = (s: string): number => {
                 const mm = /^(-?[\d.]+)/.exec(s);
@@ -2612,100 +2716,265 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               };
               return { x: parts[0] ? num(parts[0]) : 0, y: parts[1] ? num(parts[1]) : 0 };
             };
-            const readBgSize = (el: HTMLElement): { w: number; h: number } => {
-              const st = el.style;
-              const v = String(st.backgroundSize || st.getPropertyValue('background-size') || 'cover');
+            const ensureCropNaturalSize = (url: string, doc: Document) => {
+              if (!url || cropNaturalSizeCache.has(url)) return;
+              const img = doc.createElement('img');
+              img.onload = () => {
+                cropNaturalSizeCache.set(url, {
+                  w: img.naturalWidth || 1,
+                  h: img.naturalHeight || 1,
+                });
+                syncCropOverlayRef.current?.();
+              };
+              img.src = url;
+            };
+            const readCropSize = (target: CropTarget): { w: number; h: number } => {
+              if (target.kind === 'image') {
+                const img = target.el as HTMLImageElement;
+                return {
+                  w: img.naturalWidth || target.el.clientWidth || 1,
+                  h: img.naturalHeight || target.el.clientHeight || 1,
+                };
+              }
+              const st = target.el.style;
+              const v = String(st.backgroundSize || st.getPropertyValue('background-size') || readComputedStyleValue(target.el, 'background-size') || 'cover');
               // px form: "640px 480px"; keywords fall back to the element box.
               const m = /^([\d.]+)px\s+([\d.]+)px$/.exec(v);
               if (m && m[1] && m[2]) return { w: parseFloat(m[1]), h: parseFloat(m[2]) };
-              const w = el.clientWidth || 1;
-              const h = el.clientHeight || 1;
+              if (v === 'auto') {
+                const url = readCropImageUrl(target);
+                ensureCropNaturalSize(url, target.el.ownerDocument);
+                const natural = cropNaturalSizeCache.get(url);
+                if (natural) return natural;
+              }
+              const w = target.el.clientWidth || 1;
+              const h = target.el.clientHeight || 1;
               return { w, h };
             };
-            let cropDragging = false;
-            let cropStart = { x: 0, y: 0, posX: 0, posY: 0 };
-            const onCropPointerDown = (ev: PointerEvent) => {
-              if (readOnlyRef.current || !cropModeRef.current) return;
-              if (ev.button !== 0) return;
-              const el = cropSelectedEl();
-              if (!el) return;
-              // Only start a crop drag when the pointer is over the selected
-              // element itself (not its children / other elements).
-              if (!el.contains(ev.target as Node)) return;
-              const bg = el.style.backgroundImage || '';
-              if (!bg || bg === 'none') return;
-              ev.preventDefault();
-              ev.stopImmediatePropagation();
-              cropDragging = true;
-              const zoom = (editor.Canvas.getZoom?.() ?? 100) / 100;
-              const pos = readBgPos(el);
-              cropStart = { x: ev.clientX, y: ev.clientY, posX: pos.x, posY: pos.y };
-              // stash zoom on the closure via a ref-like local captured by move
-              (cropStart as unknown as { zoom: number }).zoom = zoom;
-              el.style.cursor = 'grabbing';
+            const removeCropOverlay = () => {
+              cropOverlayState.root?.remove();
+              cropOverlayState.root = null;
             };
-            const onCropPointerMove = (ev: PointerEvent) => {
-              if (!cropDragging) return;
-              const el = cropSelectedEl();
-              if (!el) return;
-              ev.preventDefault();
-              const zoom = (cropStart as unknown as { zoom: number }).zoom || 1;
-              const dx = (ev.clientX - cropStart.x) / zoom;
-              const dy = (ev.clientY - cropStart.y) / zoom;
-              const nx = Math.round(cropStart.posX + dx);
-              const ny = Math.round(cropStart.posY + dy);
+            const styleCropHandle = (handle: HTMLElement, position: CropHandle) => {
+              handle.setAttribute('data-od-crop-handle', position);
+              handle.setAttribute('aria-hidden', 'true');
+              handle.style.position = 'absolute';
+              handle.style.width = '10px';
+              handle.style.height = '10px';
+              handle.style.border = '1px solid #0d99ff';
+              handle.style.borderRadius = '2px';
+              handle.style.background = '#ffffff';
+              handle.style.boxShadow = '0 1px 4px rgba(0,0,0,0.22)';
+              handle.style.pointerEvents = 'auto';
+              if (position.includes('n')) handle.style.top = '-5px';
+              if (position.includes('s')) handle.style.bottom = '-5px';
+              if (position.includes('w')) handle.style.left = '-5px';
+              if (position.includes('e')) handle.style.right = '-5px';
+              handle.style.cursor = position === 'nw' || position === 'se' ? 'nwse-resize' : 'nesw-resize';
+            };
+            const syncCropOverlay = () => {
+              const target = cropModeRef.current ? cropSelectedTarget() : null;
+              if (!target) {
+                removeCropOverlay();
+                return;
+              }
+              const url = readCropImageUrl(target);
+              if (!url) {
+                removeCropOverlay();
+                return;
+              }
+              const doc = target.el.ownerDocument;
+              const rect = target.el.getBoundingClientRect();
+              const pos = readCropPos(target);
+              const size = readCropSize(target);
+              const overlay = cropOverlayState.root ?? doc.createElement('div');
+              if (!cropOverlayState.root) {
+                cropOverlayState.root = overlay;
+                overlay.setAttribute('data-od-crop-overlay', 'true');
+                overlay.style.position = 'fixed';
+                overlay.style.pointerEvents = 'auto';
+                overlay.style.zIndex = '2147483000';
+                overlay.style.border = '1px dashed rgba(13, 153, 255, 0.95)';
+                overlay.style.boxShadow = '0 0 0 1px rgba(13, 153, 255, 0.22)';
+                overlay.style.backgroundRepeat = 'no-repeat';
+                overlay.style.backgroundSize = '100% 100%';
+                overlay.style.opacity = '0.42';
+                overlay.style.boxSizing = 'border-box';
+                overlay.style.cursor = 'move';
+                overlay.style.touchAction = 'none';
+                overlay.style.userSelect = 'none';
+                doc.body.appendChild(overlay);
+              }
+              overlay.style.left = `${Math.round(rect.left + pos.x)}px`;
+              overlay.style.top = `${Math.round(rect.top + pos.y)}px`;
+              overlay.style.width = `${Math.max(1, Math.round(size.w))}px`;
+              overlay.style.height = `${Math.max(1, Math.round(size.h))}px`;
+              overlay.style.backgroundImage = `url("${url}")`;
+              overlay.replaceChildren();
+              if (target.kind === 'background') {
+                for (const position of ['nw', 'ne', 'se', 'sw'] as CropHandle[]) {
+                  const handle = doc.createElement('span');
+                  styleCropHandle(handle, position);
+                  overlay.appendChild(handle);
+                }
+              }
+            };
+            syncCropOverlayRef.current = syncCropOverlay;
+            let cropInteraction: CropInteraction | null = null;
+            const previewCropPatch = (target: CropTarget, patch: CropPatch) => {
+              if (patch.position) target.el.style.setProperty('background-position', patch.position);
+              if (patch.size) target.el.style.setProperty('background-size', patch.size);
+              if (patch.objectPosition) {
+                target.el.style.setProperty('object-fit', 'none');
+                target.el.style.setProperty('object-position', patch.objectPosition);
+              }
+              syncCropOverlay();
+            };
+            const commitCropPatch = (target: CropTarget, patch: CropPatch) => {
+              const stylePatch: Record<string, string> = {};
+              if (patch.position) stylePatch['background-position'] = patch.position;
+              if (patch.size) stylePatch['background-size'] = patch.size;
+              if (patch.objectPosition) {
+                stylePatch['object-fit'] = 'none';
+                stylePatch['object-position'] = patch.objectPosition;
+              }
+              if (Object.keys(stylePatch).length === 0) return;
               try {
                 const sel = editor.getSelected?.() as Component | undefined;
                 if (sel) {
                   const merged = { ...(sel.getStyle?.() ?? {}) } as Record<string, string>;
-                  merged['background-position'] = `${nx}px ${ny}px`;
-                  sel.setStyle?.(merged);
-                } else {
-                  el.style.backgroundPosition = `${nx}px ${ny}px`;
+                  sel.setStyle?.({ ...merged, ...stylePatch });
                 }
-                refreshSelectionSnapshotRef.current?.();
               } catch { /* ignore */ }
+              refreshSelectionSnapshotRef.current?.();
+              scheduleEmitRef.current?.();
+              syncCropOverlay();
+            };
+            const handleFromEvent = (ev: PointerEvent): CropHandle | null => {
+              const target = ev.target as Element | null;
+              const handle = target?.closest?.('[data-od-crop-handle]');
+              const value = handle?.getAttribute('data-od-crop-handle');
+              return value === 'nw' || value === 'ne' || value === 'se' || value === 'sw' ? value : null;
+            };
+            const onCropPointerDown = (ev: PointerEvent) => {
+              if (readOnlyRef.current || !cropModeRef.current) return;
+              if (ev.button !== 0) return;
+              const target = cropSelectedTarget();
+              if (!target) return;
+              const { el } = target;
+              const handle = handleFromEvent(ev);
+              if (!handle && !eventTargetInCropOverlay(ev) && !pointInElementRect(el, ev)) return;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              clearGrapesjsHoverForCrop();
+              const zoom = (editor.Canvas.getZoom?.() ?? 100) / 100;
+              const pos = readCropPos(target);
+              const size = readCropSize(target);
+              cropInteraction = {
+                type: handle ? 'resize' : 'pan',
+                handle: handle ?? undefined,
+                startX: ev.clientX,
+                startY: ev.clientY,
+                posX: pos.x,
+                posY: pos.y,
+                sizeW: size.w,
+                sizeH: size.h,
+                ratio: size.h > 0 && size.w > 0 ? size.h / size.w : 1,
+                zoom,
+                pending: {},
+              };
+              el.style.cursor = 'grabbing';
+              syncCropOverlay();
+            };
+            const onCropPointerMove = (ev: PointerEvent) => {
+              if (!cropInteraction) {
+                if (cropModeRef.current && cropEventInInteractionArea(ev)) {
+                  ev.preventDefault();
+                  ev.stopImmediatePropagation();
+                  clearGrapesjsHoverForCrop();
+                }
+                return;
+              }
+              const target = cropSelectedTarget();
+              if (!target) return;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              clearGrapesjsHoverForCrop();
+              const dx = (ev.clientX - cropInteraction.startX) / cropInteraction.zoom;
+              const dy = (ev.clientY - cropInteraction.startY) / cropInteraction.zoom;
+              if (cropInteraction.type === 'resize' && target.kind === 'background') {
+                const handle = cropInteraction.handle ?? 'se';
+                const horizontalDelta = handle.includes('e') ? dx : -dx;
+                const verticalDelta = handle.includes('s') ? dy : -dy;
+                const dominantDelta = Math.abs(horizontalDelta) >= Math.abs(verticalDelta)
+                  ? horizontalDelta
+                  : verticalDelta / cropInteraction.ratio;
+                const nextW = Math.max(8, Math.round(cropInteraction.sizeW + dominantDelta));
+                const nextH = Math.max(8, Math.round(nextW * cropInteraction.ratio));
+                const nextX = handle.includes('w')
+                  ? Math.round(cropInteraction.posX + cropInteraction.sizeW - nextW)
+                  : cropInteraction.posX;
+                const nextY = handle.includes('n')
+                  ? Math.round(cropInteraction.posY + cropInteraction.sizeH - nextH)
+                  : cropInteraction.posY;
+                cropInteraction.pending = {
+                  size: `${nextW}px ${nextH}px`,
+                  position: `${nextX}px ${nextY}px`,
+                };
+                previewCropPatch(target, cropInteraction.pending);
+                return;
+              }
+              const nx = Math.round(cropInteraction.posX + dx);
+              const ny = Math.round(cropInteraction.posY + dy);
+              cropInteraction.pending = target.kind === 'image'
+                ? { objectPosition: `${nx}px ${ny}px` }
+                : { position: `${nx}px ${ny}px` };
+              previewCropPatch(target, cropInteraction.pending);
             };
             const finishCropDrag = (el: HTMLElement | null) => {
-              if (!cropDragging) return;
-              cropDragging = false;
+              if (!cropInteraction) return;
+              const pending = cropInteraction.pending;
+              cropInteraction = null;
               if (el) el.style.cursor = '';
-              scheduleEmitRef.current?.();
+              const target = cropSelectedTarget();
+              if (target) commitCropPatch(target, pending);
             };
             const onCropPointerUp = (ev: PointerEvent) => {
-              if (!cropDragging) return;
+              if (!cropInteraction) return;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
               finishCropDrag(cropSelectedEl());
             };
             const onCropWheel = (ev: WheelEvent) => {
               if (readOnlyRef.current || !cropModeRef.current) return;
-              const el = cropSelectedEl();
-              if (!el || !el.contains(ev.target as Node)) return;
-              const bg = el.style.backgroundImage || '';
-              if (!bg || bg === 'none') return;
+              const target = cropSelectedTarget();
+              if (!target || (!eventTargetInCropOverlay(ev) && !pointInElementRect(target.el, ev))) return;
+              if (target.kind === 'image') return;
               ev.preventDefault();
               ev.stopImmediatePropagation();
-              const size = readBgSize(el);
+              clearGrapesjsHoverForCrop();
+              const size = readCropSize(target);
               // Scale around the cursor: keep the image point under the
               // pointer stationary. delta < 0 (wheel up) = zoom in.
               const factor = ev.deltaY < 0 ? 1.05 : 1 / 1.05;
               const newW = Math.max(8, Math.round(size.w * factor));
               const newH = Math.max(8, Math.round(size.h * factor));
-              try {
-                const sel = editor.getSelected?.() as Component | undefined;
-                if (sel) {
-                  const merged = { ...(sel.getStyle?.() ?? {}) } as Record<string, string>;
-                  merged['background-size'] = `${newW}px ${newH}px`;
-                  sel.setStyle?.(merged);
-                } else {
-                  el.style.backgroundSize = `${newW}px ${newH}px`;
-                }
-                refreshSelectionSnapshotRef.current?.();
-              } catch { /* ignore */ }
+              const patch = { size: `${newW}px ${newH}px` };
+              previewCropPatch(target, patch);
+              commitCropPatch(target, patch);
+            };
+            const onCropMouseOver = (ev: MouseEvent) => {
+              if (readOnlyRef.current || !cropModeRef.current) return;
+              if (!cropEventInInteractionArea(ev)) return;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              clearGrapesjsHoverForCrop();
             };
             doc.addEventListener('pointerdown', onCropPointerDown, true);
             doc.addEventListener('pointermove', onCropPointerMove, true);
             doc.addEventListener('pointerup', onCropPointerUp, true);
             doc.addEventListener('wheel', onCropWheel, { capture: true, passive: false });
+            doc.addEventListener('mouseover', onCropMouseOver, true);
             doc.addEventListener('keydown', onDocKey, true);
             doc.addEventListener('keyup', onDocKeyUp, true);
             doc.addEventListener('keypress', onDocKeyPress, true);
@@ -2715,9 +2984,12 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 doc.removeEventListener('pointermove', onCropPointerMove, true);
                 doc.removeEventListener('pointerup', onCropPointerUp, true);
                 doc.removeEventListener('wheel', onCropWheel, { capture: true } as EventListenerOptions);
+                doc.removeEventListener('mouseover', onCropMouseOver, true);
                 doc.removeEventListener('keydown', onDocKey, true);
                 doc.removeEventListener('keyup', onDocKeyUp, true);
                 doc.removeEventListener('keypress', onDocKeyPress, true);
+                removeCropOverlay();
+                if (syncCropOverlayRef.current === syncCropOverlay) syncCropOverlayRef.current = null;
                 delete (doc as unknown as { __odCanvasKeys?: true }).__odCanvasKeys;
               } catch { /* ignore */ }
             };
@@ -3736,6 +4008,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               ev.preventDefault();
               onSaveRef.current?.();
             }
+            if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && (ev.key === 'r' || ev.key === 'R')) {
+              ev.preventDefault();
+              onReloadRef.current?.();
+            }
             // Stop Cmd+Z from bubbling to FileViewer's manual-edit undo
             // handler when we own the canvas.
             if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) {
@@ -3786,8 +4062,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       // Reset components — od-stable-id-plugin will re-tag path-based ids
       // but preserve explicit data-od-id from the AI.
       try {
-        editor.setComponents(parsed.bodyInner || '<div></div>');
-        applyCanvasHeadAssets(editor.Canvas.getDocument(), parsed, baseHrefRef.current);
+        editor.setComponents(canvasComponentHtml(parsed, baseHrefRef.current));
+        const doc = editor.Canvas.getDocument();
+        applyCanvasHeadAssets(doc, parsed, baseHrefRef.current);
+        applyCanvasBodyAttributes(doc, parsed);
         applyCanvasBodyStyleOverrides(editor, currentCanvasStylesRef.current);
       } catch {
         // ignore
@@ -3827,7 +4105,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           const editor = editorRef.current;
           const parsed = parsedRef.current;
           if (!editor || !parsed) return html;
-          return buildEditorDocument(editor, parsed);
+          return buildEditorDocument(editor, parsed, baseHrefRef.current);
         },
         setHtml: (next: string) => {
           const editor = editorRef.current;
@@ -3839,8 +4117,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           lastExternalHtmlRef.current = next;
           lastEmittedRef.current = '';
           try {
-            editor.setComponents(parsed.bodyInner || '<div></div>');
-            applyCanvasHeadAssets(editor.Canvas.getDocument(), parsed, baseHrefRef.current);
+            editor.setComponents(canvasComponentHtml(parsed, baseHrefRef.current));
+            const doc = editor.Canvas.getDocument();
+            applyCanvasHeadAssets(doc, parsed, baseHrefRef.current);
+            applyCanvasBodyAttributes(doc, parsed);
             applyCanvasBodyStyleOverrides(editor, currentCanvasStylesRef.current);
           } catch {
             // ignore
@@ -4051,6 +4331,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
         },
         setCropMode: (on: boolean) => {
           cropModeRef.current = on;
+          syncCropOverlayRef.current?.();
         },
         replaceColors: (targets: string[], replacement: string) => {
           const count = replaceColorsInSelection(editorRef.current, targets, replacement);

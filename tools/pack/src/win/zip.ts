@@ -9,6 +9,13 @@ import type { WinBuiltAppManifest, WinPackTiming, WinPaths } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
+export type WinPortableZipInvocation = {
+  args: string[];
+  command: string;
+  cwd: string;
+  outputPath: string;
+};
+
 function logWinZipProgress(message: string, fields: Record<string, unknown> = {}): void {
   const suffix = Object.entries(fields)
     .map(([key, value]) => `${key}=${String(value)}`)
@@ -32,7 +39,6 @@ export async function buildWinPortableZip(
   paths: WinPaths,
   builtApp: WinBuiltAppManifest,
 ): Promise<WinPackTiming[]> {
-  if (process.platform !== "win32") throw new Error("Windows portable zip build must run on Windows");
   const timings: WinPackTiming[] = [];
   const runSegment = async <T>(phase: string, task: () => Promise<T>): Promise<T> => {
     const startedAt = Date.now();
@@ -99,14 +105,15 @@ export async function buildWinPortableZip(
     await mkdir(dirname(paths.setupZipPath), { recursive: true });
     await rm(paths.setupZipPath, { force: true });
   });
-  await runSegment("portable-zip:7z", async () => {
+  await runSegment("portable-zip:archive", async () => {
+    const invocation = resolveWinPortableZipInvocation(paths, builtApp);
     await runExecSegment(
-      "portable-zip:7z:process",
-      winResources.sevenZipExe,
-      ["a", "-tzip", "-mx=5", paths.setupZipPath, ".\\*"],
+      "portable-zip:archive:process",
+      invocation.command,
+      invocation.args,
       {
-        cwd: builtApp.unpackedRoot,
-        outputPath: paths.setupZipPath,
+        cwd: invocation.cwd,
+        outputPath: invocation.outputPath,
       },
     );
   });
@@ -114,4 +121,26 @@ export async function buildWinPortableZip(
     await stat(paths.setupZipPath);
   });
   return timings;
+}
+
+export function resolveWinPortableZipInvocation(
+  paths: Pick<WinPaths, "setupZipPath">,
+  builtApp: Pick<WinBuiltAppManifest, "unpackedRoot">,
+  platform: NodeJS.Platform = process.platform,
+): WinPortableZipInvocation {
+  if (platform === "win32") {
+    return {
+      args: ["a", "-tzip", "-mx=5", paths.setupZipPath, ".\\*"],
+      command: winResources.sevenZipExe,
+      cwd: builtApp.unpackedRoot,
+      outputPath: paths.setupZipPath,
+    };
+  }
+
+  return {
+    args: ["-r", "-q", paths.setupZipPath, "."],
+    command: "zip",
+    cwd: builtApp.unpackedRoot,
+    outputPath: paths.setupZipPath,
+  };
 }
