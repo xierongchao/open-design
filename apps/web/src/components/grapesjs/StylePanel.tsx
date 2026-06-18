@@ -8,15 +8,10 @@ import { Button } from '@open-design/components';
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -31,8 +26,6 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   Columns2,
-  Combine,
-  ChevronDown,
   Droplet,
   Eye,
   EyeOff,
@@ -40,28 +33,20 @@ import {
   FlipVertical2,
   Frame,
   Grid2X2,
-  Grid3X3,
-  Image,
-  Layers,
   Link2,
   Minus,
   Move,
-  Plus,
-  Pipette,
   RotateCw,
   Rows2,
   Scan,
   Settings2,
   SlidersHorizontal,
-  Sparkles,
   Square,
   SquareDashed,
   Type,
   Undo2,
   Unlink2,
   WandSparkles,
-  X,
-  type LucideIcon,
 } from 'lucide-react';
 import {
   GradientEditor,
@@ -70,24 +55,82 @@ import {
   parseGradientCss,
   type GradientValue,
 } from '../GradientEditor';
-import type { GrapesjsEditorHandle, SelectionSnapshot } from './GrapesjsEditor';
-import { readImageFileToDataUrl } from './image-upload';
 import {
-  hexToRgb,
-  rgbToHex,
-  rgbToHsl,
-  hsvToRgb,
-  rgbToHsv,
-  hslToRgb,
-  parseCssColor,
-  parseCssToColorValue,
-  colorValueToCss,
-  rgbaToCss,
-  pickColorWithEyedropper,
-  isEyeDropperSupported,
-  type ColorValue,
-  type RGBA,
-} from './color-utils';
+  ColorEditor,
+  type ColorEditorFillContext,
+} from './color-editor-popover';
+import {
+  ColorProperty,
+  ColorTextInput,
+  SelectedColor,
+  cssColorToHex,
+} from './color-fields';
+import type { GrapesjsEditorHandle, SelectionSnapshot } from './GrapesjsEditor';
+import {
+  ImageFillControl,
+  bgSizeFromOption,
+  optionFromBgSize,
+} from './image-fill-control';
+import {
+  NumberScrub,
+  fieldDisplay,
+  pxToNum,
+} from './number-scrub';
+import {
+  DIMENSION_MODE_OPTIONS,
+  axisAlignment,
+  buildAlignmentPatch,
+  buildDimensionModePatch,
+  buildFlowPatch,
+  dimensionMode,
+  flowFromStyles,
+  type DimensionMode,
+  type FlowValue,
+} from './layout-controls';
+import { useStylePanelCanvasState } from './style-panel-canvas-state';
+import {
+  CompactSelect,
+  FloatingPanel,
+  IconButton,
+  IconGroup,
+  LabeledControl,
+  PropertySection,
+  popoverPosition,
+  type FloatingPosition,
+  type IconOption,
+} from './style-panel-primitives';
+import {
+  parseRotation,
+  replaceRotation,
+  toggleFlipTransform,
+} from './transform-controls';
+import {
+  CLEAR_ALL_EFFECT_STYLES,
+  DEFAULT_PREVIOUS_SHADOW,
+  DEFAULT_SHADOW_DRAFT,
+  EFFECT_OPTIONS,
+  buildSingleShadow,
+  toggleEffectVisibility,
+  transitionEffectType,
+  type EffectType,
+} from './effect-controls';
+import {
+  CLEAR_STROKE_STYLES,
+  STROKE_POSITION_OPTIONS,
+  STROKE_STYLE_OPTIONS,
+  buildStrokeAddPatch,
+  buildStrokeColorPatch,
+  buildStrokeDashPatch,
+  buildStrokePositionPatch,
+  buildStrokeVisibilityPatch,
+  buildStrokeWidthPatch,
+  readStrokeLinecap,
+  readStrokeLinejoin,
+  readStrokePosition,
+  type StrokeLinecapValue,
+  type StrokeLinejoinValue,
+  type StrokePositionValue,
+} from './stroke-controls';
 import styles from './StylePanel.module.css';
 
 export interface StylePanelProps {
@@ -103,14 +146,6 @@ export interface StylePanelProps {
 }
 
 type StyleMap = Record<string, string>;
-type FlowValue = 'free' | 'column' | 'row' | 'wrap';
-type DimensionMode = 'fixed' | 'hug' | 'fill';
-type EffectType = 'none' | 'inner-shadow' | 'drop-shadow' | 'layer-blur' | 'background-blur' | 'noise' | 'texture' | 'glass';
-
-interface FloatingPosition {
-  top: number;
-  left: number;
-}
 
 interface ColorEditorState {
   label: string;
@@ -119,20 +154,7 @@ interface ColorEditorState {
   onChange: (value: string) => void;
   /** Fill-mode context. Only set when the editor is opened from the Fill
    *  section; absent for text color / border / shadow editors. */
-  fill?: {
-    mode: 'solid' | 'gradient' | 'image';
-    onModeChange: (mode: 'solid' | 'gradient' | 'image') => void;
-    gradient: GradientValue;
-    onGradientChange: (g: GradientValue) => void;
-    imageState: { url: string; size: string; repeat: string; position: string };
-    onImageChange: (patch: Partial<{ url: string; size: string; repeat: string; position: string }>) => void;
-  };
-}
-
-interface IconOption {
-  value: string;
-  label: string;
-  icon: LucideIcon;
+  fill?: ColorEditorFillContext;
 }
 
 const FLOW_OPTIONS: IconOption[] = [
@@ -187,91 +209,7 @@ const POSITION_OPTIONS = [
   { value: 'sticky', label: '粘性' },
 ];
 
-const EFFECT_OPTIONS: Array<{ value: EffectType; label: string }> = [
-  { value: 'inner-shadow', label: '内阴影' },
-  { value: 'drop-shadow', label: '投影' },
-  { value: 'layer-blur', label: '图层模糊' },
-  { value: 'background-blur', label: '背景模糊' },
-  { value: 'noise', label: 'Noise' },
-  { value: 'texture', label: 'Texture' },
-  { value: 'glass', label: 'Glass' },
-  { value: 'none', label: '无' },
-];
-
-/**
- * Shadow layer definition. Each layer maps to one box-shadow entry.
- * inset=true produces an inner shadow.
- */
-interface ShadowLayer {
-  inset: boolean;
-  x: number;
-  y: number;
-  blur: number;
-  spread: number;
-  color: string; // CSS color (hex or rgba)
-}
-
-/**
- * Parse a CSS box-shadow string (possibly multi-layer, comma-separated) into
- * an array of ShadowLayer. Returns [] for 'none' / empty.
- */
-function parseShadowCss(css: string | undefined): ShadowLayer[] {
-  if (!css || css === 'none') return [];
-  const layers: ShadowLayer[] = [];
-  // Split on commas that are NOT inside parentheses (rgba has commas).
-  const parts = css.replace(/\s*,\s*(?![^()]*\))/g, '\x00').split('\x00');
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed || trimmed === 'none') continue;
-    const inset = /\binset\b/i.test(trimmed);
-    const cleaned = trimmed.replace(/\binset\b/i, '').trim();
-    const colorMatch = cleaned.match(/(rgba?\([^)]+\)|#[0-9a-fA-F]{3,8}|[a-z]+)/i);
-    const color = colorMatch?.[1] ?? '#000000';
-    const nums = cleaned.replace(color, '').trim().split(/\s+/).map((n) => pxToNum(n, 0));
-    layers.push({
-      inset,
-      x: nums[0] ?? 0,
-      y: nums[1] ?? 0,
-      blur: nums[2] ?? 0,
-      spread: nums[3] ?? 0,
-      color,
-    });
-  }
-  return layers;
-}
-
-/**
- * Build a CSS box-shadow string from an array of shadow layers.
- */
-function buildShadowCss(layers: ShadowLayer[]): string {
-  if (layers.length === 0) return 'none';
-  return layers
-    .map((l) => `${l.inset ? 'inset ' : ''}${l.x}px ${l.y}px ${l.blur}px ${l.spread}px ${l.color}`)
-    .join(', ');
-}
-
-/**
- * Build a single shadow layer CSS string from individual params (for the
- * floating panel draft state).
- */
-function buildSingleShadow(params: {
-  x: string; y: string; blur: string; spread: string;
-  color: string; opacity: string; inset: boolean;
-}): string {
-  const alpha = Math.max(0, Math.min(1, pxToNum(params.opacity, 25) / 100));
-  const rgb = parseCssColor(params.color);
-  const colorCss = alpha < 1
-    ? `rgba(${Math.round(rgb.r)},${Math.round(rgb.g)},${Math.round(rgb.b)},${Math.round(alpha * 100) / 100})`
-    : params.color;
-  return `${params.inset ? 'inset ' : ''}${pxToNum(params.x, 0)}px ${pxToNum(params.y, 4)}px ${pxToNum(params.blur, 4)}px ${pxToNum(params.spread, 0)}px ${colorCss}`;
-}
-
-// Multi-layer shadow state
-const PAGE_COLOR_SWATCHES = [
-  '#D9D9D9', '#059669', '#646464', '#334155', '#FFFFFF', '#F5F5F4', '#343434', '#E7E5E4', '#9ACA65',
-  '#FFD400', '#F3F4F6', '#F59E0B', '#EF4444', '#D97706', '#FFF7ED', '#2398B5', '#1F2937', '#D1D5DB',
-  '#E5E7EB', '#FFFFFF', '#3C7029', '#F8DCD1', '#1C1917', '#FEF3C7', '#476E75', '#005E46', '#111827',
-];
+const EMPTY_SELECTED_COLORS: string[] = [];
 
 const TEXT_TAGS = new Set([
   'a',
@@ -298,1148 +236,12 @@ const TEXT_TAGS = new Set([
   'th',
 ]);
 
-function pxToNum(value: string | undefined, fallback = 0): number {
-  if (!value) return fallback;
-  const match = String(value).match(/^(-?[\d.]+)/);
-  return match?.[1] ? Number.parseFloat(match[1]) : fallback;
-}
-
-function cssColorToHex(value: string | undefined): string {
-  if (!value) return '#000000';
-  const match = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (!match) return value.startsWith('#') ? value.slice(0, 7).toUpperCase() : '#000000';
-  const hex = (part: string) => Number.parseInt(part, 10).toString(16).padStart(2, '0');
-  return `#${hex(match[1] ?? '0')}${hex(match[2] ?? '0')}${hex(match[3] ?? '0')}`.toUpperCase();
-}
-
-function normalizeTypedCssColor(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (/^(none|transparent)$/i.test(trimmed)) return 'transparent';
-  if (/^#?[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(trimmed)) {
-    const withHash = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-    return rgbaToCss(parseCssColor(withHash));
-  }
-  if (/^(?:rgba?|hsla?)\(/i.test(trimmed)) {
-    return rgbaToCss(parseCssColor(trimmed));
-  }
-  return null;
-}
-
-function cssColorToFormatInput(value: ColorValue, format: 'hex' | 'rgb' | 'hsl'): string {
-  const rgb = hsvToRgb(value.hsv);
-  if (format === 'rgb') return `${rgb.r}, ${rgb.g}, ${rgb.b}`;
-  if (format === 'hsl') {
-    const hsl = rgbToHsl(rgb);
-    return `${hsl.h}, ${hsl.s}%, ${hsl.l}%`;
-  }
-  return rgbToHex(rgb);
-}
-
-function parseFormattedColorInput(raw: string, format: 'hex' | 'rgb' | 'hsl', alpha: number): ColorValue | null {
-  const trimmed = raw.trim();
-  let parsed: RGBA | null = null;
-  if (format === 'hex') {
-    if (/^#?[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(trimmed)) {
-      parsed = parseCssColor(trimmed.startsWith('#') ? trimmed : `#${trimmed}`);
-    }
-  } else if (format === 'rgb') {
-    const parts = trimmed.split(',').map((s) => Number.parseFloat(s.trim()));
-    if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
-      parsed = { r: parts[0]!, g: parts[1]!, b: parts[2]!, a: 1 };
-    }
-  } else if (format === 'hsl') {
-    const parts = trimmed.split(',').map((s) => Number.parseFloat(s.trim().replace('%', '')));
-    if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
-      parsed = { ...hslToRgb(parts[0]!, parts[1]!, parts[2]!), a: 1 };
-    }
-  }
-  if (!parsed) return null;
-  return {
-    hsv: rgbToHsv({ r: parsed.r, g: parsed.g, b: parsed.b }),
-    a: parsed.a < 1 ? parsed.a : alpha,
-  };
-}
-
 function isTransparent(value: string | undefined): boolean {
   return !value || value === 'transparent' || /rgba\([^)]*,\s*0(?:\.0+)?\)$/.test(value);
 }
 
 function isGradient(value: string | undefined): boolean {
   return !!value && /gradient\(/i.test(value);
-}
-
-function parseRotation(transform: string | undefined): number {
-  if (!transform || transform === 'none') return 0;
-  const direct = transform.match(/rotate\((-?[\d.]+)deg\)/);
-  if (direct?.[1]) return Number.parseFloat(direct[1]);
-  const matrix = transform.match(/^matrix\(([^,]+),\s*([^,]+)/);
-  if (!matrix?.[1] || !matrix[2]) return 0;
-  return Math.round(Math.atan2(Number(matrix[2]), Number(matrix[1])) * (180 / Math.PI));
-}
-
-function replaceRotation(transform: string | undefined, degrees: number): string {
-  const base = !transform || transform === 'none'
-    ? ''
-    : transform.replace(/\s*rotate\((-?[\d.]+)deg\)/, '').trim();
-  return `${base}${base ? ' ' : ''}rotate(${degrees}deg)`;
-}
-
-// Translate the fill-panel size option into the CSS background-size value
-// written to the element. "裁剪" (od-crop) shows the image at its natural size
-// (the container clips the overflow); other options map 1:1 to CSS keywords.
-function bgSizeFromOption(size: string): string {
-  if (size === 'od-crop') return 'auto';
-  return size;
-}
-
-// Inverse of bgSizeFromOption: map the element's CSS background-size back to
-// the option shown in the <select>. CSS 'auto' (natural size, clipped) is the
-// 裁剪 option.
-function optionFromBgSize(css: string): string {
-  if (css === 'auto') return 'od-crop';
-  return css;
-}
-
-function dimensionMode(value: string | undefined, tagName?: string): DimensionMode {
-  // Replaced elements like <img> resolve fit-content/max-content to a pixel
-  // length through getComputedStyle, so "auto" is the only hug value that
-  // round-trips for them. Non-replaced elements keep fit-content.
-  const isImg = (tagName ?? '').toLowerCase() === 'img';
-  if (isImg) {
-    if (!value || value === 'auto') return 'hug';
-  } else {
-    if (!value || value === 'auto' || value.includes('fit-content') || value.includes('max-content')) return 'hug';
-  }
-  if (value.includes('%') || value.includes('calc(')) return 'fill';
-  return 'fixed';
-}
-
-function flowFromStyles(style: StyleMap): FlowValue {
-  const display = (style.display ?? 'block').split('::')[0] ?? 'block';
-  if (display !== 'flex' && display !== 'inline-flex') return 'free';
-  if ((style.flexWrap ?? 'nowrap') !== 'nowrap') return 'wrap';
-  return (style.flexDirection ?? 'row').startsWith('column') ? 'column' : 'row';
-}
-
-function axisAlignment(value: string | undefined): 0 | 1 | 2 {
-  if (value === 'center') return 1;
-  if (value === 'flex-end' || value === 'end') return 2;
-  return 0;
-}
-
-function fieldDisplay(value: string, fallback = 0): string {
-  const number = pxToNum(value, fallback);
-  return Number.isFinite(number) ? String(number) : String(fallback);
-}
-
-function popoverPosition(
-  anchor: HTMLElement,
-  width = 276,
-  preferredTopOffset = 72,
-  estimatedHeight = 420,
-): FloatingPosition {
-  const rect = anchor.getBoundingClientRect();
-  return {
-    top: Math.max(8, Math.min(window.innerHeight - estimatedHeight - 8, rect.top - preferredTopOffset)),
-    left: Math.max(8, rect.left - width - 10),
-  };
-}
-
-function FloatingPanel({
-  title,
-  position,
-  wide = false,
-  children,
-  onClose,
-}: {
-  title: ReactNode;
-  position: FloatingPosition;
-  wide?: boolean;
-  children: ReactNode;
-  onClose: () => void;
-}) {
-  const panelRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    // Click-outside-to-close: listen on pointerdown (not click) so the panel
-    // closes before any underlying element processes the click. Use rAF to
-    // defer attachment so the opening click doesn't immediately trigger close.
-    const onClickOutside = (event: MouseEvent) => {
-      const panel = panelRef.current;
-      if (!panel) return;
-      if (panel.contains(event.target as Node)) return;
-      onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    const raf = requestAnimationFrame(() => {
-      window.addEventListener('pointerdown', onClickOutside, true);
-    });
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      cancelAnimationFrame(raf);
-      window.removeEventListener('pointerdown', onClickOutside, true);
-    };
-  }, [onClose]);
-
-  const panelStyle = {
-    '--popover-top': `${position.top}px`,
-    '--popover-left': `${position.left}px`,
-  } as CSSProperties;
-
-  return createPortal(
-    <aside
-      ref={panelRef}
-      className={`${styles.floatingPanel}${wide ? ` ${styles.floatingPanelWide}` : ''}`}
-      style={panelStyle}
-      role="dialog"
-      aria-modal="false"
-    >
-      <header className={styles.floatingPanelHeader}>
-        <strong>{title}</strong>
-        <Button
-          type="button"
-          size="icon"
-          className={styles.floatingCloseButton}
-          aria-label="关闭面板"
-          title="关闭面板"
-          data-tooltip="关闭面板"
-          onClick={onClose}
-        >
-          <X size={16} aria-hidden="true" />
-        </Button>
-      </header>
-      <div className={styles.floatingPanelBody}>{children}</div>
-    </aside>,
-    document.body,
-  );
-}
-
-function IconButton({
-  label,
-  icon: Icon,
-  active = false,
-  disabled = false,
-  onClick,
-  placement,
-}: {
-  label: string;
-  icon: LucideIcon;
-  active?: boolean;
-  disabled?: boolean;
-  onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
-  placement?: 'left';
-}) {
-  return (
-    <Button
-      type="button"
-      size="icon"
-      className={`${styles.iconButton}${active ? ` ${styles.iconButtonActive}` : ''}`}
-      aria-label={label}
-      aria-pressed={active}
-      disabled={disabled}
-      title={label}
-      data-tooltip={label}
-      data-tooltip-placement={placement}
-      onClick={onClick}
-    >
-      <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-    </Button>
-  );
-}
-
-function IconGroup({
-  options,
-  value,
-  onChange,
-  equal = true,
-}: {
-  options: IconOption[];
-  value: string;
-  onChange: (value: string) => void;
-  equal?: boolean;
-}) {
-  return (
-    <div className={`${styles.iconGroup}${equal ? ` ${styles.iconGroupEqual}` : ''}`}>
-      {options.map((option) => {
-        const active = option.value === value;
-        const Icon = option.icon;
-        return (
-          <Button
-            key={option.value}
-            type="button"
-            size="icon"
-            className={`${styles.segmentButton}${active ? ` ${styles.segmentButtonActive}` : ''}`}
-            aria-label={option.label}
-            aria-pressed={active}
-            title={option.label}
-            data-tooltip={option.label}
-            onClick={() => onChange(option.value)}
-          >
-            <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-          </Button>
-        );
-      })}
-    </div>
-  );
-}
-
-/**
- * Real HSV color picker. The color canvas is an interactive saturation/value
- * square (horizontal = saturation, vertical = value) drawn on a <canvas> so
- * the user can click/drag to pick. A hue slider sets H, an alpha slider sets
- * transparency, and the hex/RGB/HSL input supports format switching.
- * EyeDropper API is used when available (Chrome/Edge).
- */
-function ColorEditor({
-  label,
-  value,
-  onChange,
-  mode = 'solid',
-  onModeChange,
-  supportsFillModes = false,
-  gradient,
-  onGradientChange,
-  imageState,
-  onImageChange,
-  onCropModeToggle,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  /** Fill mode for the property this editor is bound to (solid/gradient/image). */
-  mode?: 'solid' | 'gradient' | 'image';
-  /** Switch the fill mode (only meaningful when supportsFillModes). */
-  onModeChange?: (mode: 'solid' | 'gradient' | 'image') => void;
-  /** When false the editor is bound to a non-fill property (text color,
-   *  border, shadow) — hide the mode buttons and only show solid. */
-  supportsFillModes?: boolean;
-  /** Gradient value for gradient mode. */
-  gradient?: GradientValue;
-  /** Apply a new gradient value. */
-  onGradientChange?: (g: GradientValue) => void;
-  /** Current image-fill state (url/size/repeat) for image mode. */
-  imageState?: { url: string; size: string; repeat: string; position: string };
-  /** Apply image-fill changes. */
-  onImageChange?: (patch: Partial<{ url: string; size: string; repeat: string; position: string }>) => void;
-  /** Forwarded to the inline ImageFillControl so 裁剪 mode can toggle the
-   *  canvas drag/wheel handlers even from the floating editor. */
-  onCropModeToggle?: (on: boolean) => void;
-}) {
-  // Parse the incoming CSS color into HSV + alpha state.
-  const [colorValue, setColorValue] = useState<ColorValue>(() => parseCssToColorValue(value));
-  const [format, setFormat] = useState<'hex' | 'rgb' | 'hsl'>('hex');
-  const [formatDraft, setFormatDraft] = useState<string | null>(null);
-
-  useEffect(() => {
-    setColorValue(parseCssToColorValue(value));
-    setFormatDraft(null);
-  }, [value]);
-
-  const commit = useCallback(
-    (cv: ColorValue) => {
-      setColorValue(cv);
-      onChange(colorValueToCss(cv));
-    },
-    [onChange],
-  );
-
-  const { hsv, a } = colorValue;
-  const rgb = hsvToRgb(hsv);
-
-  // ── HSV canvas interaction ──
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const markerRef = useRef<HTMLDivElement | null>(null);
-  const draggingRef = useRef(false);
-
-  // Draw the SV canvas: background is the pure hue color, overlaid with
-  // white→transparent (left→right) and transparent→black (top→bottom).
-  const drawCanvas = useCallback(
-    (h: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const w = canvas.width;
-      const hh = canvas.height;
-      // base hue
-      const hueRgb = hsvToRgb({ h, s: 100, v: 100 });
-      ctx.fillStyle = `rgb(${hueRgb.r},${hueRgb.g},${hueRgb.b})`;
-      ctx.fillRect(0, 0, w, hh);
-      // white gradient left→right (saturation)
-      const wg = ctx.createLinearGradient(0, 0, w, 0);
-      wg.addColorStop(0, 'rgba(255,255,255,1)');
-      wg.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = wg;
-      ctx.fillRect(0, 0, w, hh);
-      // black gradient top→bottom (value)
-      const bg = ctx.createLinearGradient(0, 0, 0, hh);
-      bg.addColorStop(0, 'rgba(0,0,0,0)');
-      bg.addColorStop(1, 'rgba(0,0,0,1)');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, w, hh);
-    },
-    [],
-  );
-
-  useEffect(() => { drawCanvas(hsv.h); }, [hsv.h, drawCanvas]);
-
-  // Position the marker based on s,v.
-  useEffect(() => {
-    if (markerRef.current && canvasRef.current) {
-      markerRef.current.style.left = `${hsv.s}%`;
-      markerRef.current.style.top = `${100 - hsv.v}%`;
-    }
-  }, [hsv.s, hsv.v]);
-
-  const pickFromCanvas = useCallback(
-    (clientX: number, clientY: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const s = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
-      const v = Math.max(0, Math.min(100, 100 - ((clientY - rect.top) / rect.height) * 100));
-      commit({ hsv: { ...hsv, s: Math.round(s), v: Math.round(v) }, a });
-    },
-    [hsv, a, commit],
-  );
-
-  const onCanvasPointerDown = useCallback(
-    (e: ReactPointerEvent<HTMLCanvasElement>) => {
-      e.preventDefault();
-      draggingRef.current = true;
-      pickFromCanvas(e.clientX, e.clientY);
-      const move = (me: PointerEvent) => { if (draggingRef.current) pickFromCanvas(me.clientX, me.clientY); };
-      const up = () => {
-        draggingRef.current = false;
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', up);
-    },
-    [pickFromCanvas],
-  );
-
-  // ── EyeDropper ──
-  const onEyedropper = useCallback(async () => {
-    const hex = await pickColorWithEyedropper();
-    if (hex) {
-      const cv = parseCssToColorValue(hex);
-      commit({ ...cv, a }); // keep current alpha
-    }
-  }, [commit, a]);
-
-  // ── Format input value ──
-  const inputValue = useMemo(() => {
-    return formatDraft ?? cssColorToFormatInput(colorValue, format);
-  }, [colorValue, format, formatDraft]);
-
-  const commitFormatDraft = useCallback(
-    (raw: string) => {
-      const parsed = parseFormattedColorInput(raw, format, a);
-      if (parsed) commit(parsed);
-      setFormatDraft(null);
-    },
-    [format, commit, a],
-  );
-
-  const hexDisplay = rgbToHex(rgb);
-
-  return (
-    <div className={styles.colorEditor}>
-      {/* Mode buttons — only shown when the bound property supports fill
-          modes (i.e. the Fill section). Text color / border / shadow editors
-          keep solid-only. */}
-      {supportsFillModes ? (
-      <div className={styles.colorEditorModes} role="group" aria-label="颜色类型">
-        <button
-          type="button"
-          className={`${styles.colorModeButton}${mode === 'solid' ? ` ${styles.colorModeButtonActive}` : ''}`}
-          aria-label="纯色填充"
-          aria-pressed={mode === 'solid'}
-          title="纯色填充"
-          data-tooltip="纯色填充"
-          onClick={() => onModeChange?.('solid')}
-        >
-          <Square size={15} />
-        </button>
-        <button
-          type="button"
-          className={`${styles.colorModeButton}${mode === 'gradient' ? ` ${styles.colorModeButtonActive}` : ''}`}
-          aria-label="渐变填充"
-          aria-pressed={mode === 'gradient'}
-          title="渐变填充"
-          data-tooltip="渐变填充"
-          disabled={!supportsFillModes}
-          onClick={() => onModeChange?.('gradient')}
-        >
-          <Grid3X3 size={15} />
-        </button>
-        <button
-          type="button"
-          className={`${styles.colorModeButton}${mode === 'image' ? ` ${styles.colorModeButtonActive}` : ''}`}
-          aria-label="图片填充"
-          aria-pressed={mode === 'image'}
-          title="图片填充"
-          data-tooltip="图片填充"
-          disabled={!supportsFillModes}
-          onClick={() => onModeChange?.('image')}
-        >
-          <Image size={15} />
-        </button>
-      </div>
-      ) : null}
-
-      {supportsFillModes && mode === 'gradient' && onGradientChange && gradient ? (
-        <div className={styles.gradientWrap}>
-          <GradientEditor value={gradient} onChange={onGradientChange} />
-        </div>
-      ) : supportsFillModes && mode === 'image' && onImageChange ? (
-        <ImageFillControl
-          url={imageState?.url ?? ''}
-          size={imageState?.size ?? 'cover'}
-          repeat={imageState?.repeat ?? 'no-repeat'}
-          onUrlChange={(url) => onImageChange({ url })}
-          onSizeChange={(size) => onImageChange({ size: bgSizeFromOption(size) })}
-          onRepeatChange={(repeat) => onImageChange({ repeat })}
-          onCrop={(cssSize, cssPosition) => onImageChange({ size: cssSize, position: cssPosition })}
-          onCropModeChange={(on) => onCropModeToggle?.(on)}
-        />
-      ) : (
-      <>
-      {/* SV canvas — wrapped in a relative container so the marker overlay
-          positions correctly AND the pointer drag is captured inside the
-          canvas bounds (touch-action: none prevents scroll interference). */}
-      <div className={styles.colorCanvasWrap}>
-        <canvas
-          ref={canvasRef}
-          className={styles.colorCanvas}
-          width={240}
-          height={140}
-          onPointerDown={onCanvasPointerDown}
-          style={{ touchAction: 'none' }}
-          aria-label={`${label}色域`}
-          title="拖拽选择饱和度和明度"
-        />
-        <div
-          className={styles.colorCanvasMarkerOverlay}
-          style={{ left: `${hsv.s}%`, top: `${100 - hsv.v}%`, borderColor: hsv.v > 50 && hsv.s < 80 ? '#000' : '#fff' }}
-        />
-      </div>
-
-      {/* Hue slider — full width */}
-      <input
-        className={`${styles.hueSlider} ${styles.fullWidthSlider}`}
-        aria-label="色相"
-        type="range"
-        min={0}
-        max={360}
-        value={hsv.h}
-        onChange={(e) => commit({ hsv: { ...hsv, h: Number(e.target.value) }, a })}
-      />
-
-      {/* Alpha slider — full width */}
-      <input
-        className={`${styles.alphaSlider} ${styles.fullWidthSlider}`}
-        aria-label="透明度"
-        type="range"
-        min={0}
-        max={100}
-        value={Math.round(a * 100)}
-        onChange={(e) => commit({ hsv, a: Number(e.target.value) / 100 })}
-        style={{ background: `linear-gradient(to right, transparent, ${hexDisplay})` }}
-      />
-
-      {/* Format + hex/rgb/hsl input + alpha % */}
-      <div className={styles.colorEditorValues}>
-        <select
-          aria-label="颜色格式"
-          value={format}
-          onChange={(e) => {
-            setFormat(e.target.value as 'hex' | 'rgb' | 'hsl');
-            setFormatDraft(null);
-          }}
-        >
-          <option value="hex">HEX</option>
-          <option value="rgb">RGB</option>
-          <option value="hsl">HSL</option>
-        </select>
-        <input
-          aria-label={`${label}颜色值`}
-          value={inputValue}
-          onChange={(e) => {
-            const raw = e.target.value;
-            setFormatDraft(raw);
-            const parsed = parseFormattedColorInput(raw, format, a);
-            if (parsed) commit(parsed);
-          }}
-          onBlur={(e) => commitFormatDraft(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              commitFormatDraft(e.currentTarget.value);
-            } else if (e.key === 'Escape') {
-              e.preventDefault();
-              setFormatDraft(null);
-              e.currentTarget.blur();
-            }
-          }}
-        />
-        <input
-          aria-label={`${label}透明度`}
-          type="number"
-          min={0}
-          max={100}
-          value={Math.round(a * 100)}
-          onChange={(e) => commit({ hsv, a: Math.max(0, Math.min(1, Number(e.target.value) / 100)) })}
-        />
-        <span>%</span>
-      </div>
-
-      {/* Eyedropper */}
-      <div className={styles.colorEditorActions}>
-        <button
-          type="button"
-          className={styles.colorActionBtn}
-          onClick={onEyedropper}
-          disabled={!isEyeDropperSupported()}
-          title={isEyeDropperSupported() ? '吸管取色' : '当前浏览器不支持吸管取色（需 Chrome/Edge）'}
-          aria-label="吸管取色"
-        >
-          <Pipette size={14} />
-          {isEyeDropperSupported() ? '吸管取色' : '不支持'}
-        </button>
-      </div>
-
-      <div className={styles.paletteHeader}>
-        <select aria-label="颜色集合" defaultValue="page">
-          <option value="page">当前页面</option>
-          <option value="document">当前文件</option>
-          <option value="library">组件库</option>
-        </select>
-        <span>{PAGE_COLOR_SWATCHES.length} 色</span>
-      </div>
-      <div className={styles.paletteGrid}>
-        {PAGE_COLOR_SWATCHES.map((color, index) => (
-          <button
-            key={`${color}-${index}`}
-            type="button"
-            className={styles.paletteSwatch}
-            style={{ '--swatch-color': color } as CSSProperties}
-            aria-label={`选择颜色 ${color}`}
-            onClick={() => commit({ hsv: rgbToHsv(hexToRgb(color)), a })}
-          />
-        ))}
-      </div>
-      </>
-      )}
-    </div>
-  );
-}
-
-function NumberScrub({
-  label,
-  value,
-  prefix,
-  unit,
-  step = 1,
-  min,
-  max,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  prefix?: ReactNode;
-  unit?: string;
-  step?: number;
-  min?: number;
-  max?: number;
-  onChange: (value: string) => void;
-}) {
-  const prefixRef = useRef<HTMLSpanElement | null>(null);
-  const display = useMemo(() => fieldDisplay(value), [value]);
-
-  const clamp = useCallback((number: number) => {
-    if (min !== undefined && number < min) return min;
-    if (max !== undefined && number > max) return max;
-    return number;
-  }, [max, min]);
-
-  const commit = useCallback((number: number) => {
-    const next = clamp(number);
-    onChange(unit ? `${next}${unit}` : String(next));
-  }, [clamp, onChange, unit]);
-
-  const onPrefixPointerDown = useCallback((event: ReactPointerEvent<HTMLSpanElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startValue = Number(display) || 0;
-    const ownerDocument = prefixRef.current?.ownerDocument ?? document;
-    const onMove = (moveEvent: PointerEvent) => {
-      const raw = Math.round((moveEvent.clientX - startX) / 3);
-      const multiplier = moveEvent.shiftKey ? 5 : 1;
-      if (raw !== 0) commit(startValue + raw * step * multiplier);
-    };
-    const onUp = () => {
-      ownerDocument.removeEventListener('pointermove', onMove);
-      ownerDocument.removeEventListener('pointerup', onUp);
-      ownerDocument.removeEventListener('pointercancel', onUp);
-    };
-    ownerDocument.addEventListener('pointermove', onMove);
-    ownerDocument.addEventListener('pointerup', onUp);
-    ownerDocument.addEventListener('pointercancel', onUp);
-  }, [commit, display, step]);
-
-  return (
-    <label className={styles.numberField}>
-      {prefix ? (
-        <span
-          ref={prefixRef}
-          className={styles.fieldPrefix}
-          title={`${label}，拖拽调整`}
-          data-tooltip={`${label}，拖拽调整`}
-          onPointerDown={onPrefixPointerDown}
-        >
-          {prefix}
-        </span>
-      ) : null}
-      <input
-        type="number"
-        className={styles.numberInput}
-        aria-label={label}
-        value={display}
-        step={step}
-        min={min}
-        max={max}
-        onChange={(event) => {
-          const number = Number(event.target.value);
-          if (Number.isFinite(number)) commit(number);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-          event.preventDefault();
-          const direction = event.key === 'ArrowUp' ? 1 : -1;
-          commit((Number(display) || 0) + direction * step * (event.shiftKey ? 5 : 1));
-        }}
-      />
-      {unit ? <span className={styles.fieldUnit}>{unit}</span> : null}
-    </label>
-  );
-}
-
-function CompactSelect({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className={styles.selectField}>
-      <span className={styles.visuallyHidden}>{label}</span>
-      <select
-        className={styles.select}
-        aria-label={label}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>{option.label}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-/**
- * Interactive crop editor for image fill (裁剪). Renders a fixed viewport
- * showing the image; the user drags the image to pan and resizes a crop box
- * (8 handles, Shift = lock aspect ratio) to choose which region is visible.
- * The crop is committed as real CSS: background-size = natural size scaled by
- * the chosen zoom, background-position = negative offset so the cropped region
- * pins to the element's top-left, with the element's own overflow:hidden doing
- * the clipping.
- *
- * Props:
- *  - url: image data URL
- *  - bgSize: current background-size CSS (px or keyword) for read-back
- *  - bgPosition: current background-position CSS
- *  - onChange(cssSize, cssPosition): commit the crop as CSS values
- */
-const CROP_VIEWPORT_W = 220;
-const CROP_VIEWPORT_H = 150;
-
-/**
- * Simplified crop editor: the viewport stands in for the element box. The user
- * drags the image to pan (choose which region is visible) and uses the zoom
- * slider to enlarge/shrink the displayed area. The result maps directly to the
- * element's CSS background-size + background-position; the element's own box
- * (with overflow hidden) does the clipping.
- *
- * Mapping: the image is drawn at natural size * zoom. The drag sets the
- * top-left offset of the image relative to the viewport. We translate that into
- * background-position in PX (negative offset = image shifted so a later region
- * shows), and background-size = scaled natural size in PX. Because the element
- * keeps its own width/height + overflow hidden, only the visible region shows.
- */
-function CropEditor({
-  url,
-  onChange,
-}: {
-  url: string;
-  bgSize: string;
-  bgPosition: string;
-  onChange: (cssSize: string, cssPosition: string) => void;
-}) {
-  const [natural, setNatural] = useState({ w: 0, h: 0 });
-  // zoom = display px per source px
-  const [zoom, setZoom] = useState(1);
-  // pan = top-left offset of the image layer inside the viewport (px)
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const ownerDocument = viewportRef.current?.ownerDocument ?? document;
-
-  const emit = useCallback(
-    (z: number, p: { x: number; y: number }) => {
-      if (!natural.w) return;
-      const sizeW = Math.round(natural.w * z);
-      const sizeH = Math.round(natural.h * z);
-      onChange(`${sizeW}px ${sizeH}px`, `${Math.round(p.x)}px ${Math.round(p.y)}px`);
-    },
-    [natural.w, natural.h, onChange],
-  );
-
-  // Load the image, fit it to cover the viewport, and center it as the start.
-  useEffect(() => {
-    if (!url) return;
-    const img = ownerDocument.createElement('img');
-    img.onload = () => {
-      const nw = img.naturalWidth || 1;
-      const nh = img.naturalHeight || 1;
-      setNatural({ w: nw, h: nh });
-      // cover the viewport so there's something to pan into view
-      const coverZoom = Math.max(CROP_VIEWPORT_W / nw, CROP_VIEWPORT_H / nh);
-      setZoom(coverZoom);
-      const dw = nw * coverZoom;
-      const dh = nh * coverZoom;
-      const initPan = { x: (CROP_VIEWPORT_W - dw) / 2, y: (CROP_VIEWPORT_H - dh) / 2 };
-      setPan(initPan);
-      emit(coverZoom, initPan);
-    };
-    img.src = url;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url]);
-
-  const onViewportPointerDown = useCallback(
-    (e: ReactPointerEvent) => {
-      e.preventDefault();
-      dragRef.current = { startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y };
-      const move = (me: PointerEvent) => {
-        const d = dragRef.current;
-        if (!d) return;
-        const next = { x: d.panX + (me.clientX - d.startX), y: d.panY + (me.clientY - d.startY) };
-        setPan(next);
-        emit(zoom, next);
-      };
-      const up = () => {
-        dragRef.current = null;
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', up);
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', up);
-    },
-    [pan.x, pan.y, zoom, emit],
-  );
-
-  const onZoom = (nextZoom: number) => {
-    // Zoom around the viewport centre so the visible region stays put.
-    const z = Math.max(0.1, Math.min(8, nextZoom));
-    const cx = CROP_VIEWPORT_W / 2;
-    const cy = CROP_VIEWPORT_H / 2;
-    // image point under centre before zoom
-    const ix = (cx - pan.x) / zoom;
-    const iy = (cy - pan.y) / zoom;
-    const next = { x: cx - ix * z, y: cy - iy * z };
-    setZoom(z);
-    setPan(next);
-    emit(z, next);
-  };
-
-  const imgLayerStyle = {
-    width: natural.w ? natural.w * zoom : 0,
-    height: natural.h ? natural.h * zoom : 0,
-    transform: `translate(${pan.x}px, ${pan.y}px)`,
-    backgroundImage: `url("${url}")`,
-    backgroundSize: '100% 100%',
-  } as CSSProperties;
-
-  return (
-    <div className={styles.cropEditor}>
-      <div
-        ref={viewportRef}
-        className={styles.cropViewport}
-        style={{ width: CROP_VIEWPORT_W, height: CROP_VIEWPORT_H }}
-        onPointerDown={onViewportPointerDown}
-      >
-        <div className={styles.cropImageLayer} style={imgLayerStyle} />
-      </div>
-      <div className={styles.cropZoomRow}>
-        <span className={styles.imageOptionLabel}>缩放</span>
-        <input
-          type="range"
-          min={10}
-          max={800}
-          value={Math.round(zoom * 100)}
-          onChange={(e) => onZoom(Number(e.target.value) / 100)}
-          aria-label="图片缩放"
-        />
-        <span className={styles.cropZoomValue}>{Math.round(zoom * 100)}%</span>
-      </div>
-      <p className={styles.cropHint}>拖动图片改变显示区域，滑动缩放调整大小</p>
-    </div>
-  );
-}
-/**
- * Image fill control: a preview area (thumbnail when a URL is set, placeholder
- * otherwise) with a "点击上传图片" hover overlay. Clicking opens a hidden
- * file picker; selecting an image reads it into a data URL and calls
- * onUrlChange. Mirrors the editor panel's visual language (panel tokens,
- * 3px radius, 26px control height for the size/repeat selects below).
- */
-function ImageFillControl({
-  url,
-  size,
-  repeat,
-  onUrlChange,
-  onSizeChange,
-  onRepeatChange,
-  onCrop,
-  onCropModeChange,
-}: {
-  url: string;
-  size: string;
-  repeat: string;
-  onUrlChange: (url: string) => void;
-  onSizeChange: (size: string) => void;
-  onRepeatChange: (repeat: string) => void;
-  /** Commit a crop as CSS background-size + background-position. */
-  onCrop?: (cssSize: string, cssPosition: string) => void;
-  /** Notify the host that 裁剪 mode turned on/off so it can toggle the
-   *  canvas drag-to-pan / wheel-to-scale handlers. */
-  onCropModeChange?: (on: boolean) => void;
-}) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // The preview tile shows the whole image (contain) regardless of the
-  // element's chosen background-size, so the user always sees what they set.
-  const previewStyle = url
-    ? ({
-        backgroundImage: `url("${url}")`,
-        backgroundSize: 'contain',
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: 'center',
-      } as CSSProperties)
-    : undefined;
-
-  const onPickFile = useCallback(async (file: File | undefined) => {
-    if (!file) return;
-    setError(null);
-    try {
-      const { dataUrl } = await readImageFileToDataUrl(file);
-      onUrlChange(dataUrl);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '读取图片失败');
-    }
-  }, [onUrlChange]);
-
-  const showCrop = size === 'od-crop' && !!url;
-
-  // Toggle canvas 裁剪 mode (drag-to-pan / wheel-to-scale on the selected
-  // element) whenever the size option flips to/from 裁剪. The actual editing
-  // happens on the canvas; the panel only shows a hint.
-  useEffect(() => {
-    onCropModeChange?.(showCrop);
-    return () => onCropModeChange?.(false);
-  }, [showCrop, onCropModeChange]);
-
-  return (
-    <div className={styles.imageFillSection}>
-      {showCrop ? (
-        <p className={styles.cropHint}>在画布上拖动选中元素可平移背景图，滚轮缩放背景图大小</p>
-      ) : (
-        <button
-          type="button"
-          className={styles.imagePreviewArea}
-          style={previewStyle}
-          aria-label={url ? '点击替换图片' : '点击上传图片'}
-          title={url ? '点击替换图片' : '点击上传图片'}
-          data-tooltip={url ? '点击替换图片' : '点击上传图片'}
-          onClick={() => inputRef.current?.click()}
-        >
-          {!url ? (
-            <span className={styles.imagePreviewPlaceholder}>
-              <Image size={18} aria-hidden="true" />
-              <span>点击上传图片</span>
-            </span>
-          ) : null}
-          <span className={styles.imagePreviewHover} aria-hidden="true">
-            {url ? '点击替换图片' : '点击上传图片'}
-          </span>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            className={styles.hiddenFileInput}
-            aria-label="选择图片文件"
-            onChange={(event) => {
-              void onPickFile(event.target.files?.[0]);
-              // Reset so picking the same file twice still fires change.
-              event.target.value = '';
-            }}
-          />
-        </button>
-      )}
-      {error ? <p className={styles.imageUploadError}>{error}</p> : null}
-      <label className={styles.imageOptionRow}>
-        <span className={styles.imageOptionLabel}>尺寸</span>
-        <span className={styles.selectField}>
-          <select
-            className={styles.select}
-            value={size}
-            onChange={(e) => onSizeChange(e.target.value)}
-          >
-            <option value="cover">充满</option>
-            <option value="contain">适应</option>
-            <option value="100% 100%">拉伸</option>
-            <option value="od-crop">裁剪</option>
-          </select>
-        </span>
-      </label>
-      {!showCrop ? (
-        <label className={styles.imageOptionRow}>
-          <span className={styles.imageOptionLabel}>重复</span>
-          <span className={styles.selectField}>
-            <select
-              className={styles.select}
-              value={repeat}
-              onChange={(e) => onRepeatChange(e.target.value)}
-            >
-              <option value="no-repeat">不重复</option>
-              <option value="repeat">重复</option>
-              <option value="repeat-x">水平重复</option>
-              <option value="repeat-y">垂直重复</option>
-            </select>
-          </span>
-        </label>
-      ) : null}
-    </div>
-  );
-}
-
-function PropertySection({
-  title,
-  actions,
-  children,
-  collapsible = false,
-  expanded = true,
-  hasContent = true,
-  onToggle,
-  onAdd,
-  onRemove,
-}: {
-  title: string;
-  actions?: ReactNode;
-  children: ReactNode;
-  collapsible?: boolean;
-  expanded?: boolean;
-  hasContent?: boolean;
-  onToggle?: () => void;
-  onAdd?: () => void;
-  onRemove?: () => void;
-}) {
-  // When a collapsible section has no content it is force-collapsed: the body
-  // is hidden, the chevron is suppressed (there's nothing to expand), and the
-  // header click triggers onAdd so the user must add a value before the body
-  // becomes available.
-  const isEmpty = collapsible && !hasContent;
-  const sectionClass = `${styles.section}${collapsible ? ` ${styles.sectionCollapsible}` : ''}${(collapsible && !expanded) || isEmpty ? ` ${styles.sectionCollapsed}` : ''}`;
-  const headerClass = `${styles.sectionHeader}${collapsible ? ` ${styles.sectionHeaderToggle}` : ''}`;
-  const showBody = collapsible ? (!isEmpty && expanded) : true;
-  return (
-    <section className={sectionClass} aria-labelledby={`style-panel-${title}`}>
-      <header className={headerClass}>
-        {collapsible ? (
-          <button
-            type="button"
-            className={styles.sectionTitleButton}
-            aria-expanded={!isEmpty && expanded}
-            aria-controls={`style-panel-body-${title}`}
-            onClick={() => (isEmpty ? onAdd?.() : onToggle?.())}
-          >
-            {!isEmpty ? (
-              <ChevronDown
-                size={14}
-                strokeWidth={1.8}
-                aria-hidden="true"
-                className={`${styles.sectionChevron}${expanded ? ` ${styles.sectionChevronExpanded}` : ''}`}
-              />
-            ) : null}
-            <span id={`style-panel-${title}`} className={styles.sectionTitle}>{title}</span>
-          </button>
-        ) : (
-          <h3 id={`style-panel-${title}`} className={styles.sectionTitle}>{title}</h3>
-        )}
-        <div className={styles.sectionActions}>
-          {actions}
-          {isEmpty && onAdd ? (
-            <IconButton
-              label="添加属性"
-              icon={Plus}
-              placement="left"
-              onClick={() => onAdd()}
-            />
-          ) : null}
-          {!isEmpty && hasContent && onRemove ? (
-            <IconButton
-              label="移除属性"
-              icon={Minus}
-              placement="left"
-              onClick={() => onRemove()}
-            />
-          ) : null}
-        </div>
-      </header>
-      {showBody ? (
-        <div id={`style-panel-body-${title}`} className={styles.sectionBody}>{children}</div>
-      ) : null}
-    </section>
-  );
-}
-
-function LabeledControl({
-  label,
-  children,
-  inline = false,
-}: {
-  label: string;
-  children: ReactNode;
-  inline?: boolean;
-}) {
-  return (
-    <div className={inline ? styles.labeledControlInline : styles.labeledControl}>
-      <span className={styles.controlLabel}>{label}</span>
-      {children}
-    </div>
-  );
 }
 
 function DimensionControl({
@@ -1467,11 +269,7 @@ function DimensionControl({
       <CompactSelect
         label={`${axis}调整模式`}
         value={effectiveMode}
-        options={[
-          { value: 'fixed', label: '固定' },
-          { value: 'hug', label: '撑满' },
-          { value: 'fill', label: '填充' },
-        ]}
+        options={DIMENSION_MODE_OPTIONS}
         onChange={(mode) => onModeChange(mode as DimensionMode)}
       />
     </div>
@@ -1519,168 +317,15 @@ function AlignmentGrid({
   );
 }
 
-/**
- * Editable colour text input that accepts hand-typed hex / rgb / rgba / hsl.
- * Maintains a local text buffer so the user can type intermediate (invalid)
- * states without each keystroke being rejected; only valid colour strings are
- * pushed to `onChange`. On blur the buffer is normalised back to the canonical
- * CSS form derived from the parsed value, so the field always lands on a
- * legal colour. Reused across every colour field (fill / text / stroke /
- * shadow / batch-replace) so manual typing works everywhere, not just in the
- * floating ColorEditor.
- */
-function ColorTextInput({
-  value,
-  onChange,
-  className,
-  ariaLabel,
-}: {
-  value: string;
-  onChange: (css: string) => void;
-  className?: string;
-  ariaLabel?: string;
-}) {
-  // Display the canonical hex (without leading #) when the external value is
-  // the source of truth — i.e. on mount and after external updates the user
-  // didn't just type. A non-empty local buffer takes precedence so the user's
-  // in-progress typing isn't clobbered.
-  const displayHex = cssColorToHex(value).replace('#', '');
-  const [local, setLocal] = useState<string | null>(null);
-  useEffect(() => {
-    // Reset the local buffer whenever the external value changes from outside
-    // (picker drag, undo, selection switch) so the field resyncs.
-    setLocal(null);
-  }, [value]);
-
-  const fieldValue = local ?? displayHex;
-
-  return (
-    <input
-      type="text"
-      className={className ?? styles.hexInput}
-      aria-label={ariaLabel}
-      value={fieldValue}
-      spellCheck={false}
-      autoComplete="off"
-      onChange={(event) => {
-        const raw = event.target.value;
-        setLocal(raw);
-        const normalised = normalizeTypedCssColor(raw);
-        if (normalised) onChange(normalised);
-      }}
-      onBlur={() => {
-        if (local == null) return;
-        const normalised = normalizeTypedCssColor(local);
-        if (normalised) onChange(normalised);
-        setLocal(null);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          (event.currentTarget as HTMLInputElement).blur();
-        } else if (event.key === 'Escape') {
-          event.preventDefault();
-          setLocal(null);
-          (event.currentTarget as HTMLInputElement).blur();
-        }
-      }}
-    />
-  );
-}
-
-function ColorProperty({
-  label,
-  value,
-  visible,
-  onChange,
-  onVisibleChange,
-  onOpenPicker,
-}: {
-  label: string;
-  value: string;
-  visible: boolean;
-  onChange: (value: string) => void;
-  onVisibleChange: (visible: boolean) => void;
-  onOpenPicker?: (anchor: HTMLButtonElement) => void;
-}) {
-  const hex = cssColorToHex(value);
-  return (
-    <div className={styles.colorProperty}>
-      <label className={styles.colorValue}>
-        <span className={styles.visuallyHidden}>{label}</span>
-        <button
-          type="button"
-          className={styles.colorPicker}
-          aria-label={`${label}取色器`}
-          title={`编辑${label}`}
-          data-tooltip={`编辑${label}`}
-          style={{ '--swatch-color': hex } as CSSProperties}
-          onClick={(event) => onOpenPicker?.(event.currentTarget)}
-        />
-        <ColorTextInput
-          value={value}
-          onChange={onChange}
-          ariaLabel={`${label}颜色值`}
-        />
-        <span className={styles.colorOpacity}>{Math.round(parseCssColor(value).a * 100)}</span>
-        <span className={styles.percent}>%</span>
-      </label>
-      <IconButton
-        label={visible ? `隐藏${label}` : `显示${label}`}
-        icon={visible ? Eye : EyeOff}
-        active={visible}
-        placement="left"
-        onClick={() => onVisibleChange(!visible)}
-      />
-    </div>
-  );
-}
-
-function SelectedColor({
-  color,
-  batchMode,
-  selected,
-  onToggle,
-  onOpenPicker,
-  onColorChange,
-}: {
-  color: string;
-  batchMode: boolean;
-  selected: boolean;
-  onToggle: () => void;
-  onOpenPicker: (anchor: HTMLButtonElement) => void;
-  onColorChange?: (value: string) => void;
-}) {
-  return (
-    <div className={`${styles.selectedColor}${batchMode ? ` ${styles.selectedColorBatch}` : ''}`}>
-      {batchMode ? (
-        <input type="checkbox" aria-label={`选择颜色 ${cssColorToHex(color)}`} checked={selected} onChange={onToggle} />
-      ) : null}
-      <button
-        type="button"
-        className={styles.selectedSwatch}
-        style={{ '--swatch-color': color } as CSSProperties}
-        aria-label={`编辑颜色 ${cssColorToHex(color)}`}
-        title={`编辑颜色 ${cssColorToHex(color)}`}
-        onClick={(event) => onOpenPicker(event.currentTarget)}
-      />
-      <ColorTextInput
-        value={color}
-        onChange={(value) => onColorChange?.(value)}
-        className={styles.selectedHex}
-        ariaLabel={`颜色值 ${cssColorToHex(color)}`}
-      />
-      <span className={styles.selectedOpacity}>{Math.round((parseCssColor(color).a) * 100)}</span>
-      <span className={styles.percent}>%</span>
-    </div>
-  );
-}
-
 export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanelProps) {
   const hasSelection = !!selection?.hasSelection;
   const selectedStyles = selection?.styles ?? {};
-  const [canvasStyles, setCanvasStyles] = useState<StyleMap>({});
-  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const {
+    canvasStyles,
+    canvasSize,
+    applyCanvasStyles,
+    applyCanvasSize,
+  } = useStylePanelCanvasState(editorRef, hasSelection);
   const [paddingLinked, setPaddingLinked] = useState(true);
   const [marginLinked, setMarginLinked] = useState(true);
   const [cornersExpanded, setCornersExpanded] = useState(false);
@@ -1716,56 +361,16 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   const [strokePanelPosition, setStrokePanelPosition] = useState<FloatingPosition | null>(null);
   const [effectPanelPosition, setEffectPanelPosition] = useState<FloatingPosition | null>(null);
   const [strokeSettingsTab, setStrokeSettingsTab] = useState<'basic' | 'dynamic' | 'brush'>('basic');
-  const [strokePosition, setStrokePosition] = useState<'inside' | 'center' | 'outside'>('center');
-  const [strokeLinecap, setStrokeLinecap] = useState<'butt' | 'round' | 'square'>('butt');
-  const [strokeLinejoin, setStrokeLinejoin] = useState<'miter' | 'round' | 'bevel'>('miter');
+  const [strokePosition, setStrokePosition] = useState<StrokePositionValue>('center');
+  const [strokeLinecap, setStrokeLinecap] = useState<StrokeLinecapValue>('butt');
+  const [strokeLinejoin, setStrokeLinejoin] = useState<StrokeLinejoinValue>('miter');
   const [strokeDashLength, setStrokeDashLength] = useState('0px');
   const [strokeDashGap, setStrokeDashGap] = useState('0px');
-  const [shadowDraft, setShadowDraft] = useState({
-    x: '0px',
-    y: '4px',
-    blur: '4px',
-    spread: '0px',
-    color: '#000000',
-    opacity: '25%',
-    inset: false,
-  });
+  const [shadowDraft, setShadowDraft] = useState(DEFAULT_SHADOW_DRAFT);
   const previousFill = useRef('#FFFFFF');
   const previousCanvasBackground = useRef('#FFFFFF');
   const previousStroke = useRef('#000000');
-  const previousShadow = useRef('0 4px 12px rgba(0, 0, 0, 0.18)');
-
-  const refreshCanvas = useCallback(() => {
-    const state = editorRef.current?.getCanvasState?.();
-    const stylesSnapshot = state?.styles ?? editorRef.current?.getCanvasStyles() ?? {};
-    setCanvasStyles(stylesSnapshot);
-    const size = state?.size;
-    if (size) {
-      setCanvasSize(size);
-      return size.width > 0 && size.height > 0;
-    }
-    return false;
-  }, [editorRef]);
-
-  useEffect(() => {
-    if (hasSelection) return undefined;
-    let cancelled = false;
-    let timeout: number | null = null;
-    let attempts = 0;
-    const tick = () => {
-      if (cancelled) return;
-      const ready = refreshCanvas();
-      attempts += 1;
-      if (!ready && attempts < 100) {
-        timeout = window.setTimeout(tick, 50);
-      }
-    };
-    tick();
-    return () => {
-      cancelled = true;
-      if (timeout != null) window.clearTimeout(timeout);
-    };
-  }, [hasSelection, refreshCanvas]);
+  const previousShadow = useRef(DEFAULT_PREVIOUS_SHADOW);
 
   useEffect(() => {
     const bg = canvasStyles.backgroundColor;
@@ -1782,10 +387,9 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
         editorRef.current?.applyStyle(kebab);
         return;
       }
-      editorRef.current?.setCanvasStyles(kebab);
-      window.setTimeout(refreshCanvas, 0);
+      applyCanvasStyles(kebab);
     },
-    [editorRef, hasSelection, refreshCanvas],
+    [applyCanvasStyles, editorRef, hasSelection],
   );
 
   // Whenever shadowDraft changes, build the box-shadow CSS and apply it.
@@ -1824,17 +428,6 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     [apply],
   );
 
-  const applyCanvasSize = useCallback(
-    (width?: number, height?: number) => {
-      editorRef.current?.setCanvasSize(
-        typeof width === 'number' && width > 0 ? width : undefined,
-        typeof height === 'number' && height > 0 ? height : undefined,
-      );
-      window.setTimeout(refreshCanvas, 0);
-    },
-    [editorRef, refreshCanvas],
-  );
-
   const openColorEditor = useCallback(
     (
       label: string,
@@ -1855,6 +448,15 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   );
 
   const style = selectedStyles;
+  const selectedStrokeLinecap = style.strokeLinecap ?? style['stroke-linecap'];
+  const selectedStrokeLinejoin = style.strokeLinejoin ?? style['stroke-linejoin'];
+
+  useEffect(() => {
+    const nextLinecap = readStrokeLinecap(selectedStrokeLinecap);
+    const nextLinejoin = readStrokeLinejoin(selectedStrokeLinejoin);
+    if (nextLinecap) setStrokeLinecap(nextLinecap);
+    if (nextLinejoin) setStrokeLinejoin(nextLinejoin);
+  }, [selectedStrokeLinecap, selectedStrokeLinejoin]);
 
   // Whether the current selection is an <img>. Computed up here (before the
   // image-edit effect) so the effect and the fill section both see it.
@@ -1910,6 +512,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
           size: optionFromBgSize(selectedStyles.backgroundSize ?? 'cover'),
           repeat: selectedStyles.backgroundRepeat ?? 'no-repeat',
           position: selectedStyles.backgroundPosition ?? 'center',
+          cropSize: selectedStyles.backgroundSize ?? 'cover',
         },
         onImageChange: (patch) => {
           if (isImgElement) {
@@ -1944,15 +547,16 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     setHeightMode(null);
   }, [editorRef, isImgElement, selection]);
 
-  // Colors used by the selection's whole subtree (background/border/text),
-  // collected recursively so multi-selecting a flex container surfaces the
-  // colors of every descendant. Declared before the no-selection early
-  // return so the hook order stays stable across selected/unselected renders.
-  const [selectedColors, setSelectedColors] = useState<string[]>([]);
+  // Colors used by the selection's whole subtree (background/border/text).
+  // GrapesjsEditor computes this as part of the selection snapshot so the
+  // panel does not need to run its own recursive DOM scan.
+  const selectedColors = hasSelection ? (selection?.selectedColors ?? EMPTY_SELECTED_COLORS) : EMPTY_SELECTED_COLORS;
   useEffect(() => {
-    if (!hasSelection) { setSelectedColors([]); return; }
-    setSelectedColors(editorRef.current?.collectColorsFromSelection() ?? []);
-  }, [editorRef, hasSelection, selection]);
+    setBatchSelection((current) => {
+      const next = current.filter((color) => selectedColors.includes(color));
+      return next.length === current.length ? current : next;
+    });
+  }, [selectedColors]);
 
   const colorEditorPortal = colorEditor ? (
     <FloatingPanel
@@ -2068,55 +672,40 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   const isTextElement = TEXT_TAGS.has((selection?.tagName ?? '').toLowerCase());
   // selectedColors is declared above (before the no-selection early return)
   // so the hook order stays stable across selected/unselected renders.
+  const effectContext = () => ({
+    effectVisible,
+    currentBoxShadow: style.boxShadow,
+    previousShadow: previousShadow.current,
+    shadowDraft,
+  });
+  const commitEffectTransition = (transition: ReturnType<typeof transitionEffectType>) => {
+    setEffectType(transition.nextType);
+    if (transition.rememberShadow) previousShadow.current = transition.rememberShadow;
+    if (transition.shadowDraft) setShadowDraft(transition.shadowDraft);
+    apply(transition.styles);
+  };
 
   const setFlow = (nextFlow: FlowValue) => {
-    if (nextFlow === 'free') {
-      apply({ display: 'block', flexDirection: 'row', flexWrap: 'nowrap' });
-      return;
-    }
-    if (nextFlow === 'column') {
-      apply({ display: 'flex', flexDirection: 'column', flexWrap: 'nowrap' });
-      return;
-    }
-    if (nextFlow === 'wrap') {
-      apply({ display: 'flex', flexDirection: 'row', flexWrap: 'wrap' });
-      return;
-    }
-    apply({ display: 'flex', flexDirection: 'row', flexWrap: 'nowrap' });
+    apply(buildFlowPatch(nextFlow));
   };
 
   const setDimensionMode = (property: 'width' | 'height', mode: DimensionMode) => {
-    const isImg = (selection?.tagName ?? '').toLowerCase() === 'img';
-    if (mode === 'hug') {
-      // <img> and other replaced elements resolve fit-content to a pixel
-      // length via getComputedStyle, so the hug state would read back as
-      // "fixed". auto round-trips for replaced elements and yields the
-      // intrinsic size the user expects from "适应".
-      apply({ [property]: isImg ? 'auto' : 'fit-content' });
-      return;
-    }
-    if (mode === 'fill') {
-      apply({ [property]: '100%' });
-      return;
-    }
-    const current = pxToNum(style[property], property === 'width' ? 100 : 40);
-    apply({ [property]: `${Math.max(1, current)}px` });
+    apply(buildDimensionModePatch({
+      property,
+      mode,
+      currentValue: style[property],
+      tagName: selection?.tagName,
+    }));
   };
 
   const setAlignment = (column: 0 | 1 | 2, row: 0 | 1 | 2) => {
-    const axisValues = ['flex-start', 'center', 'flex-end'];
-    const horizontal = axisValues[column] ?? 'flex-start';
-    const vertical = axisValues[row] ?? 'flex-start';
-    if (flow === 'column') {
-      apply({ alignItems: horizontal, justifyContent: vertical });
-      return;
-    }
-    apply({
-      display: flow === 'free' ? 'flex' : style.display ?? 'flex',
-      flexDirection: flow === 'free' ? 'row' : style.flexDirection ?? 'row',
-      justifyContent: horizontal,
-      alignItems: vertical,
-    });
+    apply(buildAlignmentPatch({
+      column,
+      row,
+      flow,
+      display: style.display,
+      flexDirection: style.flexDirection,
+    }));
   };
 
   return (
@@ -2257,12 +846,12 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             <IconButton
               label="水平翻转"
               icon={FlipHorizontal2}
-              onClick={() => apply({ transform: `${style.transform === 'none' ? '' : style.transform ?? ''} scaleX(-1)`.trim() })}
+              onClick={() => apply({ transform: toggleFlipTransform(style.transform, 'x') })}
             />
             <IconButton
               label="垂直翻转"
               icon={FlipVertical2}
-              onClick={() => apply({ transform: `${style.transform === 'none' ? '' : style.transform ?? ''} scaleY(-1)`.trim() })}
+              onClick={() => apply({ transform: toggleFlipTransform(style.transform, 'y') })}
             />
             <IconButton label="重置变换" icon={Undo2} placement="left" onClick={() => apply({ transform: 'none' })} />
           </div>
@@ -2585,6 +1174,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                   size: optionFromBgSize(selectedStyles.backgroundSize ?? 'cover'),
                   repeat: selectedStyles.backgroundRepeat ?? 'no-repeat',
                   position: selectedStyles.backgroundPosition ?? 'center',
+                  cropSize: selectedStyles.backgroundSize ?? 'cover',
                 },
                 onImageChange: (patch) => {
                   const url = patch.url !== undefined ? patch.url : (selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? '');
@@ -2609,6 +1199,8 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             url={selectedImgSrc}
             size={optionFromBgSize(selectedStyles.backgroundSize ?? 'cover')}
             repeat={selectedStyles.backgroundRepeat ?? 'no-repeat'}
+            position={selectedStyles.backgroundPosition ?? 'center'}
+            cropSize={selectedStyles.backgroundSize ?? 'cover'}
             onUrlChange={(url) => {
               // For <img>, uploading replaces the src attribute (not a
               // background-image fill), matching "set this image" intent.
@@ -2625,8 +1217,18 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             url={selectedStyles.backgroundImage?.replace(/^url\(['"]?|['"]?\)$/g, '') ?? ''}
             size={optionFromBgSize(selectedStyles.backgroundSize ?? 'cover')}
             repeat={selectedStyles.backgroundRepeat ?? 'no-repeat'}
+            position={selectedStyles.backgroundPosition ?? 'center'}
+            cropSize={selectedStyles.backgroundSize ?? 'cover'}
             onUrlChange={(url) => {
-              if (url) apply({ backgroundImage: `url("${url}")`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' });
+              if (url) {
+                const keepCrop = optionFromBgSize(selectedStyles.backgroundSize ?? 'cover') === 'od-crop';
+                apply({
+                  backgroundImage: `url("${url}")`,
+                  backgroundSize: keepCrop ? 'auto' : 'cover',
+                  backgroundPosition: 'center',
+                  backgroundRepeat: 'no-repeat',
+                });
+              }
               else apply({ backgroundImage: 'none' });
             }}
             onSizeChange={(size) => apply({ backgroundSize: bgSizeFromOption(size) })}
@@ -2643,20 +1245,9 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
         expanded={strokeExpanded}
         onToggle={() => setStrokeExpanded((e) => !e)}
         hasContent={strokeVisible}
-        onAdd={() => apply({ borderWidth: '1px', borderStyle: 'solid', borderColor: previousStroke.current })}
+        onAdd={() => apply(buildStrokeAddPatch(previousStroke.current))}
         onRemove={() => {
-          apply({
-            borderWidth: '0px',
-            borderTopWidth: '0px',
-            borderRightWidth: '0px',
-            borderBottomWidth: '0px',
-            borderLeftWidth: '0px',
-            borderStyle: 'none',
-            outline: '',
-            outlineWidth: '',
-            outlineStyle: '',
-            outlineColor: '',
-          });
+          apply(CLEAR_STROKE_STYLES);
         }}
       >
         <ColorProperty
@@ -2665,11 +1256,11 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
           visible={strokeVisible}
           onChange={(value) => {
             previousStroke.current = value;
-            apply({ borderColor: value, borderStyle: 'solid', borderWidth: style.borderTopWidth === '0px' ? '1px' : style.borderTopWidth ?? '1px' });
+            apply(buildStrokeColorPatch(value, style.borderTopWidth));
           }}
           onVisibleChange={(visible) => {
             if (!visible && style.borderColor) previousStroke.current = cssColorToHex(style.borderColor);
-            apply({ borderStyle: visible ? 'solid' : 'none', borderWidth: visible ? style.borderTopWidth || '1px' : '0px' });
+            apply(buildStrokeVisibilityPatch(visible, style.borderTopWidth));
           }}
           onOpenPicker={(anchor) => openColorEditor(
             '描边',
@@ -2686,27 +1277,16 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             <CompactSelect
               label="描边位置"
               value={strokePosition}
-              options={[
-                { value: 'inside', label: '内部' },
-                { value: 'center', label: '居中' },
-                { value: 'outside', label: '外部' },
-              ]}
+              options={STROKE_POSITION_OPTIONS}
               onChange={(value) => {
-                const pos = value as 'inside' | 'center' | 'outside';
+                const pos = readStrokePosition(value);
                 setStrokePosition(pos);
-                const w = pxToNum(style.borderTopWidth ?? '0px', 0);
-                const color = style.borderColor ?? '#000000';
-                const st = style.borderStyle ?? 'solid';
-                if (pos === 'center') {
-                  // Normal border, no outline/inset shadow.
-                  apply({ borderWidth: w > 0 ? `${w}px` : '', borderStyle: st ?? 'solid', outline: '', boxShadow: '' });
-                } else if (pos === 'outside') {
-                  // Use outline (renders outside the border box).
-                  apply({ outline: `${w}px ${st} ${color}`, outlineOffset: '0px', borderWidth: '0px' });
-                } else {
-                  // Inside: inset box-shadow simulates inner stroke.
-                  apply({ boxShadow: `inset 0 0 0 ${w}px ${color}`, borderWidth: '0px', outline: '' });
-                }
+                apply(buildStrokePositionPatch({
+                  position: pos,
+                  width: style.borderTopWidth,
+                  color: style.borderColor,
+                  style: style.borderStyle,
+                }));
               }}
             />
           </LabeledControl>
@@ -2717,7 +1297,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
               value={style.borderTopWidth ?? '0px'}
               unit="px"
               min={0}
-              onChange={(value) => apply({ borderWidth: value, borderStyle: pxToNum(value) > 0 ? 'solid' : 'none' })}
+              onChange={(value) => apply(buildStrokeWidthPatch(value))}
             />
           </LabeledControl>
           <div className={styles.strokeActionPair}>
@@ -2752,12 +1332,10 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
         onToggle={() => setEffectExpanded((e) => !e)}
         hasContent={effectVisible}
         onAdd={() => {
-          setEffectType('drop-shadow');
-          apply({ boxShadow: previousShadow.current });
+          commitEffectTransition(transitionEffectType('drop-shadow', effectContext()));
         }}
         onRemove={() => {
-          setEffectType('none');
-          apply({ boxShadow: 'none', filter: '', backdropFilter: '', WebkitBackdropFilter: '' });
+          commitEffectTransition({ nextType: 'none', styles: CLEAR_ALL_EFFECT_STYLES });
         }}
       >
         <div className={styles.effectRow}>
@@ -2771,32 +1349,14 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
           >
             {effectType === 'drop-shadow' || effectType === 'inner-shadow'
               ? <SquareDashed size={16} aria-hidden="true" />
-              : effectType === 'noise' || effectType === 'texture'
-                ? <Sparkles size={16} aria-hidden="true" />
-                : <WandSparkles size={16} aria-hidden="true" />}
+              : <WandSparkles size={16} aria-hidden="true" />}
           </button>
           <CompactSelect
             label="效果类型"
             value={effectType}
             options={EFFECT_OPTIONS}
             onChange={(value) => {
-              const next = value as EffectType;
-              setEffectType(next);
-              if (next === 'none') {
-                if (effectVisible && style.boxShadow) previousShadow.current = style.boxShadow;
-                apply({ boxShadow: 'none', filter: '', backdropFilter: '', WebkitBackdropFilter: '' });
-              } else if (next === 'drop-shadow') {
-                apply({ boxShadow: previousShadow.current || buildSingleShadow(shadowDraft) });
-              } else if (next === 'inner-shadow') {
-                apply({ boxShadow: buildSingleShadow({ ...shadowDraft, inset: true }) });
-                setShadowDraft((d) => ({ ...d, inset: true }));
-              } else if (next === 'layer-blur') {
-                apply({ filter: 'blur(4px)' });
-              } else if (next === 'background-blur') {
-                apply({ backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' });
-              } else if (next === 'glass') {
-                apply({ backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', backgroundColor: 'rgba(255,255,255,0.1)' });
-              }
+              commitEffectTransition(transitionEffectType(value as EffectType, effectContext()));
             }}
           />
           <IconButton
@@ -2804,14 +1364,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             icon={effectType === 'none' ? EyeOff : Eye}
             active={effectType !== 'none'}
             onClick={() => {
-              if (effectType === 'none') {
-                setEffectType('drop-shadow');
-                apply({ boxShadow: previousShadow.current });
-              } else {
-                if (effectVisible && style.boxShadow) previousShadow.current = style.boxShadow;
-                setEffectType('none');
-                apply({ boxShadow: 'none' });
-              }
+              commitEffectTransition(toggleEffectVisibility({ ...effectContext(), effectType }));
             }}
           />
           <IconButton
@@ -2819,8 +1372,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             icon={Minus}
             placement="left"
             onClick={() => {
-              setEffectType('none');
-              apply({ boxShadow: 'none' });
+              commitEffectTransition({ nextType: 'none', styles: { boxShadow: 'none' } });
             }}
           />
         </div>
@@ -2867,9 +1419,6 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                       // Advance the target so the next drag tick matches the
                       // colour we just wrote, not the stale original.
                       replaceTargetRef.current = value;
-                      window.setTimeout(() => {
-                        setSelectedColors(editorRef.current?.collectColorsFromSelection() ?? []);
-                      }, 0);
                     },
                     anchor,
                   );
@@ -2880,9 +1429,6 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                   const target = replaceTargetRef.current ?? color;
                   editorRef.current?.replaceColors([target], value);
                   replaceTargetRef.current = value;
-                  window.setTimeout(() => {
-                    setSelectedColors(editorRef.current?.collectColorsFromSelection() ?? []);
-                  }, 0);
                 }}
               />
             ))}
@@ -2910,11 +1456,6 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                     onClick={() => {
                       editorRef.current?.replaceColors(batchSelection, replacementColor);
                       setBatchSelection([]);
-                      // Refresh the collected color list so replaced colors
-                      // surface in their new form.
-                      window.setTimeout(() => {
-                        setSelectedColors(editorRef.current?.collectColorsFromSelection() ?? []);
-                      }, 0);
                     }}
                   >
                     替换
@@ -2955,59 +1496,53 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
           </div>
           <div className={styles.advancedSettings}>
             <LabeledControl label="样式" inline>
-              <CompactSelect
-                label="描边样式"
-                value={style.borderStyle ?? 'solid'}
-                options={[
-                  { value: 'solid', label: '纯色' },
-                  { value: 'dashed', label: '虚线' },
-                  { value: 'dotted', label: '点线' },
-                  { value: 'double', label: '双线' },
-                ]}
-                onChange={(value) => apply({ borderStyle: value })}
-              />
-            </LabeledControl>
-            <LabeledControl label="宽度轮廓" inline>
-              <div className={styles.strokeProfile}>
-                <span />
-                <IconButton label="反转宽度轮廓" icon={Undo2} onClick={() => undefined} />
-              </div>
+                <CompactSelect
+                  label="描边样式"
+                  value={style.borderStyle ?? 'solid'}
+                  options={STROKE_STYLE_OPTIONS}
+                  onChange={(value) => apply({ borderStyle: value })}
+                />
             </LabeledControl>
             <LabeledControl label="端点" inline>
               <IconGroup
-                value="butt"
+                value={strokeLinecap}
                 options={[
                   { value: 'butt', label: '平头端点', icon: Minus },
                   { value: 'round', label: '圆头端点', icon: Droplet },
                   { value: 'square', label: '方头端点', icon: Square },
                 ]}
-                onChange={() => undefined}
+                onChange={(value) => {
+                  const next = readStrokeLinecap(value);
+                  if (!next) return;
+                  setStrokeLinecap(next);
+                  apply({ strokeLinecap: next });
+                }}
               />
             </LabeledControl>
             <LabeledControl label="连接" inline>
               <IconGroup
-                value="miter"
+                value={strokeLinejoin}
                 options={[
                   { value: 'miter', label: '尖角连接', icon: SquareDashed },
                   { value: 'round', label: '圆角连接', icon: Droplet },
                   { value: 'bevel', label: '斜角连接', icon: Scan },
                 ]}
-                onChange={() => undefined}
+                onChange={(value) => {
+                  const next = readStrokeLinejoin(value);
+                  if (!next) return;
+                  setStrokeLinejoin(next);
+                  apply({ strokeLinejoin: next });
+                }}
               />
             </LabeledControl>
             <div className={styles.twoColumn}>
               <NumberScrub label="虚线长度" prefix="线" value={strokeDashLength} unit="px" min={0} onChange={(value) => {
                 setStrokeDashLength(value);
-                const gap = pxToNum(strokeDashGap, 0);
-                const len = pxToNum(value, 0);
-                if (len > 0) apply({ strokeDasharray: `${len}px ${gap}px`, borderStyle: 'dashed' } as Record<string, string>);
-                else apply({ strokeDasharray: '', borderStyle: 'solid' } as Record<string, string>);
+                apply(buildStrokeDashPatch(value, strokeDashGap));
               }} />
               <NumberScrub label="虚线间隔" prefix="隙" value={strokeDashGap} unit="px" min={0} onChange={(value) => {
                 setStrokeDashGap(value);
-                const len = pxToNum(strokeDashLength, 0);
-                const gap = pxToNum(value, 0);
-                if (len > 0) apply({ strokeDasharray: `${len}px ${gap}px`, borderStyle: 'dashed' } as Record<string, string>);
+                apply(buildStrokeDashPatch(strokeDashLength, value));
               }} />
             </div>
           </div>
@@ -3021,7 +1556,9 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
               className={styles.floatingTitleSelect}
               aria-label="效果类型"
               value={effectType}
-              onChange={(event) => setEffectType(event.target.value as EffectType)}
+              onChange={(event) => {
+                commitEffectTransition(transitionEffectType(event.target.value as EffectType, effectContext()));
+              }}
             >
               {EFFECT_OPTIONS.filter((option) => option.value !== 'none').map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>

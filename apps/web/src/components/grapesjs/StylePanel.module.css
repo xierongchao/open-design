@@ -929,22 +929,6 @@
   padding-top: 9px;
 }
 
-.strokeProfile {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
-  align-items: center;
-  gap: 3px;
-  height: 28px;
-  padding-left: 8px;
-  border-radius: 3px;
-  background: var(--bg-subtle, #f3f3f3);
-}
-
-.strokeProfile > span {
-  height: 4px;
-  background: linear-gradient(90deg, transparent, var(--text), transparent);
-}
-
 .floatingTitleSelect {
   width: 108px;
   height: 28px;

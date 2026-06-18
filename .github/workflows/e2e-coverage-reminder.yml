@@ -66,7 +66,7 @@ jobs:
                 area: 'project workspace',
                 patterns: [
                   /^apps\/web\/src\/.*(Project|Workspace|FileWorkspace|Artifact|Preview|DesignSystemPicker)/i,
-                  /^e2e\/ui\/(app|app-restoration|app-design-files|app-manual-edit|project-management-flows|workspace-keyboard-flows)\.test\.ts$/,
+                  /^e2e\/ui\/(app|app-restoration|app-design-files|app-html-preview|project-management-flows|workspace-keyboard-flows)\.test\.ts$/,
                 ],
                 command: "pnpm -C e2e exec playwright test -c playwright.config.ts ui/app.test.ts ui/app-restoration.test.ts ui/project-management-flows.test.ts --grep '\\[P0\\]|\\[P1\\]'",
               },
@@ -100,9 +100,9 @@ jobs:
                 area: 'design files/artifact preview',
                 patterns: [
                   /^apps\/web\/src\/.*(DesignFile|DesignFiles|ArtifactPreview|PreviewFrame|Deck|ManualEdit)/i,
-                  /^e2e\/ui\/(app-design-files|design-files-view-state-persist|app-manual-edit|workspace-keyboard-flows)\.test\.ts$/,
+                  /^e2e\/ui\/(app-design-files|design-files-view-state-persist|app-html-preview|workspace-keyboard-flows)\.test\.ts$/,
                 ],
-                command: "pnpm -C e2e exec playwright test -c playwright.config.ts ui/app-design-files.test.ts ui/app-manual-edit.test.ts ui/workspace-keyboard-flows.test.ts --grep '\\[P0\\]|\\[P1\\]'",
+                command: "pnpm -C e2e exec playwright test -c playwright.config.ts ui/app-design-files.test.ts ui/app-html-preview.test.ts ui/workspace-keyboard-flows.test.ts --grep '\\[P0\\]|\\[P1\\]'",
               },
             ];
 

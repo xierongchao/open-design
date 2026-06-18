@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cancelManualEditPendingStyleSnapshot,
   effectivePreviewScale,
   manualEditPreviewShellStyle,
   desktopEditAutoFitTransform,
@@ -195,6 +196,37 @@ describe('manual edit viewport interaction math', () => {
       { x: 100, y: 120 },
       { x: 126, y: 144 },
     )).toEqual({ x: 66, y: 4 });
+  });
+});
+
+describe('manual edit pending style snapshots', () => {
+  it('removes invalid fields without dropping unrelated fields', () => {
+    expect(cancelManualEditPendingStyleSnapshot({
+      id: 'hero',
+      label: 'Style: Hero',
+      version: 1,
+      styles: { fontSize: '4px', color: '#111111' },
+    }, 'hero', ['fontSize'])).toEqual({
+      id: 'hero',
+      label: 'Style: Hero',
+      version: 1,
+      styles: { color: '#111111' },
+    });
+
+    expect(cancelManualEditPendingStyleSnapshot({
+      id: 'hero',
+      label: 'Style: Hero',
+      version: 1,
+      styles: { fontSize: '4px' },
+    }, 'hero', ['fontSize'])).toBeNull();
+
+    const otherTargetPending = {
+      id: 'hero',
+      label: 'Style: Hero',
+      version: 1,
+      styles: { fontSize: '4px' },
+    };
+    expect(cancelManualEditPendingStyleSnapshot(otherTargetPending, 'cta', ['fontSize'])).toBe(otherTargetPending);
   });
 });
 

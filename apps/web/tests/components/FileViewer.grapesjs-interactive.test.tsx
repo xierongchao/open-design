@@ -86,7 +86,6 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
         insertImageComponent: () => {},
         reselectCurrent: () => {},
         setCropMode: () => {},
-        collectColorsFromSelection: () => [],
         replaceColors: () => 0,
         getEditor: () => editor,
       }));
@@ -287,6 +286,40 @@ describe('FileViewer GrapesJS interactive mode', () => {
       expect(editor.getAttribute('data-initial-height')).toBe('1400');
       expect(grapesjsMockState.setViewport).toHaveBeenLastCalledWith(1920, 1400);
     });
+  });
+
+  it('does not route GrapesJS tool switches through the legacy manual edit flush', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlFile()}
+          initialFallbackManualEditMode
+        />
+      </I18nProvider>,
+    );
+
+    await screen.findByTestId('mock-grapesjs-editor');
+    const drawButton = await screen.findByTestId('draw-overlay-toggle');
+    expect(drawButton.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(drawButton);
+
+    expect(drawButton.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('mock-grapesjs-editor')).toBeTruthy();
   });
 
   it('shows an add-to-chat action after selecting an element in element selection mode', async () => {

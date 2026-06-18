@@ -85,8 +85,8 @@
   - HTML / image / source 文件预览路径
   - `image-preview.html` 渲染图片资源
 
-- [/Users/mac/open-design/open-design-home-entry/e2e/ui/app-manual-edit.test.ts](/Users/mac/open-design/open-design-home-entry/e2e/ui/app-manual-edit.test.ts)
-  - HTML 预览 iframe 下的手动编辑与预览联动
+- [/Users/mac/open-design/open-design-home-entry/e2e/ui/app-html-preview.test.ts](/Users/mac/open-design/open-design-home-entry/e2e/ui/app-html-preview.test.ts)
+  - HTML 预览工具栏、注释/标注、Deck 导航与 Preview/Code 切换联动
 
 ### 3. raw HTML 路由与 iframe 特殊头
 
@@ -220,4 +220,3 @@ Express 5 的典型风险点：
    - 明确锁 `/api/projects/:id/raw/*splat`
 
 这 3 条合起来，比单纯靠视觉回归或组件测试更能直接拦住这类事故。
-

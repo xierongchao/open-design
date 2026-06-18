@@ -27,6 +27,10 @@ import {
   getOdIdFromComponent,
   resolveComponentForHostSelection,
 } from './grapesjs-bridge-adapter';
+import {
+  createSelectionColorCollector,
+  replaceColorsInSelection,
+} from './grapesjs-selection-colors';
 import styles from './GrapesjsEditor.module.css';
 
 function readOdIdFromComponent(comp: unknown): string | null {
@@ -70,150 +74,6 @@ function readElementStyles(el: HTMLElement | null): Record<string, string> {
     return out;
   } catch {
     return {};
-  }
-}
-
-/**
- * Normalize a CSS color string (rgb()/rgba()/named/#hex) to an upper-case
- * 6-digit hex, dropping the alpha channel. Used by collectColorsFromSelection
- * and replaceColorsInSelection so "rgb(0,0,0)" and "#000000" compare equal.
- * Returns null for transparent / empty / unparseable values.
- */
-function normalizeColorToHex(value: string | undefined): string | null {
-  if (!value) return null;
-  const v = value.trim().toLowerCase();
-  if (!v || v === 'transparent' || v === 'none' || v === 'initial' || v === 'inherit') return null;
-  if (/^#[0-9a-f]{6}$/.test(v)) return v.toUpperCase();
-  if (/^#[0-9a-f]{3}$/.test(v)) {
-    return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`.toUpperCase();
-  }
-  const m = v.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/);
-  if (!m) return null;
-  const to = (n: string) => Math.round(Number(n)).toString(16).padStart(2, '0');
-  const hex = `#${to(m[1] ?? '0')}${to(m[2] ?? '0')}${to(m[3] ?? '0')}`;
-  // Skip fully-transparent colors (alpha 0).
-  const alphaM = v.match(/rgba?\([^)]*,\s*([\d.]+)\s*\)/);
-  if (alphaM && Number(alphaM[1]) === 0) return null;
-  return hex.toUpperCase();
-}
-
-/**
- * Recursively gather every color (background-color, border-*-color, color)
- * used inside the selection's subtree. Returns de-duplicated hex strings.
- * Reads computed style so colors from external CSS classes are included.
- */
-function collectColorsFromSelection(editor: GrapesjsEditorInstance | null): string[] {
-  if (!editor) return [];
-  try {
-    const all = (editor.getSelectedAll?.() ?? []) as Component[];
-    if (all.length === 0) return [];
-    const found = new Set<string>();
-    const seen = new WeakSet<Element>();
-    for (const comp of all) {
-      const root = getElementFromComponent(comp);
-      if (!root) continue;
-      const win = root.ownerDocument.defaultView;
-      if (!win) continue;
-      const elements: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
-      for (const el of elements) {
-        if (seen.has(el)) continue;
-        seen.add(el);
-        let cs: CSSStyleDeclaration;
-        try { cs = win.getComputedStyle(el); } catch { continue; }
-        // border-color resolves to currentColor (usually black) even when no
-        // border is drawn, so only collect it when a border actually exists.
-        const hasBorder = parseFloat(cs.getPropertyValue('border-top-width') || '0') > 0;
-        // color is inherited; an empty <div> inherits black from <body>/<html>
-        // but the user doesn't think of that as "their" color. Only collect a
-        // colour when it DIFFERS from the parent's computed value (i.e. it was
-        // explicitly set on this element, not inherited). The same applies to
-        // background-color (initial transparent == parent's painted bg).
-        const parent = (el as Element).parentElement;
-        let pcs: CSSStyleDeclaration | null = null;
-        if (parent) {
-          try { pcs = win.getComputedStyle(parent); } catch { /* ignore */ }
-        }
-        const differs = (prop: string): boolean => {
-          const cur = cs.getPropertyValue(prop);
-          const par = pcs ? pcs.getPropertyValue(prop) : '';
-          return cur !== par;
-        };
-        const candidates: string[] = [];
-        if (differs('background-color')) candidates.push(cs.getPropertyValue('background-color'));
-        if (differs('color')) candidates.push(cs.getPropertyValue('color'));
-        if (hasBorder) candidates.push(cs.getPropertyValue('border-top-color'));
-        for (const c of candidates) {
-          const hex = normalizeColorToHex(c);
-          if (hex) found.add(hex);
-        }
-      }
-    }
-    return Array.from(found);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Replace colors in the selection's subtree whose normalized hex matches a
- * target with `replacement`. Edits each component's inline style (so the
- * change round-trips through getDocument) and returns the edit count.
- */
-function replaceColorsInSelection(editor: GrapesjsEditorInstance | null, targets: string[], replacement: string): number {
-  if (!editor || targets.length === 0) return 0;
-  try {
-    const targetSet = new Set(targets.map((t) => normalizeColorToHex(t) ?? t.toUpperCase()));
-    const all = (editor.getSelectedAll?.() ?? []) as Component[];
-    let count = 0;
-    const componentByEl = new Map<Element, Component>();
-    const collectComponents = (comp: Component) => {
-      const el = getElementFromComponent(comp);
-      if (el) componentByEl.set(el, comp);
-      try {
-        const children = comp.components?.();
-        if (children) for (const child of children) collectComponents(child as Component);
-      } catch { /* ignore */ }
-    };
-    for (const comp of all) collectComponents(comp);
-    const win = editor.Canvas.getDocument?.()?.defaultView ?? null;
-    for (const [el, comp] of componentByEl) {
-      if (!win) continue;
-      let cs: CSSStyleDeclaration;
-      try { cs = win.getComputedStyle(el); } catch { continue; }
-      const props: Array<[string, string]> = [
-        ['background-color', 'backgroundColor'],
-        ['color', 'color'],
-        ['border-top-color', 'borderTopColor'],
-        ['border-right-color', 'borderRightColor'],
-        ['border-bottom-color', 'borderBottomColor'],
-        ['border-left-color', 'borderLeftColor'],
-      ];
-      let changed = false;
-      const next = { ...(comp.getStyle?.() ?? {}) } as Record<string, string>;
-      for (const [cssKey] of props) {
-        const hex = normalizeColorToHex(cs.getPropertyValue(cssKey));
-        if (hex && targetSet.has(hex)) {
-          // GrapesJS getStyle()/setStyle() store keys AS-WRITTEN (no
-          // camelCase<->kebab conversion) — getStyle() returns kebab-case
-          // (matching the CSS source). Update the kebab key so it overwrites
-          // the existing one; writing a camelCase key would ADD a parallel
-          // key and the original kebab value would keep rendering.
-          next[cssKey] = replacement;
-          changed = true;
-        }
-      }
-      if (changed) {
-        try { comp.setStyle?.(next); count += 1; } catch { /* ignore */ }
-      }
-    }
-    if (count > 0) {
-      // Trigger a refresh so the canvas + StylePanel re-render with the new
-      // colors (setStyle alone doesn't always fire the selection snapshot).
-      try { editor.getSelected?.()?.trigger?.('change:attributes'); } catch { /* ignore */ }
-    }
-    return count;
-  } catch {
-    return 0;
   }
 }
 
@@ -554,6 +414,7 @@ export interface SelectionSnapshot {
   tagName: string;
   selector: string;
   styles: Record<string, string>;
+  selectedColors: string[];
 }
 
 export interface CanvasSnapshot {
@@ -601,9 +462,6 @@ export interface GrapesjsEditorHandle {
   /** Toggle canvas 裁剪 mode: when on, dragging the selected element pans its
    *  background-position and the wheel scales its background-size. */
   setCropMode(on: boolean): void;
-  /** Recursively collect every color (background/border/text) used inside the
-   *  selection's subtree, de-duplicated. Returns [] when nothing is selected. */
-  collectColorsFromSelection(): string[];
   /** Replace any color in the selection's subtree that matches a target (by
    *  normalized hex) with `replacement`. Returns the count of edits applied. */
   replaceColors(targets: string[], replacement: string): number;
@@ -763,6 +621,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const refreshSelectionSnapshotRef = useRef<(() => void) | null>(null);
     const syncZoomAttrRef = useRef<(() => void) | null>(null);
     const syncCoordsAttrRef = useRef<(() => void) | null>(null);
+    const selectionColorCollectorRef = useRef(createSelectionColorCollector());
     const currentCanvasSizeRef = useRef<{ width: number; height: number } | null>(
       initialViewport ? { width: initialViewport.width, height: initialViewport.height } : null,
     );
@@ -3671,6 +3530,32 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           editor.on('component:update', scheduleEmit);
           editor.on('styleUpdate', scheduleEmit);
           scheduleEmitRef.current = scheduleEmit;
+          const buildSelectionSnapshot = (): SelectionSnapshot => {
+            const all = editor.getSelectedAll?.() ?? [];
+            const first = all[0];
+            if (!first) {
+              return { hasSelection: false, tagName: '', selector: '', styles: {}, selectedColors: [] };
+            }
+            const comp = first as Component;
+            const el = getElementFromComponent(comp);
+            const styles = readElementStyles(el);
+            let tagName = 'div';
+            try { tagName = (comp.get('tagName') as string) ?? 'div'; } catch { /* ignore */ }
+            let selector = tagName;
+            try {
+              const attrs = comp.getAttributes() as Record<string, unknown>;
+              const id = typeof attrs['id'] === 'string' ? attrs['id'] : '';
+              const cls = typeof attrs['class'] === 'string' ? attrs['class'] : '';
+              selector = `${tagName}${id ? `#${id}` : ''}${cls ? `.${cls.split(/\s+/).join('.')}` : ''}`;
+            } catch { /* ignore */ }
+            return {
+              hasSelection: true,
+              tagName,
+              selector,
+              styles,
+              selectedColors: selectionColorCollectorRef.current.collect(editor),
+            };
+          };
           // Expose a way to re-emit the selection snapshot after a style write
           // so the StylePanel shows updated values. We defer 1 rAF so the
           // computed style has time to reflow.
@@ -3679,22 +3564,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               const cb = onSelectionChangeRef.current;
               if (!cb) return;
               try {
-                const all = editor.getSelectedAll?.() ?? [];
-                const first = all[0];
-                if (!first) { cb({ hasSelection: false, tagName: '', selector: '', styles: {} }); return; }
-                const comp = first as Component;
-                const el = getElementFromComponent(comp);
-                const snapStyles = readElementStyles(el);
-                let tagName = 'div';
-                try { tagName = (comp.get('tagName') as string) ?? 'div'; } catch { /* ignore */ }
-                let selector = tagName;
-                try {
-                  const attrs = comp.getAttributes() as Record<string, unknown>;
-                  const id = typeof attrs['id'] === 'string' ? attrs['id'] : '';
-                  const cls = typeof attrs['class'] === 'string' ? attrs['class'] : '';
-                  selector = `${tagName}${id ? `#${id}` : ''}${cls ? `.${cls.split(/\s+/).join('.')}` : ''}`;
-                } catch { /* ignore */ }
-                cb({ hasSelection: true, tagName, selector, styles: snapStyles });
+                cb(buildSelectionSnapshot());
               } catch { /* ignore */ }
             });
           };
@@ -3757,6 +3627,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             } catch { /* ignore — best-effort target sync. */ }
           };
           const forwardSelection = () => {
+            selectionColorCollectorRef.current.invalidate();
             const cb = onSelectTargetsRef.current;
             if (!cb) return;
             let selected: unknown[] = [];
@@ -3797,25 +3668,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               const cb2 = onSelectionChangeRef.current;
               if (!cb2) return;
               try {
-                const all = editor.getSelectedAll?.() ?? [];
-                const first = all[0];
-                if (!first) {
-                  cb2({ hasSelection: false, tagName: '', selector: '', styles: {} });
-                  return;
-                }
-                const comp = first as Component;
-                const el = getElementFromComponent(comp);
-                const styles = readElementStyles(el);
-                let tagName = 'div';
-                try { tagName = (comp.get('tagName') as string) ?? 'div'; } catch { /* ignore */ }
-                let selector = tagName;
-                try {
-                  const attrs = comp.getAttributes() as Record<string, unknown>;
-                  const id = typeof attrs['id'] === 'string' ? attrs['id'] : '';
-                  const cls = typeof attrs['class'] === 'string' ? attrs['class'] : '';
-                  selector = `${tagName}${id ? `#${id}` : ''}${cls ? `.${cls.split(/\s+/).join('.')}` : ''}`;
-                } catch { /* ignore */ }
-                cb2({ hasSelection: true, tagName, selector, styles });
+                cb2(buildSelectionSnapshot());
               } catch { /* ignore */ }
             };
             window.requestAnimationFrame(emitSelectionSnapshot);
@@ -3847,6 +3700,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           editor.on('component:hover', forwardHover);
 
           const forwardStyleUpdate = () => {
+            selectionColorCollectorRef.current.invalidate();
             onStyleUpdateRef.current?.();
           };
           editor.on('styleUpdate', forwardStyleUpdate);
@@ -3926,6 +3780,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       const parsed = parseHtmlDocument(html);
       parsedRef.current = parsed;
       currentCanvasStylesRef.current = readCanvasBodyStyleOverrides(parsed);
+      selectionColorCollectorRef.current.invalidate();
       lastExternalHtmlRef.current = html;
       lastEmittedRef.current = '';
       // Reset components — od-stable-id-plugin will re-tag path-based ids
@@ -3980,6 +3835,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           const parsed = parseHtmlDocument(next);
           parsedRef.current = parsed;
           currentCanvasStylesRef.current = readCanvasBodyStyleOverrides(parsed);
+          selectionColorCollectorRef.current.invalidate();
           lastExternalHtmlRef.current = next;
           lastEmittedRef.current = '';
           try {
@@ -4024,6 +3880,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               const merged = { ...(comp.getStyle?.() ?? {}), ...styles } as Parameters<typeof comp.setStyle>[0];
               comp.setStyle?.(merged);
             }
+            selectionColorCollectorRef.current.invalidate();
             // Re-emit the selection snapshot so the StylePanel's NumberScrub /
             // color inputs reflect the just-written values (computed style
             // reads fresh after setStyle).
@@ -4195,8 +4052,15 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
         setCropMode: (on: boolean) => {
           cropModeRef.current = on;
         },
-        collectColorsFromSelection: () => collectColorsFromSelection(editorRef.current),
-        replaceColors: (targets: string[], replacement: string) => replaceColorsInSelection(editorRef.current, targets, replacement),
+        replaceColors: (targets: string[], replacement: string) => {
+          const count = replaceColorsInSelection(editorRef.current, targets, replacement);
+          if (count > 0) {
+            selectionColorCollectorRef.current.invalidate();
+            refreshSelectionSnapshotRef.current?.();
+            scheduleEmitRef.current?.();
+          }
+          return count;
+        },
         getEditor: () => editorRef.current ?? null,
       }),
       [html, layersPanelRef, stylePanelRef],

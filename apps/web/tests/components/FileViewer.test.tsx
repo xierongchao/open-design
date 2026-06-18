@@ -49,7 +49,6 @@ import type { InspectOverrideMap } from '../../src/components/FileViewer';
 import type { LiveArtifact, LiveArtifactWorkspaceEntry, PreviewComment, ProjectFile } from '../../src/types';
 import { I18nProvider } from '../../src/i18n';
 import type { Dict } from '../../src/i18n/types';
-import { emptyManualEditStyles } from '../../src/edit-mode/types';
 import { readExpandedIndexCss } from '../helpers/read-expanded-css';
 
 const TEST_SNAPSHOT_DATA_URL = 'data:image/png;base64,c25hcHNob3Q=';
@@ -140,23 +139,6 @@ function testRect(left: number, top: number, width: number, height: number): DOM
 
 function clickAgentTool(testId: string) {
   fireEvent.click(screen.getByTestId(testId));
-}
-
-function manualEditTarget(id: string, label: string, x: number) {
-  return {
-    id,
-    kind: 'container',
-    label,
-    tagName: 'div',
-    className: '',
-    text: '',
-    rect: { x, y: 20, width: 180, height: 80 },
-    fields: {},
-    attributes: { 'data-od-label': label },
-    styles: emptyManualEditStyles(),
-    isLayoutContainer: true,
-    outerHtml: `<div data-od-id="${id}">${label}</div>`,
-  };
 }
 
 function installCanvasSnapshotMocks() {
@@ -939,158 +921,6 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.getByRole('menuitem', { name: /export as image/i })).toBeTruthy();
   });
 
-  it('keeps inactive HTML preview transports mounted without booting the artifact', async () => {
-    const file = baseFile({
-      name: 'page.html',
-      path: 'page.html',
-      mime: 'text/html',
-      kind: 'html',
-      artifactManifest: {
-        version: 1,
-        kind: 'html',
-        title: 'Page',
-        entry: 'page.html',
-        renderer: 'html',
-        exports: ['html'],
-      },
-    });
-
-    const { container } = render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={file}
-        liveHtml='<html><body><script>window.__odArtifactBootCount = (window.__odArtifactBootCount || 0) + 1;</script><main data-od-id="hero">Hero</main></body></html>'
-      />,
-    );
-
-    const urlFrame = container.querySelector('iframe[data-od-render-mode="url-load"]') as HTMLIFrameElement | null;
-    const srcDocFrame = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement | null;
-
-    expect(urlFrame).toBeTruthy();
-    expect(srcDocFrame).toBeTruthy();
-    expect(urlFrame?.getAttribute('data-od-active')).toBe('true');
-    expect(srcDocFrame?.getAttribute('data-od-active')).toBe('false');
-    expect(srcDocFrame?.srcdoc).toContain('data-od-lazy-srcdoc-transport');
-    expect(srcDocFrame?.srcdoc).not.toContain('__odArtifactBootCount');
-
-    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
-
-    const urlFrameAfter = container.querySelector('iframe[data-od-render-mode="url-load"]') as HTMLIFrameElement | null;
-    const srcDocFrameAfter = container.querySelector('iframe[data-od-render-mode="srcdoc"]') as HTMLIFrameElement | null;
-
-    expect(urlFrameAfter).toBe(urlFrame);
-    expect(urlFrameAfter?.getAttribute('data-od-active')).toBe('false');
-    expect(urlFrameAfter?.getAttribute('src')).toBe('about:blank');
-    expect(srcDocFrameAfter?.getAttribute('data-od-active')).toBe('true');
-    expect(srcDocFrameAfter?.srcdoc).toContain('__odArtifactBootCount');
-    expect(srcDocFrameAfter?.srcdoc).toContain('data-od-edit-bridge');
-  });
-
-  it('keeps the srcDoc edit transport active after canceling manual edit', async () => {
-    const file = baseFile({
-      name: 'page.html',
-      path: 'page.html',
-      mime: 'text/html',
-      kind: 'html',
-      artifactManifest: {
-        version: 1,
-        kind: 'html',
-        title: 'Page',
-        entry: 'page.html',
-        renderer: 'html',
-        exports: ['html'],
-      },
-    });
-
-    const { container } = render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={file}
-        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-      />,
-    );
-
-    expect((screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement).getAttribute('data-od-render-mode')).toBe('url-load');
-
-    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
-    const editFrame = await waitFor(() => {
-      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-      expect(frame.srcdoc).toContain('data-od-edit-bridge');
-      return frame;
-    });
-
-    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
-
-    await waitFor(() => expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('false'));
-    const previewFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    const urlFrame = container.querySelector('iframe[data-od-render-mode="url-load"]') as HTMLIFrameElement | null;
-
-    expect(previewFrame).toBe(editFrame);
-    expect(previewFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-    expect(previewFrame.srcdoc).toContain('data-od-edit-bridge');
-    expect(urlFrame?.getAttribute('data-od-active')).toBe('false');
-  });
-
-  it('keeps the manual edit inspector pinned after clicking a target', async () => {
-    const heroTarget = manualEditTarget('hero-card', 'Hero card', 20);
-    const trendTarget = manualEditTarget('trend-card', 'Trend card', 320);
-    render(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={baseFile({
-          name: 'page.html',
-          path: 'page.html',
-          mime: 'text/html',
-          kind: 'html',
-          artifactManifest: {
-            version: 1,
-            kind: 'html',
-            title: 'Page',
-            entry: 'page.html',
-            renderer: 'html',
-            exports: ['html'],
-          },
-        })}
-        liveHtml='<html><body><main data-od-id="hero-card">Hero</main><aside data-od-id="trend-card">Trend</aside></body></html>'
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
-    await waitFor(() => {
-      expect(screen.getByTestId('artifact-preview-frame').getAttribute('data-od-render-mode')).toBe('srcdoc');
-    });
-    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-
-    // Hover only surfaces the floating "edit params" affordance (#3438); it
-    // must not open the inspector. Pinning requires an explicit select.
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { type: 'od-edit-hover', target: heroTarget },
-    }));
-    expect(await screen.findByTestId('manual-edit-hover-open')).toBeTruthy();
-    expect(screen.queryByText('Hero card')).toBeNull();
-
-    // Selecting pins the inspector to the hero card.
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { type: 'od-edit-select', target: heroTarget },
-    }));
-    expect(await screen.findByText('Hero card')).toBeTruthy();
-
-    // Hovering a different element must not switch the pinned inspector.
-    window.dispatchEvent(new MessageEvent('message', {
-      source: frame.contentWindow,
-      data: { type: 'od-edit-hover', target: trendTarget },
-    }));
-
-    expect(screen.getByText('Hero card')).toBeTruthy();
-    expect(screen.queryByText('Trend card')).toBeNull();
-  });
-
   it('renders sandbox-shim artifacts on the srcdoc transport without entering edit mode (#2791)', () => {
     const file = baseFile({
       name: 'search.html',
@@ -1145,7 +975,7 @@ describe('FileViewer SVG artifacts', () => {
         projectKind="prototype"
         file={file}
         liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-        defaultEditMode
+        initialFallbackManualEditMode
       />,
     );
 
@@ -3202,11 +3032,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(commentsButton.textContent).toContain('1');
     expect(commentsButton.getAttribute('aria-label')).toBe('Comments (1)');
     expect(
-      screen.getByTestId('board-mode-toggle').compareDocumentPosition(screen.getByTestId('manual-edit-mode-toggle')) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      screen.getByTestId('manual-edit-mode-toggle').compareDocumentPosition(commentsButton) &
+      screen.getByTestId('board-mode-toggle').compareDocumentPosition(commentsButton) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });

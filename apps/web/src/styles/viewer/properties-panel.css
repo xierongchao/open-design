@@ -920,10 +920,17 @@
   border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
   cursor: pointer;
   margin: 2px 0;
-  background: repeating-conic-gradient(
-    color-mix(in srgb, var(--text) 10%, transparent) 0% 25%,
-    transparent 0% 50%
-  ) 50% / 8px 8px;
+  background:
+    var(--ge-gradient, linear-gradient(90deg, #3b82f6, #ec4899)),
+    repeating-conic-gradient(
+      color-mix(in srgb, var(--text) 10%, transparent) 0% 25%,
+      transparent 0% 50%
+    ) 50% / 8px 8px;
+}
+
+.ge-stops-bar:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #2563eb) 70%, transparent);
+  outline-offset: 2px;
 }
 
 .ge-stop-marker {
@@ -941,9 +948,12 @@
   transition: box-shadow 0.15s;
 }
 
-.ge-stop-marker:active {
+.ge-stop-marker:active,
+.ge-stop-marker.ge-stop-marker-active {
   cursor: grabbing;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 50%, transparent);
+  box-shadow:
+    0 0 0 2px var(--bg-panel),
+    0 0 0 4px color-mix(in srgb, var(--accent, #2563eb) 72%, transparent);
 }
 
 .ge-stops-list {
@@ -956,6 +966,13 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  border-radius: 4px;
+  padding: 2px;
+  margin: -2px;
+}
+
+.ge-stop-row.ge-stop-row-active {
+  background: color-mix(in srgb, var(--accent, #2563eb) 10%, transparent);
 }
 
 .ge-stop-swatch-label {

@@ -38,7 +38,7 @@
 
 文件：
 - [e2e/ui/app-restoration.test.ts](/Users/mac/open-design/open-design-amr-runtime-acp/e2e/ui/app-restoration.test.ts)
-- [e2e/ui/app-manual-edit.test.ts](/Users/mac/open-design/open-design-amr-runtime-acp/e2e/ui/app-manual-edit.test.ts)
+- [e2e/ui/app-html-preview.test.ts](/Users/mac/open-design/open-design-amr-runtime-acp/e2e/ui/app-html-preview.test.ts)
 
 新增用例：
 
@@ -156,7 +156,7 @@
 文件：
 - [e2e/ui/project-management-flows.test.ts](/Users/mac/open-design/open-design-amr-runtime-acp/e2e/ui/project-management-flows.test.ts)
 - [e2e/ui/amr-onboarding.test.ts](/Users/mac/open-design/open-design-amr-runtime-acp/e2e/ui/amr-onboarding.test.ts)
-- [e2e/ui/app-manual-edit.test.ts](/Users/mac/open-design/open-design-amr-runtime-acp/e2e/ui/app-manual-edit.test.ts)
+- [e2e/ui/app-html-preview.test.ts](/Users/mac/open-design/open-design-amr-runtime-acp/e2e/ui/app-html-preview.test.ts)
 - [e2e/ui/settings-api-protocol.test.ts](/Users/mac/open-design/open-design-amr-runtime-acp/e2e/ui/settings-api-protocol.test.ts)
 
 新增用例：
@@ -213,7 +213,7 @@ pnpm exec playwright test -c playwright.config.ts ui/app-restoration.test.ts --g
 ### HTML 预览恢复
 
 ```bash
-pnpm exec playwright test -c playwright.config.ts ui/app-manual-edit.test.ts --grep "HTML preview stays rendered after switching from Preview to Code and back"
+pnpm exec playwright test -c playwright.config.ts ui/app-html-preview.test.ts --grep "HTML preview stays rendered after switching from Preview to Code and back"
 ```
 
 ### Plugin authoring
@@ -252,7 +252,7 @@ pnpm exec playwright test -c playwright.config.ts ui/amr-onboarding.test.ts --gr
 ```
 
 ```bash
-pnpm exec playwright test -c playwright.config.ts ui/app-manual-edit.test.ts --grep "simple deck keeps the active slide stable across preview mode switches"
+pnpm exec playwright test -c playwright.config.ts ui/app-html-preview.test.ts --grep "simple deck keeps the active slide stable across preview mode switches"
 ```
 
 ```bash

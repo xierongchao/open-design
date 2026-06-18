@@ -1,21 +1,40 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StylePanel } from '../../../src/components/grapesjs/StylePanel';
+import { readImageFileToDataUrl } from '../../../src/components/grapesjs/image-upload';
 import type {
   GrapesjsEditorHandle,
   SelectionSnapshot,
 } from '../../../src/components/grapesjs/GrapesjsEditor';
 
-afterEach(cleanup);
+vi.mock('../../../src/components/grapesjs/image-upload', () => ({
+  readImageFileToDataUrl: vi.fn(),
+}));
+
+let canvasGetContextSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+beforeEach(() => {
+  canvasGetContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({
+    fillStyle: '',
+    fillRect: vi.fn(),
+    createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  }) as unknown as CanvasRenderingContext2D) as unknown as HTMLCanvasElement['getContext']);
+});
+
+afterEach(() => {
+  cleanup();
+  canvasGetContextSpy?.mockRestore();
+  canvasGetContextSpy = null;
+  vi.clearAllMocks();
+});
 
 function renderPanel(styles: Record<string, string> = {}) {
   const applyStyle = vi.fn();
   const editorRef = {
     current: {
       applyStyle,
-      collectColorsFromSelection: vi.fn(() => ['#ffffff']),
       replaceColors: vi.fn(),
       reselectCurrent: vi.fn(),
       setCropMode: vi.fn(),
@@ -36,6 +55,7 @@ function renderPanel(styles: Record<string, string> = {}) {
       opacity: '1',
       ...styles,
     },
+    selectedColors: ['#ffffff'],
   };
 
   render(<StylePanel editorRef={editorRef} selection={selection} />);
@@ -54,13 +74,12 @@ function renderCanvasPanel(styles: Record<string, string> = { backgroundColor: '
       getCanvasStyles: vi.fn(() => styles),
       setCanvasStyles,
       setCanvasSize,
-      collectColorsFromSelection: vi.fn(() => []),
       reselectCurrent: vi.fn(),
       setCropMode: vi.fn(),
     } as unknown as GrapesjsEditorHandle,
   };
 
-  render(<StylePanel editorRef={editorRef} selection={{ hasSelection: false, tagName: '', selector: '', styles: {} }} />);
+  render(<StylePanel editorRef={editorRef} selection={{ hasSelection: false, tagName: '', selector: '', styles: {}, selectedColors: [] }} />);
   return { setCanvasStyles, setCanvasSize };
 }
 
@@ -126,6 +145,38 @@ describe('StylePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '高级描边设置' }));
     expect(screen.getByText('描边设置')).toBeTruthy();
     expect(screen.getByRole('tab', { name: '基础' })).toBeTruthy();
+  });
+
+  it('applies advanced stroke cap and join controls', () => {
+    const { applyStyle } = renderPanel({
+      borderTopWidth: '1px',
+      borderStyle: 'solid',
+      strokeLinecap: 'butt',
+      strokeLinejoin: 'miter',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '高级描边设置' }));
+    fireEvent.click(screen.getByRole('button', { name: '圆头端点' }));
+    fireEvent.click(screen.getByRole('button', { name: '斜角连接' }));
+
+    expect(applyStyle).toHaveBeenCalledWith({ 'stroke-linecap': 'round' });
+    expect(applyStyle).toHaveBeenCalledWith({ 'stroke-linejoin': 'bevel' });
+  });
+
+  it('applies effect changes from the floating effect settings title', () => {
+    const { applyStyle } = renderPanel({
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.18)',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '打开效果参数' }));
+    fireEvent.change(within(screen.getByRole('dialog')).getByRole('combobox', { name: '效果类型' }), {
+      target: { value: 'background-blur' },
+    });
+
+    expect(applyStyle).toHaveBeenCalledWith({
+      'backdrop-filter': 'blur(8px)',
+      '-webkit-backdrop-filter': 'blur(8px)',
+    });
   });
 
   it('commits a manually typed fill color when the field blurs', () => {
@@ -210,5 +261,45 @@ describe('StylePanel', () => {
     expect(screen.getByText('已选择 0 个颜色')).toBeTruthy();
     expect(screen.getByRole('button', { name: '选择替换颜色' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '替换' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('keeps image replacement available while crop mode is active', () => {
+    renderPanel({
+      backgroundImage: 'url("data:image/png;base64,abc")',
+      backgroundSize: 'auto',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat',
+    });
+
+    expect(screen.getByRole('button', { name: '点击替换图片' })).toBeTruthy();
+    expect(screen.getByLabelText('图片缩放')).toBeTruthy();
+  });
+
+  it('uploads replacement images from crop mode without leaving crop sizing', async () => {
+    vi.mocked(readImageFileToDataUrl).mockResolvedValue({
+      dataUrl: 'data:image/png;base64,next',
+      width: 10,
+      height: 10,
+    });
+    const { applyStyle } = renderPanel({
+      backgroundImage: 'url("data:image/png;base64,abc")',
+      backgroundSize: 'auto',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat',
+    });
+    const file = new File(['img'], 'next.png', { type: 'image/png' });
+
+    fireEvent.change(screen.getByLabelText('选择图片文件'), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(applyStyle).toHaveBeenCalledWith({
+        'background-image': 'url("data:image/png;base64,next")',
+        'background-size': 'auto',
+        'background-position': 'center',
+        'background-repeat': 'no-repeat',
+      });
+    });
   });
 });

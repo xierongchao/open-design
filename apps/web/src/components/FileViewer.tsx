@@ -3,16 +3,20 @@ import { createPortal } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { detectOpenDesignHostClientType } from '@open-design/host';
 import { EditableCodeViewer } from './EditableCodeViewer';
+import {
+  emptyManualEditSourceRoundTrip,
+  enterManualEditSourceRoundTrip,
+  markManualEditLocalSave,
+  reconcileManualEditSourceRoundTrip,
+} from './html-editor-source-roundtrip';
+import { createHtmlFileSaveController } from './html-file-save-controller';
 import type { GrapesjsEditorHandle, SelectionSnapshot } from './grapesjs';
 import { StylePanel } from './grapesjs';
 import {
   applyPreviewStyle,
-  extractInspectTarget,
-  extractInspectTargetFromComponent,
-  findComponentByOdId,
-  getNormalizedBox,
   persistStyleOverride,
 } from './grapesjs/grapesjs-bridge-adapter';
+import { createGrapesjsSelectionStore } from './grapesjs/grapesjs-selection-store';
 import {
   buildSocialSharePayload,
   OPEN_DESIGN_GITHUB_REPO_URL,
@@ -67,8 +71,6 @@ import {
   type WebDeployProjectFileResponse,
   type WebDeployProviderId,
   type WebUpdateDeployConfigRequest,
-  writeProjectTextFile,
-  writeProjectTextFileDetailed,
 } from '../providers/registry';
 import type { ProjectFilePreview } from '../providers/registry';
 import {
@@ -520,7 +522,9 @@ interface Props {
   // send for this file just started processing).
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   onEditModeChange?: (active: boolean) => void;
-  defaultEditMode?: boolean;
+  // Legacy iframe fallback entry. GrapesJS edit-panel availability is derived
+  // from the editor path, not this fallback flag.
+  initialFallbackManualEditMode?: boolean;
   fileViewportPreset?: 'desktop' | 'tablet' | 'mobile';
   onViewportPresetChange?: (preset: 'desktop' | 'tablet' | 'mobile') => void;
 }
@@ -550,7 +554,7 @@ export function FileViewer({
   shareRequest,
   slideNavRequest,
   onEditModeChange,
-  defaultEditMode = false,
+  initialFallbackManualEditMode = false,
   fileViewportPreset,
   onViewportPresetChange,
 }: Props) {
@@ -600,7 +604,7 @@ export function FileViewer({
         shareRequest={shareRequest}
         slideNavRequest={slideNavRequest}
         onEditModeChange={onEditModeChange}
-        defaultEditMode={defaultEditMode}
+        initialFallbackManualEditMode={initialFallbackManualEditMode}
         fileViewportPreset={fileViewportPreset}
         onViewportPresetChange={onViewportPresetChange}
       />
@@ -4081,7 +4085,7 @@ function HtmlViewer({
   shareRequest,
   slideNavRequest,
   onEditModeChange,
-  defaultEditMode = false,
+  initialFallbackManualEditMode = false,
   fileViewportPreset,
   onViewportPresetChange,
 }: {
@@ -4108,12 +4112,20 @@ function HtmlViewer({
   shareRequest?: { nonce: number } | null;
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   onEditModeChange?: (active: boolean) => void;
-  defaultEditMode?: boolean;
+  // Legacy iframe fallback entry. GrapesJS edit-panel availability is derived
+  // from the editor path, not this fallback flag.
+  initialFallbackManualEditMode?: boolean;
   fileViewportPreset?: 'desktop' | 'tablet' | 'mobile';
   onViewportPresetChange?: (preset: 'desktop' | 'tablet' | 'mobile') => void;
 }) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
+  const htmlFileSaveController = useMemo(() => createHtmlFileSaveController({
+    projectId,
+    fileName: file.name,
+    artifactManifest: file.artifactManifest,
+    onSaved: onFileSaved,
+  }), [projectId, file.name, file.artifactManifest, onFileSaved]);
   // Shared helper for the share menu: emit studio_click share_option on
   // entry and artifact_export_result on resolution. Sync exports report
   // success immediately after the call returns; async exports get .then
@@ -4361,8 +4373,8 @@ function HtmlViewer({
   const MAX_MANUAL_EDIT_HISTORY = 500;
   // for hint managing hint box state
   const [openHintBox, setOpenHintBox] = useState(true);
-  const [manualEditMode, setManualEditModeRaw] = useState(defaultEditMode);
-  const [manualEditSrcDocActive, setManualEditSrcDocActive] = useState(defaultEditMode);
+  const [manualEditMode, setManualEditModeRaw] = useState(initialFallbackManualEditMode);
+  const [manualEditSrcDocActive, setManualEditSrcDocActive] = useState(initialFallbackManualEditMode);
   const [manualEditFrozenSource, setManualEditFrozenSource] = useState<string | null>(null);
   // When a move-element patch saves, the bridge already applied the change
   // optimistically in the iframe DOM. This flag tells the external-change
@@ -4517,9 +4529,9 @@ function HtmlViewer({
     setManualEditSrcDocActive(manualEditMode);
   }, [manualEditMode]);
   useEffect(() => {
-    setManualEditSrcDocActive(defaultEditMode);
+    setManualEditSrcDocActive(initialFallbackManualEditMode);
     setManualEditFrozenSource(null);
-  }, [defaultEditMode, projectId, file.name]);
+  }, [initialFallbackManualEditMode, projectId, file.name]);
   useEffect(() => {
     onCommentModeChange?.(commentPanelOpen);
   }, [commentPanelOpen, onCommentModeChange]);
@@ -4677,14 +4689,12 @@ function HtmlViewer({
   const manualEditStyleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualEditPreviewVersionRef = useRef(0);
   const sourceRef = useRef<string | null>(source);
-  const manualEditExpectedSourceRef = useRef<string | null>(null);
-  const manualEditExternalSourceRef = useRef<string | null>(null);
+  const manualEditSourceRoundTripRef = useRef(emptyManualEditSourceRoundTrip());
   const sourceFileKeyRef = useRef<string | null>(null);
   const manualEditResetFileKeyRef = useRef(`${projectId}\0${file.name}`);
   useEffect(() => {
-    manualEditExpectedSourceRef.current = null;
-    manualEditExternalSourceRef.current = null;
-  }, [defaultEditMode, projectId, file.name]);
+    manualEditSourceRoundTripRef.current = emptyManualEditSourceRoundTrip();
+  }, [initialFallbackManualEditMode, projectId, file.name]);
   const templateNameId = useId();
   const templateDescriptionId = useId();
   const imageExportTitleId = useId();
@@ -5037,8 +5047,7 @@ function HtmlViewer({
   // postMessage instead, so the canvas never has to reload.
   useEffect(() => {
     if (manualEditMode && manualEditFrozenSource === null && livePreviewSource != null) {
-      manualEditExpectedSourceRef.current = sourceRef.current;
-      manualEditExternalSourceRef.current = null;
+      manualEditSourceRoundTripRef.current = enterManualEditSourceRoundTrip(sourceRef.current);
       setManualEditFrozenSource(livePreviewSource);
     }
   }, [manualEditMode, manualEditFrozenSource, livePreviewSource]);
@@ -5050,16 +5059,13 @@ function HtmlViewer({
   useEffect(() => {
     if (!manualEditMode || manualEditFrozenSource == null || livePreviewSource == null) return;
     if (livePreviewSource === manualEditFrozenSource) return;
-    const currentSource = sourceRef.current;
-    if (
-      currentSource === manualEditExpectedSourceRef.current
-      && manualEditExternalSourceRef.current !== currentSource
-    ) {
-      return;
-    }
-    if (currentSource !== manualEditExpectedSourceRef.current) {
-      manualEditExpectedSourceRef.current = currentSource;
-      manualEditExternalSourceRef.current = currentSource;
+    const reconcile = reconcileManualEditSourceRoundTrip(
+      manualEditSourceRoundTripRef.current,
+      sourceRef.current,
+    );
+    manualEditSourceRoundTripRef.current = reconcile.next;
+    if (!reconcile.shouldAdvanceFrozenSource) return;
+    if (reconcile.externalRewrite) {
       skipSrcDocRebuildForMoveRef.current = false;
     }
     setManualEditFrozenSource(livePreviewSource);
@@ -5132,6 +5138,7 @@ function HtmlViewer({
     needsSandboxShim,
     needsFocusGuard,
   });
+  const fallbackManualEditMode = manualEditMode && !useGrapesjs;
   // PR3: while the GrapesJS canvas owns the HTML preview, mark the Edit tab
   // as available up front. The actual auto-switch still happens on element
   // selection via onEditSelectionChange, but pre-mounting the host avoids a
@@ -5187,6 +5194,7 @@ function HtmlViewer({
   // Custom viewport sizes (set via PageInspector) override preset dimensions.
   useEffect(() => {
     if (!useGrapesjs || mode !== 'preview') return;
+    grapesjsSelectionStoreRef.current.invalidate();
     grapesjsEditorRef.current?.setViewport(activeViewportSize.width, activeViewportSize.height);
   }, [previewViewport, activeViewportSize.width, activeViewportSize.height, mode, useGrapesjs]);
 
@@ -5207,26 +5215,26 @@ function HtmlViewer({
       editor: NonNullable<ReturnType<GrapesjsEditorHandle['getEditor']>>,
       odId: string,
       filePath: string,
+      options?: { preferCurrentSelection?: boolean },
     ): PreviewCommentSnapshot | null => {
-      const box = getNormalizedBox(editor, odId);
-      if (!box) return null;
-      const inspect = extractInspectTarget(editor, odId);
-      const htmlHint = (() => {
-        try {
-          const component = findComponentByOdId(editor, odId);
-          return String(component?.toHTML?.() ?? '').trim();
-        } catch {
-          return '';
-        }
-      })();
+      const selection = grapesjsSelectionStoreRef.current.readSnapshot(editor, odId, {
+        preferCurrentSelection: options?.preferCurrentSelection ?? true,
+      });
+      if (!selection?.box) return null;
+      const inspect = selection.inspectTarget;
       return {
         filePath,
-        elementId: odId,
+        elementId: selection.odId,
         selector: inspect?.selector ?? '',
         label: inspect?.label ?? '',
         text: inspect?.text ?? '',
-        position: { x: box.x, y: box.y, width: box.width, height: box.height },
-        htmlHint,
+        position: {
+          x: selection.box.x,
+          y: selection.box.y,
+          width: selection.box.width,
+          height: selection.box.height,
+        },
+        htmlHint: selection.htmlHint,
         style: inspect?.style,
         selectionKind: 'element',
       };
@@ -5234,6 +5242,7 @@ function HtmlViewer({
     [],
   );
   const grapesjsEditorRef = useRef<GrapesjsEditorHandle | null>(null);
+  const grapesjsSelectionStoreRef = useRef(createGrapesjsSelectionStore());
   // Debounce the expensive computed-style snapshot read that runs on every
   // GrapesJS selection. extractInspectTarget() walks the component tree and
   // calls getComputedStyle for ~12 properties; doing that synchronously inside
@@ -5244,13 +5253,9 @@ function HtmlViewer({
   // deferred to the next idle frame with a trailing debounce so rapid clicks
   // collapse to a single read.
   const grapesjsInspectDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Debounced auto-save for the GrapesJS canvas. When the user edits on the
-  // canvas (drag, inline text, style), onChange flips codeDirty. Without an
-  // auto-save the edits lived only in memory — closing/reloading the file
-  // showed the pre-edit source because nothing ever wrote the file. This
-  // ref holds a 1500ms trailing save (rescheduled on every onChange) so rapid
-  // edits collapse into one write; the unmount effect flushes the timer.
-  const grapesjsAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    grapesjsSelectionStoreRef.current.invalidate();
+  }, [file.name, source]);
   // Flush pending edits when the file changes or the component unmounts.
   // Keyed on projectId + file.name so switching files in the tree triggers
   // the cleanup (and save) before the new file's content loads.
@@ -5259,25 +5264,20 @@ function HtmlViewer({
       if (grapesjsInspectDebounceRef.current) {
         clearTimeout(grapesjsInspectDebounceRef.current);
       }
-      if (grapesjsAutoSaveTimerRef.current) {
-        // Flush a pending canvas auto-save instead of dropping it — otherwise
-        // the last <1500ms of edits would be lost on file switch / unmount.
-        clearTimeout(grapesjsAutoSaveTimerRef.current);
-        grapesjsAutoSaveTimerRef.current = null;
-        try {
-          const next = grapesjsEditorRef.current?.getDocument();
-          if (next && next !== sourceRef.current) {
-            sourceRef.current = next;
-            void writeProjectTextFile(projectId, file.name, next, {
-              artifactManifest: file.artifactManifest,
-            }).then(() => onFileSaved?.());
-          }
-        } catch {
-          // ignore — best-effort flush
+      try {
+        const next = grapesjsEditorRef.current?.getDocument();
+        if (next && next !== sourceRef.current) {
+          sourceRef.current = next;
+          htmlFileSaveController.cancelScheduledSave();
+          void htmlFileSaveController.saveBestEffort(next, 'grapesjs-autosave-flush');
+          return;
         }
+      } catch {
+        // ignore — best-effort flush below still preserves scheduled source
       }
+      void htmlFileSaveController.flushScheduledSave('grapesjs-autosave-flush');
     };
-  }, [projectId, file.name, file.mtime]);
+  }, [file.mtime, htmlFileSaveController]);
   const [grapesjsViewMode, setGrapesjsViewModeState] = useState(false);
   // Wrap setGrapesjsViewMode so that switching to interactive mode flushes any
   // pending canvas edits before the GrapesjsEditor unmounts. Without this, the
@@ -5288,24 +5288,19 @@ function HtmlViewer({
       const value = typeof next === 'function' ? next(prev) : next;
       // Only flush when transitioning FROM edit (false) TO interactive (true).
       if (value && !prev) {
-        if (grapesjsAutoSaveTimerRef.current) {
-          clearTimeout(grapesjsAutoSaveTimerRef.current);
-          grapesjsAutoSaveTimerRef.current = null;
-        }
+        htmlFileSaveController.cancelScheduledSave();
         // Sync the latest editor document to source + immediately save.
         const doc = grapesjsEditorRef.current?.getDocument();
         if (doc && doc !== sourceRef.current) {
           sourceRef.current = doc;
           setSource(doc);
           setCodeDirty(true);
-          void writeProjectTextFile(projectId, file.name, doc, {
-            artifactManifest: file.artifactManifest,
-          }).then(() => onFileSaved?.());
+          void htmlFileSaveController.saveBestEffort(doc, 'grapesjs-view-mode-flush');
         }
       }
       return value;
     });
-  }, [projectId, file.name, file.artifactManifest]);
+  }, [htmlFileSaveController]);
   // Canvas zoom from GrapesJS (0-100), drives the toolbar zoom % display on
   // the GrapesJS preview path. The non-GrapesJS path uses the legacy `zoom` state.
   const [grapesjsCanvasZoom, setGrapesjsCanvasZoom] = useState(100);
@@ -5816,8 +5811,7 @@ function HtmlViewer({
     setManualEditError(null);
     manualEditFlushAfterSaveRef.current = false;
     manualEditPendingStyleRef.current = null;
-    manualEditExpectedSourceRef.current = null;
-    manualEditExternalSourceRef.current = null;
+    manualEditSourceRoundTripRef.current = emptyManualEditSourceRoundTrip();
     clearManualEditStyleTimer();
   }, [projectId, file.name]);
 
@@ -6087,8 +6081,7 @@ function HtmlViewer({
       setManualEditError(null);
       manualEditFlushAfterSaveRef.current = false;
       manualEditPendingStyleRef.current = null;
-      manualEditExpectedSourceRef.current = null;
-      manualEditExternalSourceRef.current = null;
+      manualEditSourceRoundTripRef.current = emptyManualEditSourceRoundTrip();
       if (manualEditStyleTimerRef.current) {
         clearTimeout(manualEditStyleTimerRef.current);
         manualEditStyleTimerRef.current = null;
@@ -6860,9 +6853,7 @@ function HtmlViewer({
         baseSource,
         'The file changed outside manual edit mode. Refreshing before applying manual edits.',
       ))) return false;
-      const saved = await writeProjectTextFileDetailed(projectId, file.name, result.source, {
-        artifactManifest: file.artifactManifest,
-      });
+      const saved = await htmlFileSaveController.save(result.source, 'manual-edit-patch');
       if (!saved.ok) {
         const status = 'status' in saved ? saved.status : undefined;
         const code = 'code' in saved ? saved.code : undefined;
@@ -6885,8 +6876,10 @@ function HtmlViewer({
         afterSource: result.source,
         createdAt: Date.now(),
       };
-      manualEditExpectedSourceRef.current = result.source;
-      manualEditExternalSourceRef.current = null;
+      manualEditSourceRoundTripRef.current = markManualEditLocalSave(
+        manualEditSourceRoundTripRef.current,
+        result.source,
+      );
       const persistedDomPatchInPlace = manualEditRequiresSrcDoc && (
         patch.kind === 'remove-element'
         || patch.kind === 'set-link'
@@ -7017,23 +7010,22 @@ function HtmlViewer({
         latest.afterSource,
         'The file changed outside manual edit mode. History was cleared to avoid overwriting newer content.',
       ))) return;
-      const saved = await writeProjectTextFile(projectId, file.name, latest.beforeSource, {
-        artifactManifest: file.artifactManifest,
-      });
-      if (!saved) {
+      const saved = await htmlFileSaveController.save(latest.beforeSource, 'manual-edit-undo');
+      if (!saved.ok) {
         setManualEditError('Could not save the undo result.');
         return;
       }
       setSource(latest.beforeSource);
       sourceRef.current = latest.beforeSource;
-      manualEditExpectedSourceRef.current = latest.beforeSource;
-      manualEditExternalSourceRef.current = null;
+      manualEditSourceRoundTripRef.current = markManualEditLocalSave(
+        manualEditSourceRoundTripRef.current,
+        latest.beforeSource,
+      );
       setInlinedSource(null);
       setManualEditFrozenSource(latest.beforeSource);
       setManualEditHistory(rest);
       setManualEditUndone((current) => [latest, ...current]);
       setManualEditDraft((current) => ({ ...current, fullSource: latest.beforeSource }));
-      await onFileSaved?.();
     } finally {
       manualEditSavingRef.current = false;
       setManualEditSaving(false);
@@ -7052,23 +7044,22 @@ function HtmlViewer({
         latest.beforeSource,
         'The file changed outside manual edit mode. History was cleared to avoid overwriting newer content.',
       ))) return;
-      const saved = await writeProjectTextFile(projectId, file.name, latest.afterSource, {
-        artifactManifest: file.artifactManifest,
-      });
-      if (!saved) {
+      const saved = await htmlFileSaveController.save(latest.afterSource, 'manual-edit-redo');
+      if (!saved.ok) {
         setManualEditError('Could not save the redo result.');
         return;
       }
       setSource(latest.afterSource);
       sourceRef.current = latest.afterSource;
-      manualEditExpectedSourceRef.current = latest.afterSource;
-      manualEditExternalSourceRef.current = null;
+      manualEditSourceRoundTripRef.current = markManualEditLocalSave(
+        manualEditSourceRoundTripRef.current,
+        latest.afterSource,
+      );
       setInlinedSource(null);
       setManualEditFrozenSource(latest.afterSource);
       setManualEditUndone(rest);
       setManualEditHistory((current) => [latest, ...current]);
       setManualEditDraft((current) => ({ ...current, fullSource: latest.afterSource }));
-      await onFileSaved?.();
     } finally {
       manualEditSavingRef.current = false;
       setManualEditSaving(false);
@@ -7269,30 +7260,14 @@ function HtmlViewer({
           }
         }
         const next = grapesjsEditorRef.current?.getDocument() ?? source;
-        const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: file.name, content: next }),
-        });
-        if (!resp.ok) {
-          const payload = await resp.json().catch(() => null) as { error?: string; message?: string } | null;
-          throw new Error(payload?.error || payload?.message || `Save failed (${resp.status})`);
-        }
+        await htmlFileSaveController.saveOrThrow(next, 'inspect-save');
         setSource(next);
         setInspectSavedAt(Date.now());
         return;
       }
       const css = serializeInspectOverrides(inspectOverrides).trim();
       const next = applyInspectOverridesToSource(source, css);
-      const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: file.name, content: next }),
-      });
-      if (!resp.ok) {
-        const payload = await resp.json().catch(() => null) as { error?: string; message?: string } | null;
-        throw new Error(payload?.error || payload?.message || `Save failed (${resp.status})`);
-      }
+      await htmlFileSaveController.saveOrThrow(next, 'inspect-save');
       setSource(next);
       setInspectSavedAt(Date.now());
       setReloadKey((k) => k + 1);
@@ -7781,13 +7756,10 @@ function HtmlViewer({
   async function handleCodeSave() {
     const currentSource = sourceRef.current;
     if (currentSource == null) return;
-    const saved = await writeProjectTextFile(projectId, file.name, currentSource, {
-      artifactManifest: file.artifactManifest,
-    });
-    if (saved) {
+    const saved = await htmlFileSaveController.save(currentSource, 'code-save');
+    if (saved.ok) {
       codeSavedSourceRef.current = currentSource;
       setCodeDirty(false);
-      await onFileSaved?.();
     }
   }
 
@@ -7852,7 +7824,7 @@ function HtmlViewer({
       setDrawOverlayOpen(true);
       closeArtifactToolMenus();
     };
-    if (manualEditMode) {
+    if (fallbackManualEditMode) {
       void exitManualEditModeAfterFlush().then((ok) => {
         if (ok) activateDraw();
       });
@@ -7892,7 +7864,7 @@ function HtmlViewer({
       activateBoard('inspect');
       closeArtifactToolMenus();
     };
-    if (manualEditMode) {
+    if (fallbackManualEditMode) {
       void exitManualEditModeAfterFlush().then((ok) => {
         if (ok) activateComment();
       });
@@ -7923,7 +7895,7 @@ function HtmlViewer({
       activateBoard('inspect');
       closeArtifactToolMenus();
     };
-    if (manualEditMode) {
+    if (fallbackManualEditMode) {
       void exitManualEditModeAfterFlush().then((ok) => {
         if (ok) activateCommentCreate();
       });
@@ -7947,6 +7919,20 @@ function HtmlViewer({
   function activateManualEditTool() {
     fireArtifactToolbarClick('edit');
     capturePreviewScrollPosition();
+    if (useGrapesjs) {
+      setCommentPanelOpen(false);
+      setCommentCreateMode(false);
+      setBoardMode(false);
+      clearBoardComposer();
+      setInspectMode(true);
+      setGrapesjsSidebarTab('inspect');
+      setDrawOverlayOpen(false);
+      setMode('preview');
+      onEditModeChange?.(true);
+      onEditSelectionChange?.(grapesjsSelectionActive);
+      closeArtifactToolMenus();
+      return;
+    }
     if (!manualEditMode) {
       setCommentPanelOpen(false);
       setCommentCreateMode(false);
@@ -8718,11 +8704,11 @@ function HtmlViewer({
         if (current == null) return;
         const updated = writeCanvasSizeToSource(current, size, previewViewport);
         if (updated !== current) {
-          manualEditExpectedSourceRef.current = updated;
-          manualEditExternalSourceRef.current = null;
-          void writeProjectTextFileDetailed(projectId, file.name, updated, {
-            artifactManifest: file.artifactManifest,
-          });
+          manualEditSourceRoundTripRef.current = markManualEditLocalSave(
+            manualEditSourceRoundTripRef.current,
+            updated,
+          );
+          void htmlFileSaveController.saveBestEffort(updated, 'manual-edit-viewport-size');
           setSource(updated);
           sourceRef.current = updated;
         }
@@ -9292,21 +9278,12 @@ function HtmlViewer({
                 selectionChrome={boardMode && !commentCreateMode ? 'element-selection' : 'edit'}
                 {...(boardMode && !commentCreateMode ? { onEscapeKey: deactivateElementSelectionMode } : {})}
                 onChange={(next) => {
+                  grapesjsSelectionStoreRef.current.invalidate();
                   sourceRef.current = next;
                   setSource(next);
                   setCodeDirty(true);
-                  // Reschedule the trailing auto-save on every canvas change
-                  // so continuous edits keep pushing the 1500ms deadline
-                  // forward (the codeDirty-flip effect only fires once).
                   if (useGrapesjs && mode === 'preview') {
-                    if (grapesjsAutoSaveTimerRef.current) {
-                      clearTimeout(grapesjsAutoSaveTimerRef.current);
-                    }
-                    grapesjsAutoSaveTimerRef.current = setTimeout(() => {
-                      grapesjsAutoSaveTimerRef.current = null;
-                      syncGrapesjsDocumentToSource();
-                      void handleCodeSave();
-                    }, 1500);
+                    htmlFileSaveController.scheduleSave(next, 'grapesjs-autosave-flush');
                   }
                 }}
                 onSave={() => {
@@ -9314,6 +9291,7 @@ function HtmlViewer({
                   void handleCodeSave();
                 }}
                 onSelectTargets={(ids) => {
+                  grapesjsSelectionStoreRef.current.invalidate();
                   const hasSelection = ids.length > 0;
                   setGrapesjsSelectionActive(hasSelection);
                   // PR3: a normal canvas click should feel like "click →
@@ -9354,22 +9332,7 @@ function HtmlViewer({
                       grapesjsInspectDebounceRef.current = null;
                       const editor = grapesjsEditorRef.current?.getEditor();
                       if (!editor) return;
-                      // Prefer the live selected component over a by-id tree
-                      // walk. findComponentByOdId can miss a component whose
-                      // data-od-id GrapesJS stripped from the model during
-                      // setComponents (the attribute survives on the DOM, but
-                      // not always on the Component model), which left the
-                      // inspect panel empty even with a clear selection.
-                      const selected = (() => {
-                        try {
-                          return editor.getSelected?.() ?? null;
-                        } catch {
-                          return null;
-                        }
-                      })();
-                      const target = selected
-                        ? extractInspectTargetFromComponent(editor, selected as never)
-                        : extractInspectTarget(editor, selectedId);
+                      const target = grapesjsSelectionStoreRef.current.readInspectTarget(editor, selectedId);
                       if (target) {
                         setActiveInspectTarget(target);
                         setInspectError(null);
@@ -9419,7 +9382,9 @@ function HtmlViewer({
                   }
                   const editor = grapesjsEditorRef.current?.getEditor();
                   if (!editor) return;
-                  const snapshot = buildGrapesjsCommentSnapshot(editor, id, file.name);
+                  const snapshot = buildGrapesjsCommentSnapshot(editor, id, file.name, {
+                    preferCurrentSelection: false,
+                  });
                   if (!snapshot) return;
                   setHoveredCommentTarget((current) =>
                     current && current.elementId === snapshot.elementId && commentSnapshotEqual(current, snapshot)
@@ -9433,6 +9398,7 @@ function HtmlViewer({
                   });
                 }}
                 onStyleUpdate={() => {
+                  grapesjsSelectionStoreRef.current.invalidate();
                   // When the user edits a style via the inspect panel we
                   // don't need a separate signal — the panel calls adapter
                   // helpers directly. This hook refreshes the Inspect
@@ -9450,18 +9416,7 @@ function HtmlViewer({
                     grapesjsInspectDebounceRef.current = null;
                     const editor = grapesjsEditorRef.current?.getEditor();
                     if (!editor) return;
-                    // Prefer the live selected component (see onSelectTargets
-                    // for why the by-id walk can miss).
-                    const selected = (() => {
-                      try {
-                        return editor.getSelected?.() ?? null;
-                      } catch {
-                        return null;
-                      }
-                    })();
-                    const refreshed = selected
-                      ? extractInspectTargetFromComponent(editor, selected as never)
-                      : extractInspectTarget(editor, elementId);
+                    const refreshed = grapesjsSelectionStoreRef.current.readInspectTarget(editor, elementId);
                     if (refreshed) setActiveInspectTarget(refreshed);
                   }, 120);
                 }}
@@ -9473,16 +9428,21 @@ function HtmlViewer({
                   setTweaksAvailable(available);
                 }}
                 onSelectionChange={(info) => {
+                  grapesjsSelectionStoreRef.current.invalidate();
                   setGrapesjsSelection(info);
                 }}
                 onImageEditRequest={() => setImageEditSignal((n) => n + 1)}
-                onZoomChange={(z) => setGrapesjsCanvasZoom(Number.isFinite(z) ? z : 100)}
+                onZoomChange={(z) => {
+                  grapesjsSelectionStoreRef.current.invalidate();
+                  setGrapesjsCanvasZoom(Number.isFinite(z) ? z : 100);
+                }}
                 onViewportSizeChange={(width, height) => {
                   // Persist only user-edited canvas dimensions into the HTML
                   // file's <meta name="od-canvas"> so they survive reloads.
                   // Preset switches are stored in the file alias layer and do
                   // not rewrite the source or dirty the editor.
                   if (!useGrapesjs || mode !== 'preview') return;
+                  grapesjsSelectionStoreRef.current.invalidate();
                   setCustomViewportSizes((currentSizes) => ({
                     ...currentSizes,
                     [previewViewport]: { width, height },
@@ -9498,14 +9458,7 @@ function HtmlViewer({
                     sourceRef.current = updated;
                     setSource(updated);
                     setCodeDirty(true);
-                    if (grapesjsAutoSaveTimerRef.current) {
-                      clearTimeout(grapesjsAutoSaveTimerRef.current);
-                    }
-                    grapesjsAutoSaveTimerRef.current = setTimeout(() => {
-                      grapesjsAutoSaveTimerRef.current = null;
-                      syncGrapesjsDocumentToSource();
-                      void handleCodeSave();
-                    }, 1500);
+                    htmlFileSaveController.scheduleSave(updated, 'grapesjs-autosave-flush');
                   }
                 }}
                 initialViewport={(() => {

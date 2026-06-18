@@ -332,6 +332,10 @@ export interface NormalizedRect {
 export function getNormalizedBox(editor: Editor, odId: string): NormalizedRect | null {
   const comp = findComponentByOdId(editor, odId);
   if (!comp) return null;
+  return getNormalizedBoxFromComponent(editor, comp);
+}
+
+export function getNormalizedBoxFromComponent(editor: Editor, comp: Component): NormalizedRect | null {
   const el = getElementFromComponent(comp);
   if (!el) return null;
   let frame: HTMLIFrameElement | null = null;

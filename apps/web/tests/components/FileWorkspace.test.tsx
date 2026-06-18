@@ -12,7 +12,6 @@ import {
   scrollWorkspaceTabsWithWheel,
 } from '../../src/components/FileWorkspace';
 import { DesignFilesPanel } from '../../src/components/DesignFilesPanel';
-import { emptyManualEditStyles } from '../../src/edit-mode/types';
 import { projectSplitClassName, projectSplitStyle } from '../../src/components/ProjectView';
 import {
   fetchProjectFileText,
@@ -91,6 +90,50 @@ vi.mock('../../src/components/DesignBrowserPanel', () => ({
     />
   ),
 }));
+
+vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
+  const React = await import('react');
+  const MockGrapesjsEditor = React.forwardRef<Record<string, unknown>, {
+    className?: string;
+    html: string;
+    onSelectTargets?: (ids: string[]) => void;
+  }>((props, ref) => {
+    React.useImperativeHandle(ref, () => ({
+      getHtml: () => '',
+      getCss: () => '',
+      getDocument: () => props.html,
+      setHtml: () => {},
+      setReadOnly: () => {},
+      destroy: () => {},
+      applyStyle: () => {},
+      getCanvasStyles: () => ({}),
+      getCanvasState: () => ({ styles: {}, size: null }),
+      setCanvasStyles: () => {},
+      setViewport: () => {},
+      setCanvasSize: () => {},
+      setSelectedSrc: () => {},
+      getSelectedSrc: () => '',
+      insertImageComponent: () => {},
+      reselectCurrent: () => {},
+      setCropMode: () => {},
+      replaceColors: () => 0,
+      getEditor: () => null,
+    }));
+    return (
+      <div className={props.className} data-testid="mock-grapesjs-editor">
+        <button
+          type="button"
+          data-testid="mock-grapesjs-select-target"
+          onClick={() => props.onSelectTargets?.(['path-0'])}
+        >
+          Select target
+        </button>
+      </div>
+    );
+  });
+  MockGrapesjsEditor.displayName = 'MockGrapesjsEditor';
+  return { default: MockGrapesjsEditor };
+});
 
 vi.mock('../../src/components/workspace/TerminalViewer', () => ({
   TerminalViewer: ({ terminalId }: { terminalId: string }) => (
@@ -369,84 +412,16 @@ describe('FileWorkspace upload input', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('design-files-inline-preview')).toBeTruthy();
-      expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
+      expect(screen.getByTestId('mock-grapesjs-editor')).toBeTruthy();
     });
     expect(screen.getByRole('tab', { name: 'Design Files' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('design-file-row-index.html')).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Preview' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Edit mode' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Code' })).toBeTruthy();
-    expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getByTestId('manual-edit-canvas')).toBeTruthy();
-    const editFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-    expect(editFrame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-    expect(editFrame.srcdoc).toContain('data-od-edit-bridge');
-    expect(editFrame.srcdoc).toContain('od-edit-viewport-pan');
-    const editCanvas = screen.getByTestId('manual-edit-canvas');
-    const editShell = editCanvas.querySelector(':scope > div > div') as HTMLElement | null;
-    if (!editShell) throw new Error('manual edit preview shell not found');
-    act(() => {
-      window.dispatchEvent(new MessageEvent('message', {
-        data: {
-          type: 'od-edit-viewport-wheel',
-          clientX: 120,
-          clientY: 80,
-          deltaY: -80,
-        },
-        source: editFrame.contentWindow,
-      }));
-    });
-    await waitFor(() => expect(screen.getByText('110%')).toBeTruthy());
+    expect(screen.queryByTestId('manual-edit-mode-toggle')).toBeNull();
+    expect(screen.queryByTestId('manual-edit-canvas')).toBeNull();
 
-    const transformBeforePan = editShell.style.transform;
-    act(() => {
-      window.dispatchEvent(new MessageEvent('message', {
-        data: {
-          type: 'od-edit-viewport-pan',
-          phase: 'start',
-          clientX: 100,
-          clientY: 120,
-          screenX: 500,
-          screenY: 620,
-        },
-        source: editFrame.contentWindow,
-      }));
-      window.dispatchEvent(new MessageEvent('message', {
-        data: {
-          type: 'od-edit-viewport-pan',
-          phase: 'move',
-          clientX: 100,
-          clientY: 120,
-          screenX: 526,
-          screenY: 644,
-        },
-        source: editFrame.contentWindow,
-      }));
-    });
-    expect(editShell.style.transform).not.toBe(transformBeforePan);
-    expect(editShell.style.transform).toMatch(/translate\((?!0px, 0px\))/);
-
-    act(() => {
-      window.dispatchEvent(new MessageEvent('message', {
-        data: {
-          type: 'od-edit-select',
-          target: {
-            id: 'path-0',
-            kind: 'text',
-            label: 'Preview',
-            tagName: 'h1',
-            className: '',
-            text: 'Preview',
-            rect: { x: 0, y: 0, width: 120, height: 40 },
-            fields: { text: 'Preview' },
-            attributes: { 'data-od-id': 'path-0' },
-            styles: emptyManualEditStyles(),
-            isLayoutContainer: false,
-            outerHtml: '<h1 data-od-id="path-0">Preview</h1>',
-          },
-        },
-        source: editFrame.contentWindow,
-      }));
-    });
+    fireEvent.click(screen.getByTestId('mock-grapesjs-select-target'));
     await waitFor(() => expect(onEditSelectionChange).toHaveBeenLastCalledWith(true));
     expect(onTabsStateChange).not.toHaveBeenCalled();
   });

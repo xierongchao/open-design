@@ -2662,7 +2662,6 @@ export function FileWorkspace({
                     slideNavDeliverableNonce,
                   )}
                   onEditModeChange={handleEditModeChange}
-                  defaultEditMode
                   fileViewportPreset={aliasViewportOf(fileAliases?.[designFilesPreviewFile.name])}
                   onViewportPresetChange={(preset) => {
                     void handleSetFileViewport(designFilesPreviewFile.name, preset);
@@ -2819,7 +2818,6 @@ export function FileWorkspace({
               slideNavDeliverableNonce,
             )}
             onEditModeChange={handleEditModeChange}
-            defaultEditMode={activeFile.kind === 'html'}
             fileViewportPreset={aliasViewportOf(fileAliases?.[activeFile.name])}
             onViewportPresetChange={(preset) => {
               void handleSetFileViewport(activeFile.name, preset);

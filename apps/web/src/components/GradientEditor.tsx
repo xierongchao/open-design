@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
 
 export interface GradientStop {
   id: string;
@@ -113,6 +113,7 @@ const PRESET_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
 export function GradientEditor({ value, onChange }: GradientEditorProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [selectedStopId, setSelectedStopId] = useState<string | null>(value.stops[0]?.id ?? null);
 
   const update = useCallback(
     (patch: Partial<GradientValue>) => onChange({ ...value, ...patch }),
@@ -122,24 +123,32 @@ export function GradientEditor({ value, onChange }: GradientEditorProps) {
   const updateStop = useCallback(
     (stopId: string, patch: Partial<GradientStop>) => {
       const stops = value.stops.map((s) => (s.id === stopId ? { ...s, ...patch } : s));
+      setSelectedStopId(stopId);
       update({ stops });
     },
     [value, update],
   );
 
-  const addStop = useCallback(() => {
+  const addStop = useCallback((position?: number) => {
     const sorted = [...value.stops].sort((a, b) => a.position - b.position);
-    let insertPos = 50;
+    let insertPos = position ?? 50;
     if (sorted.length >= 2) {
-      let maxGap = 0;
-      let gapIdx = 0;
-      for (let i = 1; i < sorted.length; i++) {
-        const gap = sorted[i]!.position - sorted[i - 1]!.position;
-        if (gap > maxGap) { maxGap = gap; gapIdx = i; }
+      if (position === undefined) {
+        let maxGap = 0;
+        let gapIdx = 0;
+        for (let i = 1; i < sorted.length; i++) {
+          const gap = sorted[i]!.position - sorted[i - 1]!.position;
+          if (gap > maxGap) { maxGap = gap; gapIdx = i; }
+        }
+        insertPos = Math.round((sorted[gapIdx - 1]!.position + sorted[gapIdx]!.position) / 2);
       }
-      insertPos = Math.round((sorted[gapIdx - 1]!.position + sorted[gapIdx]!.position) / 2);
     }
-    const stops = [...value.stops, { id: `gs-${nextStopId++}`, color: '#ffffff', position: insertPos }];
+    const nextId = `gs-${nextStopId++}`;
+    const stops = [
+      ...value.stops,
+      { id: nextId, color: colorAtPosition(sorted, insertPos), position: insertPos },
+    ];
+    setSelectedStopId(nextId);
     update({ stops });
   }, [value, update]);
 
@@ -150,6 +159,11 @@ export function GradientEditor({ value, onChange }: GradientEditorProps) {
     },
     [value, update],
   );
+
+  useEffect(() => {
+    if (value.stops.some((stop) => stop.id === selectedStopId)) return;
+    setSelectedStopId(value.stops[0]?.id ?? null);
+  }, [selectedStopId, value.stops]);
 
   // Drag to reposition stops on the gradient bar
   useEffect(() => {
@@ -172,6 +186,18 @@ export function GradientEditor({ value, onChange }: GradientEditorProps) {
 
   const previewCss = gradientToCss(value);
   const sortedStops = [...value.stops].sort((a, b) => a.position - b.position);
+  const barStyle = { '--ge-gradient': previewCss } as CSSProperties;
+  const addStopFromClientX = useCallback(
+    (clientX: number) => {
+      const bar = barRef.current;
+      if (!bar) return;
+      const rect = bar.getBoundingClientRect();
+      if (!rect.width) return;
+      const x = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      addStop(Math.round(x * 100));
+    },
+    [addStop],
+  );
 
   return (
     <div className="ge-container">
@@ -185,21 +211,21 @@ export function GradientEditor({ value, onChange }: GradientEditorProps) {
           className={`ge-type-btn ${value.type === 'linear' ? 'ge-type-active' : ''}`}
           onClick={() => update({ type: 'linear' })}
         >
-          Linear
+          线性
         </button>
         <button
           type="button"
           className={`ge-type-btn ${value.type === 'radial' ? 'ge-type-active' : ''}`}
           onClick={() => update({ type: 'radial' })}
         >
-          Radial
+          径向
         </button>
       </div>
 
       {/* Angle (linear only) */}
       {value.type === 'linear' ? (
         <div className="ge-angle-row">
-          <span className="ge-label">Angle</span>
+          <span className="ge-label">角度</span>
           <div className="ge-angle-presets">
             {PRESET_ANGLES.map((a) => (
               <button
@@ -222,24 +248,47 @@ export function GradientEditor({ value, onChange }: GradientEditorProps) {
             type="number"
             className="ge-angle-input"
             min={0}
-            max={360}
-            value={value.angle}
-            onChange={(e) => update({ angle: Math.max(0, Math.min(360, Number(e.currentTarget.value) || 0)) })}
-          />
-          <span className="ge-unit">deg</span>
+              max={360}
+              value={value.angle}
+              aria-label="渐变角度"
+              onChange={(e) => update({ angle: Math.max(0, Math.min(360, Number(e.currentTarget.value) || 0)) })}
+            />
+          <span className="ge-unit">°</span>
         </div>
       ) : null}
 
       {/* Color stops bar */}
-      <div className="ge-stops-bar" ref={barRef}>
+      <div
+        className="ge-stops-bar"
+        ref={barRef}
+        role="button"
+        tabIndex={0}
+        aria-label="渐变色标条，点击添加色标"
+        style={barStyle}
+        onPointerDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          addStopFromClientX(e.clientX);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          addStop();
+        }}
+      >
         {sortedStops.map((stop) => (
           <button
             key={stop.id}
             type="button"
-            className="ge-stop-marker"
+            className={`ge-stop-marker ${selectedStopId === stop.id ? 'ge-stop-marker-active' : ''}`}
             style={{ left: `${stop.position}%`, background: stop.color }}
-            onPointerDown={(e) => { e.preventDefault(); setDragging(stop.id); }}
-            aria-label={`Stop at ${stop.position}%`}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setSelectedStopId(stop.id);
+              setDragging(stop.id);
+            }}
+            aria-label={`色标 ${stop.position}%`}
+            aria-pressed={selectedStopId === stop.id}
           />
         ))}
       </div>
@@ -247,12 +296,14 @@ export function GradientEditor({ value, onChange }: GradientEditorProps) {
       {/* Stop editors */}
       <div className="ge-stops-list">
         {sortedStops.map((stop, idx) => (
-          <div key={stop.id} className="ge-stop-row">
+          <div key={stop.id} className={`ge-stop-row ${selectedStopId === stop.id ? 'ge-stop-row-active' : ''}`}>
             <label className="ge-stop-swatch-label">
               <input
                 type="color"
                 className="ge-stop-color-input"
                 value={normalizeForPicker(stop.color)}
+                aria-label={`色标 ${idx + 1} 颜色`}
+                onFocus={() => setSelectedStopId(stop.id)}
                 onChange={(e) => updateStop(stop.id, { color: e.currentTarget.value })}
               />
               <span className="ge-stop-swatch" style={{ background: stop.color }} />
@@ -261,6 +312,8 @@ export function GradientEditor({ value, onChange }: GradientEditorProps) {
               type="text"
               className="ge-stop-hex"
               value={stop.color}
+              aria-label={`色标 ${idx + 1} 色值`}
+              onFocus={() => setSelectedStopId(stop.id)}
               onChange={(e) => updateStop(stop.id, { color: e.currentTarget.value })}
             />
             <input
@@ -269,20 +322,65 @@ export function GradientEditor({ value, onChange }: GradientEditorProps) {
               min={0}
               max={100}
               value={stop.position}
+              aria-label={`色标 ${idx + 1} 位置`}
+              onFocus={() => setSelectedStopId(stop.id)}
               onChange={(e) => updateStop(stop.id, { position: Math.max(0, Math.min(100, Number(e.currentTarget.value) || 0)) })}
             />
             <span className="ge-unit">%</span>
             {value.stops.length > 2 ? (
-              <button type="button" className="ge-stop-remove" onClick={() => removeStop(stop.id)} aria-label="Remove stop">−</button>
+              <button type="button" className="ge-stop-remove" onClick={() => removeStop(stop.id)} aria-label={`删除色标 ${idx + 1}`}>−</button>
             ) : null}
           </div>
         ))}
       </div>
 
       {/* Add stop */}
-      <button type="button" className="ge-add-stop" onClick={addStop}>+ Add color stop</button>
+      <button type="button" className="ge-add-stop" onClick={() => addStop()}>+ 添加色标</button>
     </div>
   );
+}
+
+function colorAtPosition(sortedStops: GradientStop[], position: number): string {
+  if (!sortedStops.length) return '#ffffff';
+  const before = [...sortedStops].reverse().find((stop) => stop.position <= position);
+  const after = sortedStops.find((stop) => stop.position >= position);
+  if (!before) return after?.color ?? '#ffffff';
+  if (!after) return before.color;
+  if (before.id === after.id || before.position === after.position) return before.color;
+
+  const from = hexToRgb(before.color);
+  const to = hexToRgb(after.color);
+  if (!from || !to) {
+    return position - before.position <= after.position - position ? before.color : after.color;
+  }
+  const t = (position - before.position) / (after.position - before.position);
+  const r = Math.round(from.r + (to.r - from.r) * t);
+  const g = Math.round(from.g + (to.g - from.g) * t);
+  const b = Math.round(from.b + (to.b - from.b) * t);
+  return rgbToHex({ r, g, b });
+}
+
+function hexToRgb(value: string): { r: number; g: number; b: number } | null {
+  const trimmed = value.trim();
+  let normalized: string;
+  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+    normalized = `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`.toLowerCase();
+  } else if (/^#[0-9a-f]{6}$/i.test(trimmed)) {
+    normalized = trimmed.toLowerCase();
+  } else {
+    return null;
+  }
+  if (!/^#[0-9a-f]{6}$/i.test(normalized)) return null;
+  return {
+    r: Number.parseInt(normalized.slice(1, 3), 16),
+    g: Number.parseInt(normalized.slice(3, 5), 16),
+    b: Number.parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function rgbToHex({ r, g, b }: { r: number; g: number; b: number }): string {
+  const toPart = (part: number) => Math.max(0, Math.min(255, part)).toString(16).padStart(2, '0');
+  return `#${toPart(r)}${toPart(g)}${toPart(b)}`;
 }
 
 function normalizeForPicker(value: string): string {
