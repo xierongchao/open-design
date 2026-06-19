@@ -32,7 +32,7 @@ afterEach(() => {
 
 function renderPanel(
   styles: Record<string, string> = {},
-  options: { tagName?: string; selector?: string; selectedSrc?: string } = {},
+  options: { tagName?: string; selector?: string; selectedSrc?: string; componentType?: string; canvasTool?: string } = {},
 ) {
   const applyStyle = vi.fn();
   const setSelectedSrc = vi.fn();
@@ -51,6 +51,8 @@ function renderPanel(
     hasSelection: true,
     tagName: options.tagName ?? 'div',
     selector: options.selector ?? 'div.color-grid',
+    componentType: options.componentType,
+    canvasTool: options.canvasTool,
     styles: {
       display: 'block',
       width: '320px',
@@ -268,6 +270,26 @@ describe('StylePanel', () => {
     expect(screen.getByText('已选择 0 个颜色')).toBeTruthy();
     expect(screen.getByRole('button', { name: '选择替换颜色' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '替换' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('shows text controls for bottom-toolbar text components rendered as divs', () => {
+    const { applyStyle } = renderPanel(
+      {
+        fontFamily: 'Inter, sans-serif',
+        fontSize: '24px',
+        fontWeight: '600',
+        lineHeight: '1.2',
+        color: 'rgb(17, 24, 39)',
+      },
+      { tagName: 'div', selector: 'div', componentType: 'text', canvasTool: 'text' },
+    );
+
+    fireEvent.change(screen.getByRole('spinbutton', { name: '字号' }), {
+      target: { value: '28' },
+    });
+
+    expect(screen.getByText('文字')).toBeTruthy();
+    expect(applyStyle).toHaveBeenCalledWith({ 'font-size': '28px' });
   });
 
   it('keeps image replacement available while crop mode is active', () => {

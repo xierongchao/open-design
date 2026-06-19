@@ -747,7 +747,10 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   const strokeVisible = pxToNum(style.borderTopWidth) > 0 && style.borderStyle !== 'none';
   const effectVisible = !!style.boxShadow && style.boxShadow !== 'none';
   const rotation = parseRotation(style.transform);
-  const isTextElement = TEXT_TAGS.has((selection?.tagName ?? '').toLowerCase());
+  const isTextElement =
+    TEXT_TAGS.has((selection?.tagName ?? '').toLowerCase()) ||
+    selection?.componentType === 'text' ||
+    selection?.canvasTool === 'text';
   // selectedColors is declared above (before the no-selection early return)
   // so the hook order stays stable across selected/unselected renders.
   const effectContext = () => ({
@@ -764,6 +767,15 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   };
 
   const setFlow = (nextFlow: FlowValue) => {
+    if (hasSelection) {
+      if (nextFlow === 'free' && editorRef.current?.dissolveSelectedFlex?.()) return;
+      if (nextFlow === 'row' && editorRef.current?.arrangeSelectionAsFlex?.('row')) return;
+      if (nextFlow === 'column' && editorRef.current?.arrangeSelectionAsFlex?.('column')) return;
+      if (nextFlow === 'wrap' && editorRef.current?.arrangeSelectionAsFlex?.('row')) {
+        apply({ flexWrap: 'wrap' });
+        return;
+      }
+    }
     apply(buildFlowPatch(nextFlow));
   };
 

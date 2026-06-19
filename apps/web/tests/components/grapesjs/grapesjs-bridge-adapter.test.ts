@@ -268,7 +268,7 @@ describe('applyPreviewStyle', () => {
 describe('getNormalizedBox', () => {
   it('computes rect relative to canvas iframe', () => {
     const el = {
-      getBoundingClientRect: () => ({ left: 110, top: 60, width: 50, height: 30 }),
+      getBoundingClientRect: () => ({ left: 10, top: 10, width: 50, height: 30 }),
     } as HTMLElement;
     const comp = makeComp({ attrs: { 'data-od-id': 'x' }, getEl: el });
     const frame = {

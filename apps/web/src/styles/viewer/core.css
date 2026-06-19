@@ -20,6 +20,7 @@ html.od-export-capture-active .present-menu,
 html.od-export-capture-active .modal-backdrop,
 html.od-export-capture-active .comment-toast-anchor,
 html.od-export-capture-active .screenshot-toast-anchor,
+html.od-export-capture-active .grapesjs-bottom-toolbar,
 html.od-export-capture-active .od-toast {
   visibility: hidden !important;
   opacity: 0 !important;
@@ -188,6 +189,174 @@ html.od-export-capture-active .od-toast {
   font-variant-numeric: tabular-nums;
   line-height: 1;
   text-align: left;
+}
+.grapesjs-bottom-toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 18;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 32px);
+  min-height: 44px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16), 0 1px 3px rgba(15, 23, 42, 0.08);
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+.grapesjs-bottom-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.grapesjs-bottom-menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.grapesjs-bottom-toolbar-divider {
+  width: 1px;
+  height: 24px;
+  margin: 0 2px;
+  background: color-mix(in srgb, var(--border) 82%, transparent);
+}
+.grapesjs-bottom-tool {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    color 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out);
+}
+.grapesjs-bottom-tool:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.grapesjs-bottom-tool.active {
+  background: var(--accent-tint);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  color: var(--accent-strong);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+.grapesjs-bottom-tool.primary-tool.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.grapesjs-bottom-tool-primary.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.grapesjs-bottom-tool-menu {
+  gap: 1px;
+}
+.grapesjs-bottom-tool-caret {
+  margin-right: -4px;
+  opacity: 0.72;
+}
+.grapesjs-bottom-tool-count {
+  width: auto;
+  min-width: 42px;
+  padding: 0 8px;
+  gap: 5px;
+}
+.grapesjs-bottom-tool-count span {
+  min-width: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.grapesjs-shape-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  z-index: 2;
+  width: 188px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-panel) 98%, transparent);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.18), 0 2px 7px rgba(15, 23, 42, 0.1);
+}
+.grapesjs-shape-menu-item {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px 0 5px;
+  border: 0;
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+  transition:
+    background-color 160ms var(--ease-out),
+    color 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+.grapesjs-shape-menu-item:hover,
+.grapesjs-shape-menu-item.active {
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+.grapesjs-shape-menu-item:hover {
+  transform: translateX(2px);
+}
+.grapesjs-shape-menu-item.active .grapesjs-shape-menu-check {
+  color: var(--accent-strong);
+}
+.grapesjs-shape-menu-check,
+.grapesjs-shape-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.grapesjs-shape-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grapesjs-shape-menu-shortcut {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 760px) {
+  .grapesjs-bottom-toolbar {
+    bottom: 10px;
+    overflow-x: auto;
+    justify-content: flex-start;
+    max-width: calc(100% - 20px);
+  }
+  .grapesjs-bottom-tool {
+    flex: 0 0 34px;
+  }
+  .grapesjs-shape-menu {
+    left: 50%;
+    transform: translateX(-50%);
+  }
 }
 .viewer-action-icon:not(.od-tooltip)[data-tooltip]::after,
 .viewer-comment-count-trigger:not(.od-tooltip)[data-tooltip]::after {
@@ -1286,6 +1455,26 @@ html.od-export-capture-active .od-toast {
   min-height: 30px;
   white-space: nowrap;
 }
+.element-selection-action-toolbar {
+  position: static;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  max-width: min(340px, 48vw);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.element-selection-action-toolbar .element-selection-target-chip {
+  height: 32px;
+  max-width: 160px;
+}
+.element-selection-action-toolbar button {
+  min-height: 32px;
+  padding-inline: 10px;
+}
 .comment-saved-marker {
   position: absolute;
   pointer-events: none;
@@ -1304,7 +1493,7 @@ html.od-export-capture-active .od-toast {
   padding: 0;
   border: 3px solid #fff;
   border-radius: 50% 50% 50% 10px;
-  background: #d96a46;
+  background: #3478f6;
   color: white;
   font-size: 18px;
   font-weight: 800;
@@ -1316,8 +1505,62 @@ html.od-export-capture-active .od-toast {
 }
 .comment-saved-pin:hover,
 .comment-active-pin:hover {
-  background: #c95e3e;
+  background: #1f66e5;
   transform: translate(-50%, calc(-50% - 1px));
+}
+.comment-saved-pin-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #fff;
+  transform: translate(-50%, -50%);
+}
+.comment-saved-bubble {
+  position: absolute;
+  z-index: 3;
+  left: 30px;
+  top: -8px;
+  display: grid;
+  min-width: 220px;
+  max-width: min(360px, 80vw);
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  background: #fff;
+  color: #1f2937;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(4px, 0);
+  transition:
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.comment-saved-marker:hover .comment-saved-bubble,
+.comment-saved-marker:focus-within .comment-saved-bubble {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(0, 0);
+}
+.comment-saved-bubble-label {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comment-saved-bubble-note {
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .comment-active-pin {
   pointer-events: none;

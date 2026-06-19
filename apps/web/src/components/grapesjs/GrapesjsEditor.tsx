@@ -6,6 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react';
 import type { Component, Editor as GrapesjsEditorInstance, Plugin } from 'grapesjs';
@@ -113,9 +115,844 @@ const CANVAS_BODY_STYLE_PROPS = [
 const FLEX_CHILD_HOVER_CLASS = 'od-flex-child-hover';
 export type GrapesjsSelectionTone = 'default' | 'element-selection';
 export type GrapesjsSelectionChrome = 'edit' | 'element-selection';
+export type GrapesjsCanvasTool =
+  | 'cursor'
+  | 'rectangle'
+  | 'line'
+  | 'circle'
+  | 'image'
+  | 'text';
+export type GrapesjsPlaceableCanvasTool = Exclude<GrapesjsCanvasTool, 'cursor'>;
+export type GrapesjsCanvasPlacementMode = 'absolute' | 'flow';
+
+export interface GrapesjsCanvasPoint {
+  x: number;
+  y: number;
+}
+
+export interface GrapesjsCanvasToolComponentOptions {
+  width?: number;
+  height?: number;
+  angle?: number;
+  mode?: GrapesjsCanvasPlacementMode;
+}
+
+type GrapesjsAppendTarget = { append?: (...args: any[]) => unknown };
 
 function grapesjsSelectionColor(tone: GrapesjsSelectionTone | undefined): string {
   return tone === 'element-selection' ? '#10b981' : '#3b82f6';
+}
+
+export function isGrapesjsPlaceableCanvasTool(tool: GrapesjsCanvasTool): tool is GrapesjsPlaceableCanvasTool {
+  return tool !== 'cursor';
+}
+
+export function isGrapesjsEditorEditing(editor: unknown): boolean {
+  const direct = (editor as { isEditing?: unknown } | null)?.isEditing;
+  if (typeof direct === 'function') {
+    try {
+      return Boolean(direct.call(editor));
+    } catch {
+      return false;
+    }
+  }
+  const model = (() => {
+    try {
+      return (editor as { getModel?: () => unknown } | null)?.getModel?.();
+    } catch {
+      return null;
+    }
+  })();
+  const modelIsEditing = (model as { isEditing?: unknown } | null)?.isEditing;
+  if (typeof modelIsEditing === 'function') {
+    try {
+      return Boolean(modelIsEditing.call(model));
+    } catch {
+      return false;
+    }
+  }
+  const getEditing = (editor as { getEditing?: unknown } | null)?.getEditing;
+  if (typeof getEditing === 'function') {
+    try {
+      return Boolean(getEditing.call(editor));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function clipboardItems(data: DataTransfer | null | undefined): DataTransferItem[] {
+  return data?.items ? Array.from(data.items) : [];
+}
+
+function clipboardFiles(data: DataTransfer | null | undefined): File[] {
+  const files = data?.files;
+  if (!files) return [];
+  const out: File[] = [];
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files.item?.(i) ?? files[i];
+    if (file) out.push(file);
+  }
+  return out;
+}
+
+export function firstGrapesjsClipboardImageFile(data: DataTransfer | null | undefined): File | null {
+  for (const item of clipboardItems(data)) {
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+    const file = typeof item.getAsFile === 'function' ? item.getAsFile() : null;
+    if (file) return file;
+  }
+  return clipboardFiles(data).find((file) => file.type.startsWith('image/')) ?? null;
+}
+
+export function clipboardHasImageFile(data: DataTransfer | null | undefined): boolean {
+  return clipboardItems(data).some((item) => item.kind === 'file' && item.type.startsWith('image/')) ||
+    Boolean(firstGrapesjsClipboardImageFile(data));
+}
+
+export function clipboardHasDocumentPayload(data: DataTransfer | null | undefined): boolean {
+  const types = data?.types ? Array.from(data.types) : [];
+  if (types.some((type) => type === 'text/html' || type === 'text/plain' || type === 'text/uri-list')) {
+    return true;
+  }
+  return clipboardItems(data).some((item) => item.kind === 'string' && (
+    item.type === 'text/html' ||
+    item.type === 'text/plain' ||
+    item.type === 'text/uri-list'
+  ));
+}
+
+export function shouldHandleGrapesjsImagePaste({
+  clipboardData,
+  lastInternalPasteAt,
+  now = Date.now(),
+}: {
+  clipboardData: DataTransfer | null | undefined;
+  lastInternalPasteAt: number;
+  now?: number;
+}): boolean {
+  if (!clipboardHasImageFile(clipboardData)) return false;
+  if (now - lastInternalPasteAt < 600) return false;
+  if (clipboardHasDocumentPayload(clipboardData)) return false;
+  return true;
+}
+
+const GRAPESJS_CANVAS_TOOL_FILL = '#D9D9D9';
+const GRAPESJS_CANVAS_TOOL_MIN_SIZE = 1;
+const GRAPESJS_STYLE_CLIPBOARD_PROPS: Array<[string, string]> = [
+  ['backgroundColor', 'background-color'],
+  ['backgroundImage', 'background-image'],
+  ['borderTopWidth', 'border-top-width'],
+  ['borderRightWidth', 'border-right-width'],
+  ['borderBottomWidth', 'border-bottom-width'],
+  ['borderLeftWidth', 'border-left-width'],
+  ['borderStyle', 'border-style'],
+  ['borderColor', 'border-color'],
+  ['borderRadius', 'border-radius'],
+  ['paddingTop', 'padding-top'],
+  ['paddingRight', 'padding-right'],
+  ['paddingBottom', 'padding-bottom'],
+  ['paddingLeft', 'padding-left'],
+  ['opacity', 'opacity'],
+  ['fontFamily', 'font-family'],
+  ['fontSize', 'font-size'],
+  ['fontWeight', 'font-weight'],
+  ['lineHeight', 'line-height'],
+  ['letterSpacing', 'letter-spacing'],
+  ['textAlign', 'text-align'],
+  ['color', 'color'],
+];
+
+function px(value: number): string {
+  return `${Math.max(GRAPESJS_CANVAS_TOOL_MIN_SIZE, Math.round(value))}px`;
+}
+
+export function buildGrapesjsCssStyleClipboard(style: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [camelKey, cssKey] of GRAPESJS_STYLE_CLIPBOARD_PROPS) {
+    const value = style[camelKey]?.trim();
+    if (value) out[cssKey] = value;
+  }
+  return out;
+}
+
+export function offsetGrapesjsAbsolutePositionStyle(
+  style: Record<string, string | undefined>,
+  offset: { x: number; y: number },
+): Record<string, string | undefined> {
+  if (style.position !== 'absolute') return { ...style };
+  const parsePx = (value: string | undefined): number | null => {
+    const match = value?.match(/^-?\d+(?:\.\d+)?px$/);
+    return match ? Number.parseFloat(match[0]) : null;
+  };
+  const left = parsePx(style.left);
+  const top = parsePx(style.top);
+  return {
+    ...style,
+    ...(left == null ? {} : { left: `${Math.round(left + offset.x)}px` }),
+    ...(top == null ? {} : { top: `${Math.round(top + offset.y)}px` }),
+  };
+}
+
+function basePlacedStyle(
+  point: GrapesjsCanvasPoint,
+  width: number,
+  height: number,
+  mode: GrapesjsCanvasPlacementMode,
+): Record<string, string> {
+  const size = {
+    width: px(width),
+    height: px(height),
+    'box-sizing': 'border-box',
+  };
+  if (mode === 'flow') return size;
+  return {
+    ...size,
+    position: 'absolute',
+    left: `${Math.max(0, Math.round(point.x))}px`,
+    top: `${Math.max(0, Math.round(point.y))}px`,
+  };
+}
+
+export function getGrapesjsCanvasToolDragStyle(
+  tool: GrapesjsPlaceableCanvasTool,
+  start: GrapesjsCanvasPoint,
+  current: GrapesjsCanvasPoint,
+  mode: GrapesjsCanvasPlacementMode = 'absolute',
+  options: { lockAspect?: boolean } = {},
+): Record<string, string> {
+  const dx = current.x - start.x;
+  const dy = current.y - start.y;
+  if (tool === 'line') {
+    const length = Math.max(GRAPESJS_CANVAS_TOOL_MIN_SIZE, Math.hypot(dx, dy));
+    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    return {
+      ...basePlacedStyle(start, length, 2, mode),
+      transform: `rotate(${Number(angle.toFixed(2))}deg)`,
+      'transform-origin': 'left center',
+    };
+  }
+  let width = Math.max(GRAPESJS_CANVAS_TOOL_MIN_SIZE, dx);
+  let height = Math.max(GRAPESJS_CANVAS_TOOL_MIN_SIZE, dy);
+  if (options.lockAspect) {
+    const side = Math.max(width, height);
+    width = side;
+    height = side;
+  }
+  return basePlacedStyle(start, width, height, mode);
+}
+
+export type GrapesjsRadiusCorner = 'tl' | 'tr' | 'bl' | 'br';
+
+export function calculateGrapesjsCornerRadiusFromPointer(input: {
+  corner: GrapesjsRadiusCorner;
+  localX: number;
+  localY: number;
+  width: number;
+  height: number;
+  zoom: number;
+  handleInset: number;
+  axis?: 'x' | 'y' | null;
+}): number {
+  const zoom = Number.isFinite(input.zoom) && input.zoom > 0 ? input.zoom : 1;
+  if (input.width <= 1 || input.height <= 1) return 0;
+  const xDist = input.corner.endsWith('r') ? input.width - input.localX : input.localX;
+  const yDist = input.corner.startsWith('b') ? input.height - input.localY : input.localY;
+  const xRadius = xDist - input.handleInset;
+  const yRadius = yDist - input.handleInset;
+  const screenRadius = input.axis === 'x'
+    ? xRadius
+    : input.axis === 'y'
+      ? yRadius
+      : (xRadius > 0 && yRadius > 0 ? Math.min(xRadius, yRadius) : Math.max(xRadius, yRadius));
+  const maxRadius = Math.max(0, Math.min(input.width, input.height) / 2 / zoom);
+  return Math.round(Math.max(0, Math.min(maxRadius, screenRadius / zoom)));
+}
+
+export function calculateGrapesjsCornerRadiusDrag(input: {
+  corner: GrapesjsRadiusCorner;
+  startRadius: number;
+  deltaX: number;
+  deltaY: number;
+  width: number;
+  height: number;
+  zoom: number;
+  axis?: 'x' | 'y' | null;
+}): number {
+  const zoom = Number.isFinite(input.zoom) && input.zoom > 0 ? input.zoom : 1;
+  if (input.width <= 1 || input.height <= 1) return 0;
+  const inwardX = input.corner.endsWith('r') ? -input.deltaX : input.deltaX;
+  const inwardY = input.corner.startsWith('b') ? -input.deltaY : input.deltaY;
+  const screenDelta = (() => {
+    if (input.axis === 'x') return inwardX;
+    if (input.axis === 'y') return inwardY;
+    if (inwardX > 0 && inwardY > 0) return Math.min(inwardX, inwardY);
+    const positiveDelta = Math.max(inwardX, inwardY);
+    return positiveDelta > 0 ? positiveDelta : Math.min(inwardX, inwardY);
+  })();
+  const maxRadius = Math.max(0, Math.min(input.width, input.height) / 2 / zoom);
+  return Math.round(Math.max(0, Math.min(maxRadius, input.startRadius + screenDelta / zoom)));
+}
+
+export function calculateGrapesjsRadiusHandleInset(input: {
+  radius: number;
+  zoom: number;
+  width: number;
+  height: number;
+  minInset: number;
+  edgePadding?: number;
+}): number {
+  const zoom = Number.isFinite(input.zoom) && input.zoom > 0 ? input.zoom : 1;
+  const edgePadding = input.edgePadding ?? 8;
+  const maxInset = Math.max(0, Math.min(input.width, input.height) / 2 - edgePadding);
+  return Math.min(maxInset, input.minInset + Math.max(0, input.radius) * zoom);
+}
+
+export function buildGrapesjsCanvasToolComponent(
+  tool: GrapesjsPlaceableCanvasTool,
+  point: GrapesjsCanvasPoint,
+  options: GrapesjsCanvasToolComponentOptions = {},
+): Record<string, unknown> {
+  const mode = options.mode ?? 'absolute';
+  const commonAttrs = {
+    'data-od-canvas-tool': tool,
+    'data-od-position-mode': mode,
+  };
+  if (tool === 'rectangle') {
+    return {
+      tagName: 'div',
+      attributes: commonAttrs,
+      ...(mode === 'absolute' ? { draggable: false } : {}),
+      style: {
+        ...basePlacedStyle(point, options.width ?? 160, options.height ?? 96, mode),
+        background: GRAPESJS_CANVAS_TOOL_FILL,
+        border: '0',
+        'border-radius': '2px',
+      },
+    };
+  }
+  if (tool === 'circle') {
+    return {
+      tagName: 'div',
+      attributes: commonAttrs,
+      ...(mode === 'absolute' ? { draggable: false } : {}),
+      style: {
+        ...basePlacedStyle(point, options.width ?? 112, options.height ?? 112, mode),
+        background: GRAPESJS_CANVAS_TOOL_FILL,
+        border: '0',
+        'border-radius': '999px',
+      },
+    };
+  }
+  if (tool === 'line') {
+    return {
+      tagName: 'div',
+      attributes: commonAttrs,
+      ...(mode === 'absolute' ? { draggable: false } : {}),
+      style: {
+        ...basePlacedStyle(point, options.width ?? 180, 2, mode),
+        background: GRAPESJS_CANVAS_TOOL_FILL,
+        border: '0',
+        transform: `rotate(${options.angle ?? 0}deg)`,
+        'transform-origin': 'left center',
+      },
+    };
+  }
+  if (tool === 'text') {
+    const positionedStyle: Record<string, string> = mode === 'flow'
+      ? {}
+      : {
+          position: 'absolute',
+          left: `${Math.max(0, Math.round(point.x))}px`,
+          top: `${Math.max(0, Math.round(point.y))}px`,
+        };
+    if (options.width !== undefined) positionedStyle.width = px(options.width);
+    if (options.height !== undefined) positionedStyle['min-height'] = px(options.height);
+    return {
+      type: 'text',
+      tagName: 'div',
+      attributes: commonAttrs,
+      editable: true,
+      droppable: false,
+      ...(mode === 'absolute' ? { draggable: false } : {}),
+      content: '输入文本',
+      style: {
+        ...positionedStyle,
+        color: '#111827',
+        'font-family': 'system-ui, sans-serif',
+        'font-size': '14px',
+        'font-weight': '400',
+        'line-height': '20px',
+        display: 'inline-block',
+        'min-width': '24px',
+        'min-height': '20px',
+        'white-space': 'pre-wrap',
+        'overflow-wrap': 'break-word',
+        padding: '0',
+        background: 'transparent',
+      },
+    };
+  }
+  return {
+    tagName: 'div',
+    attributes: commonAttrs,
+    ...(mode === 'absolute' ? { draggable: false } : {}),
+    style: {
+      ...basePlacedStyle(point, options.width ?? 240, options.height ?? 160, mode),
+      background: GRAPESJS_CANVAS_TOOL_FILL,
+      border: '0',
+      'background-size': 'cover',
+      'background-position': 'center',
+      'background-repeat': 'no-repeat',
+    },
+  };
+}
+
+function firstGrapesjsComponent(created: unknown): Component | null {
+  if (Array.isArray(created)) return (created[0] as Component | undefined) ?? null;
+  return (created as Component | null | undefined) ?? null;
+}
+
+export function appendGrapesjsCanvasToolComponent(
+  editor: unknown,
+  tool: GrapesjsPlaceableCanvasTool,
+  point: GrapesjsCanvasPoint,
+  options: GrapesjsCanvasToolComponentOptions & { parent?: GrapesjsAppendTarget | null } = {},
+): Component | null {
+  const component = buildGrapesjsCanvasToolComponent(tool, point, options);
+  const editorLike = editor as {
+    addComponents?: (components: unknown) => unknown;
+    getWrapper?: () => { append?: (components: unknown) => unknown } | null;
+    Components?: {
+      getWrapper?: () => { append?: (components: unknown) => unknown } | null;
+      getComponents?: () => { get?: (index: number) => { append?: (components: unknown) => unknown } | null };
+    };
+  } | null;
+  if (options.parent) {
+    try {
+      return firstGrapesjsComponent(options.parent.append?.(component));
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const added = editorLike?.addComponents?.(component);
+    const node = firstGrapesjsComponent(added);
+    if (node) return node;
+  } catch {
+    // fall through to wrapper append
+  }
+  try {
+    const wrapper =
+      editorLike?.getWrapper?.() ??
+      editorLike?.Components?.getWrapper?.() ??
+      editorLike?.Components?.getComponents?.().get?.(0);
+    const added = wrapper?.append?.(component);
+    return firstGrapesjsComponent(added);
+  } catch {
+    return null;
+  }
+}
+
+function getComponentAttributes(comp: Component | null | undefined): Record<string, unknown> {
+  try { return comp?.getAttributes?.() ?? {}; } catch { return {}; }
+}
+
+function setComponentAttributes(comp: Component, patch: Record<string, string>): void {
+  try {
+    comp.setAttributes?.({ ...getComponentAttributes(comp), ...patch });
+  } catch { /* ignore */ }
+}
+
+function getComponentStyleRecord(comp: Component | null | undefined): Record<string, string> {
+  try { return { ...(comp?.getStyle?.() ?? {}) } as Record<string, string>; } catch { return {}; }
+}
+
+const ABSOLUTE_PLACEMENT_STYLE_PROPS = ['position', 'left', 'top', 'right', 'bottom'] as const;
+
+function clearComponentAbsolutePlacement(comp: Component): void {
+  const next = getComponentStyleRecord(comp);
+  for (const prop of ABSOLUTE_PLACEMENT_STYLE_PROPS) {
+    delete next[prop];
+  }
+  comp.setStyle?.({
+    ...next,
+    position: '',
+    left: '',
+    top: '',
+    right: '',
+    bottom: '',
+  } as Parameters<typeof comp.setStyle>[0]);
+  for (const prop of ABSOLUTE_PLACEMENT_STYLE_PROPS) {
+    try { comp.removeStyle?.(prop); } catch { /* ignore */ }
+  }
+  const el = getElementFromComponent(comp) as HTMLElement | null;
+  if (el?.style) {
+    el.style.position = '';
+    el.style.left = '';
+    el.style.top = '';
+    el.style.right = '';
+    el.style.bottom = '';
+  }
+}
+
+export function isGrapesjsCanvasToolComponent(comp: Component | null | undefined): boolean {
+  return Boolean(getComponentAttributes(comp)['data-od-canvas-tool']);
+}
+
+export function isGrapesjsAbsoluteCanvasToolComponent(comp: Component | null | undefined): boolean {
+  const attrs = getComponentAttributes(comp);
+  return Boolean(attrs['data-od-canvas-tool']) && attrs['data-od-position-mode'] === 'absolute';
+}
+
+function isGrapesjsAutoLayoutWrapper(comp: Component | null | undefined): boolean {
+  return getComponentAttributes(comp)['data-od-auto-layout-wrapper'] === 'true';
+}
+
+type GrapesjsLayoutAxis = 'row' | 'column';
+
+type GrapesjsComponentBox = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+function componentBox(comp: Component, rootRect?: DOMRect | null): GrapesjsComponentBox | null {
+  const el = getElementFromComponent(comp) as HTMLElement | null;
+  if (!el) return null;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const originLeft = rootRect?.left ?? 0;
+  const originTop = rootRect?.top ?? 0;
+  const left = rect.left - originLeft;
+  const top = rect.top - originTop;
+  return {
+    x: left,
+    y: top,
+    w: rect.width,
+    h: rect.height,
+    left,
+    top,
+    right: left + rect.width,
+    bottom: top + rect.height,
+  };
+}
+
+function canvasDocumentRootRect(editor: GrapesjsEditorInstance): DOMRect | null {
+  try {
+    const doc = editor.Canvas.getDocument?.();
+    const root = doc?.body ?? doc?.documentElement ?? null;
+    return root?.getBoundingClientRect?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function componentCoordinateRootRect(editor: GrapesjsEditorInstance, parent: Component): DOMRect | null {
+  const parentEl = getElementFromComponent(parent) as HTMLElement | null;
+  if (parentEl) return parentEl.getBoundingClientRect();
+  return canvasDocumentRootRect(editor);
+}
+
+function directComponentIndex(parent: Component, child: Component): number {
+  try {
+    const children = parent.components();
+    for (let i = 0; i < children.length; i += 1) {
+      if (children.get(i) === child) return i;
+    }
+  } catch { /* ignore */ }
+  return -1;
+}
+
+function directComponentChildren(parent: Component): Component[] {
+  const out: Component[] = [];
+  try {
+    const children = parent.components();
+    for (let i = 0; i < children.length; i += 1) {
+      const child = children.get(i);
+      if (child) out.push(child);
+    }
+  } catch { /* ignore */ }
+  return out;
+}
+
+function inferLayoutAxis(boxes: GrapesjsComponentBox[]): GrapesjsLayoutAxis {
+  if (boxes.length < 2) return 'row';
+  const left = Math.min(...boxes.map((box) => box.left));
+  const right = Math.max(...boxes.map((box) => box.right));
+  const top = Math.min(...boxes.map((box) => box.top));
+  const bottom = Math.max(...boxes.map((box) => box.bottom));
+  return (right - left) >= (bottom - top) ? 'row' : 'column';
+}
+
+function averageMainAxisGap(boxes: GrapesjsComponentBox[], axis: GrapesjsLayoutAxis): number {
+  if (boxes.length < 2) return 0;
+  let total = 0;
+  for (let i = 1; i < boxes.length; i += 1) {
+    const prev = boxes[i - 1];
+    const cur = boxes[i];
+    if (!prev || !cur) continue;
+    total += axis === 'row'
+      ? Math.max(0, cur.left - prev.right)
+      : Math.max(0, cur.top - prev.bottom);
+  }
+  return Math.round(total / Math.max(1, boxes.length - 1));
+}
+
+function normalizeGrapesjsAutoLayoutChildForFlow(comp: Component): void {
+  const attrs = getComponentAttributes(comp);
+  const style = getComponentStyleRecord(comp);
+  const isOdCanvasTool = Boolean(attrs['data-od-canvas-tool']);
+  const wasAbsolute = attrs['data-od-position-mode'] === 'absolute' || style.position === 'absolute';
+  if (!isOdCanvasTool && !wasAbsolute) return;
+  clearComponentAbsolutePlacement(comp);
+  if (isOdCanvasTool || attrs['data-od-position-mode']) {
+    setComponentAttributes(comp, { 'data-od-position-mode': 'flow' });
+  }
+}
+
+function updateGrapesjsAutoLayoutWrapperAxis(wrapper: Component, axis: GrapesjsLayoutAxis): void {
+  const style = getComponentStyleRecord(wrapper);
+  delete style.flexDirection;
+  delete style['flex-direction'];
+  delete style.flexWrap;
+  delete style['flex-wrap'];
+  wrapper.setStyle?.({
+    ...style,
+    display: 'flex',
+    flexDirection: axis,
+    'flex-direction': axis,
+    flexWrap: 'nowrap',
+    'flex-wrap': 'nowrap',
+  } as Parameters<typeof wrapper.setStyle>[0]);
+  for (const child of directComponentChildren(wrapper)) {
+    normalizeGrapesjsAutoLayoutChildForFlow(child);
+  }
+}
+
+function updateSelectedGrapesjsAutoLayoutWrapperAxis(
+  editor: GrapesjsEditorInstance,
+  axis: GrapesjsLayoutAxis,
+): boolean {
+  const selected = (() => {
+    try { return editor.getSelected?.() as Component | undefined; } catch { return undefined; }
+  })();
+  if (!isGrapesjsAutoLayoutWrapper(selected)) return false;
+  updateGrapesjsAutoLayoutWrapperAxis(selected as Component, axis);
+  try { editor.select(selected); } catch { /* ignore */ }
+  return true;
+}
+
+function selectedComponentsForLayout(
+  editor: GrapesjsEditorInstance,
+  selectionOrder: Component[],
+): Component[] {
+  const selected = (() => {
+    try { return (editor.getSelectedAll?.() ?? []) as Component[]; } catch { return []; }
+  })();
+  const selectedSet = new Set(selected);
+  const ordered = selectionOrder.filter((comp) => selectedSet.has(comp));
+  const out: Component[] = [];
+  for (const comp of [...ordered, ...selected]) {
+    if (comp?.parent?.() && !out.includes(comp)) out.push(comp);
+  }
+  return out;
+}
+
+export function arrangeGrapesjsSelectionAsFlex(
+  editor: GrapesjsEditorInstance,
+  selectionOrder: Component[] = [],
+  preferredAxis?: GrapesjsLayoutAxis,
+): boolean {
+  if (preferredAxis && updateSelectedGrapesjsAutoLayoutWrapperAxis(editor, preferredAxis)) return true;
+  const picked = selectedComponentsForLayout(editor, selectionOrder);
+  if (picked.length === 0) return false;
+  const parents = new Set(picked.map((comp) => comp.parent?.() ?? null));
+  if (parents.size !== 1) return false;
+  const parent = picked[0]?.parent?.();
+  if (!parent) return false;
+  const parentRect = componentCoordinateRootRect(editor, parent);
+  const items = picked
+    .map((comp) => ({ comp, box: componentBox(comp, parentRect) }))
+    .filter((item): item is { comp: Component; box: GrapesjsComponentBox } => Boolean(item.box));
+  if (items.length === 0) return false;
+  const absoluteItems = items.every(({ comp }) => isGrapesjsAbsoluteCanvasToolComponent(comp));
+  const axis = preferredAxis ?? inferLayoutAxis(items.map((item) => item.box));
+  items.sort((a, b) => axis === 'row'
+    ? (a.box.left - b.box.left) || (a.box.top - b.box.top)
+    : (a.box.top - b.box.top) || (a.box.left - b.box.left));
+  const boxes = items.map((item) => item.box);
+  const minX = Math.min(...boxes.map((box) => box.left));
+  const minY = Math.min(...boxes.map((box) => box.top));
+  const maxX = Math.max(...boxes.map((box) => box.right));
+  const maxY = Math.max(...boxes.map((box) => box.bottom));
+  const wrapW = Math.max(1, Math.round(maxX - minX));
+  const wrapH = Math.max(1, Math.round(maxY - minY));
+  const gap = averageMainAxisGap(boxes, axis);
+  const firstPicked = items[0]?.comp;
+  if (!firstPicked) return false;
+  const firstIndex = directComponentIndex(parent, firstPicked);
+  const created = parent.append(
+    {
+      tagName: 'div',
+      attributes: {
+        'data-od-auto-layout-wrapper': 'true',
+        'data-od-position-mode': absoluteItems ? 'absolute' : 'flow',
+      },
+      style: {
+        display: 'flex',
+        'flex-direction': axis,
+        gap: `${gap}px`,
+        width: `${wrapW}px`,
+        height: `${wrapH}px`,
+        'box-sizing': 'border-box',
+        ...(absoluteItems
+          ? { position: 'absolute', left: `${Math.round(minX)}px`, top: `${Math.round(minY)}px` }
+          : {}),
+      },
+    } as never,
+    { at: firstIndex >= 0 ? firstIndex : parent.components().length } as never,
+  );
+  const wrapper = (Array.isArray(created) ? created[0] : created) as Component | null;
+  if (!wrapper) return false;
+  items.forEach(({ comp }, index) => {
+    try {
+      if (absoluteItems) {
+        clearComponentAbsolutePlacement(comp);
+        setComponentAttributes(comp, { 'data-od-position-mode': 'flow' });
+      }
+      comp.move(wrapper, { at: index });
+    } catch { /* ignore */ }
+  });
+  try { editor.select(wrapper); } catch { /* ignore */ }
+  return true;
+}
+
+export function dissolveGrapesjsFlexSelection(editor: GrapesjsEditorInstance): boolean {
+  const selected = (() => {
+    try { return editor.getSelected?.() as Component | undefined; } catch { return undefined; }
+  })();
+  if (!selected) return false;
+  const parent = selected.parent?.();
+  if (!parent) return false;
+  const el = getElementFromComponent(selected) as HTMLElement | null;
+  const parentRect = componentCoordinateRootRect(editor, parent);
+  const style = getComponentStyleRecord(selected);
+  const display = (() => {
+    if (style.display) return style.display;
+    try { return el?.ownerDocument.defaultView?.getComputedStyle(el).getPropertyValue('display') ?? ''; } catch { return ''; }
+  })();
+  const attrs = getComponentAttributes(selected);
+  const isAutoLayoutWrapper = attrs['data-od-auto-layout-wrapper'] === 'true';
+  const isLayout = display === 'flex' || display === 'inline-flex' || display === 'grid' || display === 'inline-grid';
+  if (!isAutoLayoutWrapper || !isLayout) return false;
+  const shouldRestoreAbsolute = attrs['data-od-position-mode'] === 'absolute';
+  const containerIndex = directComponentIndex(parent, selected);
+  const children = directComponentChildren(selected);
+  const childBoxes = new Map<Component, GrapesjsComponentBox>();
+  if (shouldRestoreAbsolute) {
+    for (const child of children) {
+      const box = componentBox(child, parentRect);
+      if (box) childBoxes.set(child, box);
+    }
+  }
+  let insertAt = containerIndex >= 0 ? containerIndex : parent.components().length;
+  for (const child of children.slice()) {
+    try {
+      child.move(parent, { at: insertAt });
+      insertAt += 1;
+      const box = childBoxes.get(child);
+      if (box) {
+        child.setStyle?.({
+          ...getComponentStyleRecord(child),
+          position: 'absolute',
+          left: `${Math.round(box.left)}px`,
+          top: `${Math.round(box.top)}px`,
+          width: `${Math.round(box.w)}px`,
+          height: `${Math.round(box.h)}px`,
+        } as Parameters<typeof child.setStyle>[0]);
+        setComponentAttributes(child, { 'data-od-position-mode': 'absolute' });
+      }
+    } catch { /* ignore */ }
+  }
+  try {
+    selected.remove();
+  } catch {
+    delete style.display;
+    delete style['flex-direction'];
+    delete style.flexDirection;
+    delete style['flex-wrap'];
+    delete style.flexWrap;
+    delete style['justify-content'];
+    delete style.justifyContent;
+    delete style['align-items'];
+    delete style.alignItems;
+    delete style.gap;
+    selected.setStyle?.(style as Parameters<typeof selected.setStyle>[0]);
+  }
+  try { editor.select(children.length > 1 ? children : (children[0] ?? parent)); } catch { /* ignore */ }
+  return true;
+}
+
+type GrapesjsCanvasViewportSyncEditor = {
+  Canvas?: {
+    getElement?: () => HTMLElement | null | undefined;
+    getFrameEl?: () => HTMLElement | null | undefined;
+    getDocument?: () => Document | null | undefined;
+  };
+  on?: (event: string, callback: () => void) => unknown;
+  off?: (event: string, callback: () => void) => unknown;
+};
+
+export function attachGrapesjsCanvasViewportSync(
+  editor: GrapesjsCanvasViewportSyncEditor,
+  hostTargets: Array<EventTarget | null | undefined>,
+  sync: () => void,
+): () => void {
+  const seen = new Set<EventTarget>();
+  const scrollOptions: AddEventListenerOptions = { capture: true, passive: true };
+  const addScrollTarget = (target: EventTarget | null | undefined) => {
+    if (!target || seen.has(target)) return;
+    seen.add(target);
+    target.addEventListener('scroll', sync, scrollOptions);
+  };
+  const attachCurrentTargets = () => {
+    hostTargets.forEach(addScrollTarget);
+    const canvasEl = (() => {
+      try { return editor.Canvas?.getElement?.() ?? null; } catch { return null; }
+    })();
+    addScrollTarget(canvasEl);
+    if (canvasEl) {
+      addScrollTarget(canvasEl.querySelector('.gjs-cv-canvas__frames'));
+      addScrollTarget(canvasEl.querySelector('.gjs-cv-canvas'));
+    }
+    const frame = (() => {
+      try { return editor.Canvas?.getFrameEl?.() ?? null; } catch { return null; }
+    })();
+    addScrollTarget(frame?.parentElement ?? null);
+    const doc = (() => {
+      try { return editor.Canvas?.getDocument?.() ?? null; } catch { return null; }
+    })();
+    addScrollTarget(doc);
+    addScrollTarget(doc?.documentElement);
+    addScrollTarget(doc?.body);
+    addScrollTarget(doc?.defaultView);
+  };
+  attachCurrentTargets();
+  try { editor.on?.('canvas:frame:load:body', attachCurrentTargets); } catch { /* ignore */ }
+  return () => {
+    for (const target of seen) {
+      target.removeEventListener('scroll', sync, scrollOptions);
+    }
+    seen.clear();
+    try { editor.off?.('canvas:frame:load:body', attachCurrentTargets); } catch { /* ignore */ }
+  };
 }
 
 function applyCanvasBodyStyleOverrides(
@@ -412,6 +1249,154 @@ function isTextInputTarget(target: EventTarget | null): boolean {
   return false;
 }
 
+const GRAPESJS_CANVAS_CHROME_SELECTOR = [
+  '.gjs-resizer',
+  '.gjs-resizer-h',
+  '.gjs-toolbar',
+  '.od-radius-handle',
+  '.od-radius-badge',
+  '.od-dimension-badge',
+  '.od-selection-stroke',
+  '[data-od-spacing-kind]',
+  '[data-od-spacing-band]',
+].join(',');
+
+export function isGrapesjsCanvasChromeTarget(target: EventTarget | null): boolean {
+  const el = target as Element | null;
+  return Boolean(el?.closest?.(GRAPESJS_CANVAS_CHROME_SELECTOR));
+}
+
+type GrapesjsTextViewLike = {
+  activeRte?: unknown;
+  disableEditing?: (opts?: Record<string, unknown>) => unknown;
+  onActive?: (event?: unknown) => unknown;
+};
+
+function readGrapesjsEditingModel(editor: unknown): unknown {
+  const direct = (editor as { getEditing?: unknown } | null)?.getEditing;
+  if (typeof direct === 'function') {
+    try {
+      const editing = direct.call(editor);
+      if (editing) return editing;
+    } catch {
+      // Fall through to the editor model.
+    }
+  }
+  const model = (() => {
+    try {
+      return (editor as { getModel?: () => unknown } | null)?.getModel?.();
+    } catch {
+      return null;
+    }
+  })();
+  const fromModel = (model as { getEditing?: unknown } | null)?.getEditing;
+  if (typeof fromModel === 'function') {
+    try {
+      return fromModel.call(model);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function textViewFromComponent(comp: unknown): GrapesjsTextViewLike | null {
+  const directView = (comp as { view?: unknown } | null)?.view;
+  if (directView && (
+    typeof (directView as GrapesjsTextViewLike).disableEditing === 'function' ||
+    typeof (directView as GrapesjsTextViewLike).onActive === 'function'
+  )) {
+    return directView as GrapesjsTextViewLike;
+  }
+  const getView = (comp as { getView?: unknown } | null)?.getView;
+  if (typeof getView === 'function') {
+    try {
+      const view = getView.call(comp);
+      if (view && (
+        typeof (view as GrapesjsTextViewLike).disableEditing === 'function' ||
+        typeof (view as GrapesjsTextViewLike).onActive === 'function'
+      )) {
+        return view as GrapesjsTextViewLike;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+function addTextViewCandidate(candidates: GrapesjsTextViewLike[], view: GrapesjsTextViewLike | null) {
+  if (!view || candidates.includes(view)) return;
+  candidates.push(view);
+}
+
+export function stopGrapesjsRichTextEditing(editor: unknown): boolean {
+  let stopped = false;
+  const candidates: GrapesjsTextViewLike[] = [];
+  addTextViewCandidate(candidates, textViewFromComponent(readGrapesjsEditingModel(editor)));
+  try {
+    addTextViewCandidate(candidates, textViewFromComponent((editor as { getSelected?: () => unknown }).getSelected?.()));
+  } catch {
+    // ignore
+  }
+  try {
+    const doc = (editor as GrapesjsEditorInstance | null)?.Canvas?.getDocument?.();
+    const active = doc?.activeElement as HTMLElement | null | undefined;
+    if (active?.isContentEditable) {
+      addTextViewCandidate(candidates, textViewFromComponent(getComponentFromElement(active)));
+    }
+  } catch {
+    // ignore
+  }
+
+  candidates.forEach((view) => {
+    try {
+      view.disableEditing?.({ event: 'od-stop-text-editing' });
+      stopped = true;
+    } catch {
+      // ignore
+    }
+  });
+
+  try {
+    const rte = (editor as { RichTextEditor?: { disable?: unknown } } | null)?.RichTextEditor;
+    const disable = rte?.disable;
+    if (typeof disable === 'function') {
+      candidates.forEach((view) => {
+        try {
+          disable.call(rte, view, view.activeRte, { event: 'od-stop-text-editing' });
+          stopped = true;
+        } catch {
+          // ignore
+        }
+      });
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const doc = (editor as GrapesjsEditorInstance | null)?.Canvas?.getDocument?.();
+    const active = doc?.activeElement as HTMLElement | null | undefined;
+    if (active?.isContentEditable) {
+      active.blur();
+      stopped = true;
+    }
+    doc?.defaultView?.getSelection?.()?.removeAllRanges?.();
+  } catch {
+    // ignore
+  }
+  return stopped;
+}
+
+export function stopGrapesjsTextEditingForPointerTarget(
+  editor: unknown,
+  target: EventTarget | null,
+): boolean {
+  if (isTextInputTarget(target)) return false;
+  return stopGrapesjsRichTextEditing(editor);
+}
+
 /**
  * Handle exposed to FileViewer so the parent can drive Tab sync (pull the
  * current HTML when switching to the source Tab, push new HTML when
@@ -421,6 +1406,8 @@ export interface SelectionSnapshot {
   hasSelection: boolean;
   tagName: string;
   selector: string;
+  componentType?: string;
+  canvasTool?: string;
   styles: Record<string, string>;
   selectedColors: string[];
 }
@@ -467,12 +1454,18 @@ export interface GrapesjsEditorHandle {
    *  resize handles. Used after closing a host-side floating editor (color
    *  picker), which can otherwise leave the handles stale/missing. */
   reselectCurrent(): void;
+  /** Read the latest selection snapshot synchronously for host-side panel recovery. */
+  getSelectionSnapshot(): SelectionSnapshot;
   /** Toggle canvas 裁剪 mode: when on, dragging the selected element pans its
    *  background-position and the wheel scales its background-size. */
   setCropMode(on: boolean): void;
   /** Replace any color in the selection's subtree that matches a target (by
    *  normalized hex) with `replacement`. Returns the count of edits applied. */
   replaceColors(targets: string[], replacement: string): number;
+  /** Wrap the current selection in a flex auto-layout container. */
+  arrangeSelectionAsFlex(axis?: 'row' | 'column'): boolean;
+  /** Dissolve the selected flex auto-layout container back into positioned children when possible. */
+  dissolveSelectedFlex(): boolean;
   /**
    * Return the underlying GrapesJS Editor instance, or null when not yet
    * ready / already destroyed. Callers must null-check before use. The
@@ -555,6 +1548,18 @@ export interface GrapesjsEditorProps {
    * asset-manager modal and hand control to the parent instead.
    */
   onImageEditRequest?: () => void;
+  /** Host-selected bottom-toolbar tool. Non-cursor tools are placed on the next canvas click. */
+  activeCanvasTool?: GrapesjsCanvasTool;
+  /** Allows the editor to return the toolbar to cursor mode after placing an element. */
+  onCanvasToolChange?: (tool: GrapesjsCanvasTool) => void;
+  /** Fires in host comment mode when the user clicks a free point on the GrapesJS canvas. */
+  onCanvasCommentPin?: (point: GrapesjsCanvasPoint) => void;
+  /** Fires when the canvas frame position, zoom, or pan changes and host overlays should re-align. */
+  onCanvasViewportChange?: () => void;
+  /** Figma-style board label shown above the default GrapesJS frame. */
+  artboardName?: string;
+  /** Updates only the local board label; this intentionally does not rename the backing HTML file. */
+  onArtboardNameChange?: (name: string) => void;
   /**
    * PR3: when provided, the editor renders its LayerManager panel into this
    * container after `load`. The host owns the container's position/visibility
@@ -591,12 +1596,19 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       onViewportSizeChange,
       initialViewport,
       onImageEditRequest,
+      activeCanvasTool = 'cursor',
+      onCanvasToolChange,
+      onCanvasCommentPin,
+      onCanvasViewportChange,
+      artboardName = '画板1',
+      onArtboardNameChange,
       layersPanelRef,
       stylePanelRef,
     } = props;
     const containerRef = useRef<HTMLDivElement | null>(null);
     const rootRef = useRef<HTMLDivElement | null>(null);
     const editorRef = useRef<GrapesjsEditorInstance | null>(null);
+    const artboardLabelRef = useRef<HTMLDivElement | null>(null);
     const parsedRef = useRef<ParsedDocument | null>(null);
     const baseHrefRef = useRef<string | undefined>(baseHref);
     const lastExternalHtmlRef = useRef<string>(html);
@@ -615,6 +1627,16 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const onZoomChangeRef = useRef(onZoomChange);
     const onViewportSizeChangeRef = useRef(onViewportSizeChange);
     const onImageEditRequestRef = useRef(onImageEditRequest);
+    const activeCanvasToolRef = useRef<GrapesjsCanvasTool>(activeCanvasTool);
+    const onCanvasToolChangeRef = useRef(onCanvasToolChange);
+    const onCanvasCommentPinRef = useRef(onCanvasCommentPin);
+    const onCanvasViewportChangeRef = useRef(onCanvasViewportChange);
+    const onArtboardNameChangeRef = useRef(onArtboardNameChange);
+    activeCanvasToolRef.current = activeCanvasTool;
+    onCanvasToolChangeRef.current = onCanvasToolChange;
+    onCanvasCommentPinRef.current = onCanvasCommentPin;
+    onCanvasViewportChangeRef.current = onCanvasViewportChange;
+    onArtboardNameChangeRef.current = onArtboardNameChange;
     const selectionToneRef = useRef<GrapesjsSelectionTone>(selectionTone);
     const selectionChromeRef = useRef<GrapesjsSelectionChrome>(selectionChrome);
     const userCanvasSizeEditVersionRef = useRef(0);
@@ -630,9 +1652,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     // which closes over a stable deps array) can reach into the live editor's
     // scheduleEmit + selection-snapshot helpers.
     const scheduleEmitRef = useRef<(() => void) | null>(null);
+    const readSelectionSnapshotRef = useRef<(() => SelectionSnapshot) | null>(null);
     const refreshSelectionSnapshotRef = useRef<(() => void) | null>(null);
     const syncZoomAttrRef = useRef<(() => void) | null>(null);
     const syncCoordsAttrRef = useRef<(() => void) | null>(null);
+    const syncArtboardLabelPositionRef = useRef<(() => void) | null>(null);
     const syncCropOverlayRef = useRef<(() => void) | null>(null);
     const selectionColorCollectorRef = useRef(createSelectionColorCollector());
     const currentCanvasSizeRef = useRef<{ width: number; height: number } | null>(
@@ -648,6 +1672,51 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const setCtxMenuRef = useRef<((menu: CanvasCtxMenuState | null) => void) | null>(null);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [artboardLabelEditing, setArtboardLabelEditing] = useState(false);
+    const [artboardLabelDraft, setArtboardLabelDraft] = useState(artboardName);
+
+    useEffect(() => {
+      if (!artboardLabelEditing) setArtboardLabelDraft(artboardName);
+    }, [artboardLabelEditing, artboardName]);
+
+    const syncArtboardLabelPosition = useCallback(() => {
+      const editor = editorRef.current;
+      const root = rootRef.current;
+      const label = artboardLabelRef.current;
+      if (!editor || !root || !label || loading || loadError) return;
+      try {
+        const frame = editor.Canvas.getFrameEl?.();
+        const frameRect = frame?.getBoundingClientRect?.();
+        const rootRect = root.getBoundingClientRect();
+        if (!frameRect) {
+          label.style.opacity = '0';
+          onCanvasViewportChangeRef.current?.();
+          return;
+        }
+        const labelTop = Math.round(frameRect.top - rootRect.top - 24);
+        const labelLeft = Math.round(frameRect.left - rootRect.left);
+        const isFrameVisible = frameRect.bottom > rootRect.top && frameRect.top < rootRect.bottom;
+        const isLabelVisible = isFrameVisible && labelTop >= 0 && labelLeft < rootRect.width && labelLeft > -label.offsetWidth;
+        label.style.left = `${labelLeft}px`;
+        label.style.top = `${labelTop}px`;
+        label.style.opacity = isLabelVisible ? '1' : '0';
+        onCanvasViewportChangeRef.current?.();
+      } catch {
+        label.style.opacity = '0';
+        onCanvasViewportChangeRef.current?.();
+      }
+    }, [loadError, loading]);
+
+    syncArtboardLabelPositionRef.current = syncArtboardLabelPosition;
+
+    useEffect(() => {
+      const frame = window.requestAnimationFrame(syncArtboardLabelPosition);
+      window.addEventListener('resize', syncArtboardLabelPosition);
+      return () => {
+        window.cancelAnimationFrame(frame);
+        window.removeEventListener('resize', syncArtboardLabelPosition);
+      };
+    }, [syncArtboardLabelPosition, artboardName]);
 
     // Keep callback refs fresh without re-creating the editor.
     useEffect(() => {
@@ -689,6 +1758,24 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     useEffect(() => {
       onImageEditRequestRef.current = onImageEditRequest;
     }, [onImageEditRequest]);
+    useEffect(() => {
+      activeCanvasToolRef.current = activeCanvasTool;
+      const cursor = isGrapesjsPlaceableCanvasTool(activeCanvasTool) ? 'crosshair' : '';
+      try {
+        const canvasEl = editorRef.current?.Canvas.getElement?.() as HTMLElement | null | undefined;
+        if (canvasEl) canvasEl.style.cursor = cursor;
+        const doc = editorRef.current?.Canvas.getDocument?.();
+        if (doc?.body) doc.body.style.cursor = cursor;
+      } catch {
+        // ignore — cursor feedback is best-effort
+      }
+    }, [activeCanvasTool]);
+    useEffect(() => {
+      onCanvasToolChangeRef.current = onCanvasToolChange;
+    }, [onCanvasToolChange]);
+    useEffect(() => {
+      onCanvasViewportChangeRef.current = onCanvasViewportChange;
+    }, [onCanvasViewportChange]);
     useEffect(() => {
       selectionToneRef.current = selectionTone;
       const editor = editorRef.current;
@@ -1042,6 +2129,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 box-shadow: none !important;
                 border: 0 !important;
               }
+              .gjs-cv-canvas__tools {
+                display: block !important;
+              }
               .gjs-cv-canvas__frame, .gjs-clm-tags { border-color: var(--accent, #c96442) !important; }
               .gjs-resizer {
                 border: 0 !important;
@@ -1112,10 +2202,66 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 z-index: 10;
                 display: none;
               }
+              .od-radius-handle {
+                position: absolute;
+                width: 10px;
+                height: 10px;
+                margin: -5px 0 0 -5px;
+                border: 0;
+                border-radius: 50%;
+                background: transparent;
+                box-shadow: none;
+                cursor: default;
+                pointer-events: auto;
+                touch-action: none;
+                z-index: 24;
+                display: none;
+              }
+              .od-radius-handle::after {
+                content: "";
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                width: 3px;
+                height: 3px;
+                border: 1.5px solid #1595ff;
+                border-radius: 50%;
+                background: #fff;
+                box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 1px 3px rgba(15,23,42,.22);
+                opacity: .48;
+                transform: translate(-50%, -50%);
+                transition: width 120ms cubic-bezier(0.23, 1, 0.32, 1), height 120ms cubic-bezier(0.23, 1, 0.32, 1), opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+              }
+              .od-radius-handle.is-active {
+                cursor: default;
+              }
+              .od-radius-handle.is-active::after {
+                width: 6px;
+                height: 6px;
+                border-width: 2px;
+                opacity: 1;
+              }
+              .od-radius-badge {
+                position: absolute;
+                left: 50%;
+                top: -8px;
+                transform: translate(-50%, -100%);
+                padding: 2px 7px;
+                border-radius: 4px;
+                background: #1595ff;
+                color: #fff;
+                font: 700 12px/1.35 system-ui, sans-serif;
+                white-space: nowrap;
+                pointer-events: none;
+                z-index: 25;
+                display: none;
+              }
               .od-gjs-element-selection-mode .gjs-resizer,
               .od-gjs-element-selection-mode .gjs-resizer-h,
               .od-gjs-element-selection-mode .od-dimension-badge,
               .od-gjs-element-selection-mode .od-selection-stroke,
+              .od-gjs-element-selection-mode .od-radius-handle,
+              .od-gjs-element-selection-mode .od-radius-badge,
               .od-gjs-element-selection-mode [data-od-spacing-kind],
               .od-gjs-element-selection-mode [data-od-spacing-band] {
                 display: none !important;
@@ -1201,6 +2347,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             if (!badge) return;
             const w = typeof opts.width === 'number' ? opts.width : 0;
             const h = typeof opts.height === 'number' ? opts.height : 0;
+            if (w <= 1 || h <= 1) {
+              hideDimensionBadge();
+              positionRadiusHandles();
+              return;
+            }
             const zoom = (() => {
               try {
                 const z = (editor.Canvas as unknown as { getZoomDecimal?: () => number }).getZoomDecimal?.();
@@ -1213,6 +2364,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const cssH = Math.round(h / zoom);
             badge.textContent = `${cssW} × ${cssH}`;
             badge.style.display = 'block';
+            positionRadiusHandles();
           };
           const hideDimensionBadge = () => {
             if (dimensionBadge) dimensionBadge.style.display = 'none';
@@ -1229,11 +2381,267 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
             ensureDimensionBadge();
             ensureSelectionStroke();
+            positionRadiusHandles();
             try {
               const doc = editor.Canvas.getDocument?.();
               if (doc) upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS, selectionToneRef.current);
             } catch { /* ignore */ }
           });
+          type RadiusCorner = GrapesjsRadiusCorner;
+          type RadiusHandle = { corner: RadiusCorner; node: HTMLDivElement };
+          type RadiusDragState = {
+            target: Component;
+            corner: RadiusCorner;
+            lastValue: number;
+            rect: DOMRect;
+            startClientX: number;
+            startClientY: number;
+            axis: 'x' | 'y' | null;
+            handleNode: HTMLElement;
+            pointerId: number;
+            restoreCanvasPointerEvents: (() => void) | null;
+          };
+          let radiusHandles: RadiusHandle[] = [];
+          let radiusBadge: HTMLDivElement | null = null;
+          let radiusAttached = false;
+          let radiusDrag: RadiusDragState | null = null;
+          let radiusDragRaf = 0;
+          let pendingRadiusMove: { clientX: number; clientY: number } | null = null;
+          let detachRadiusHandles: (() => void) | null = null;
+          const radiusHandleMinInset = 24;
+          const radiusHandleMinTargetSize = 80;
+          const radiusCssPx = (value: string | undefined): number => {
+            const match = String(value ?? '').match(/-?[\d.]+/);
+            const parsed = match?.[0] ? Number.parseFloat(match[0]) : 0;
+            return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+          };
+          const selectedRadiusTarget = (): Component | null => {
+            const sel = editor.getSelected?.() as Component | undefined;
+            if (!sel) return null;
+            const attrs = getComponentAttributes(sel);
+            return attrs['data-od-canvas-tool'] === 'rectangle' ? sel : null;
+          };
+          const hideRadiusHandles = () => {
+            for (const handle of radiusHandles) {
+              handle.node.classList.remove('is-active');
+              handle.node.style.display = 'none';
+            }
+            if (radiusBadge) radiusBadge.style.display = 'none';
+          };
+          const clearActiveRadiusHandle = () => {
+            for (const handle of radiusHandles) handle.node.classList.remove('is-active');
+          };
+          const beginRadiusInputShield = (): (() => void) | null => {
+            const canvasEl = editor.Canvas.getElement?.() as HTMLElement | null | undefined;
+            if (!canvasEl) return null;
+            const previous = canvasEl.style.pointerEvents;
+            canvasEl.style.pointerEvents = 'none';
+            return () => {
+              canvasEl.style.pointerEvents = previous;
+            };
+          };
+          const ensureRadiusHandles = () => {
+            if (radiusAttached) return;
+            const toolsEl = (editor.Canvas as unknown as { getToolsEl?: () => HTMLElement | null }).getToolsEl?.();
+            if (!toolsEl) return;
+            const hostDoc = toolsEl.ownerDocument;
+            radiusHandles = (['tl', 'tr', 'bl', 'br'] as RadiusCorner[]).map((corner) => {
+              const node = hostDoc.createElement('div');
+              node.className = 'od-radius-handle';
+              node.setAttribute('data-od-radius-corner', corner);
+              node.setAttribute('aria-hidden', 'true');
+              toolsEl.appendChild(node);
+              return { corner, node };
+            });
+            radiusBadge = hostDoc.createElement('div');
+            radiusBadge.className = 'od-radius-badge';
+            radiusBadge.setAttribute('aria-hidden', 'true');
+            toolsEl.appendChild(radiusBadge);
+            const onHostPointerDown = (ev: PointerEvent) => {
+              const node = (ev.target as Element | null)?.closest?.('[data-od-radius-corner]') as HTMLElement | null;
+              const corner = node?.getAttribute('data-od-radius-corner') as RadiusCorner | null;
+              const target = selectedRadiusTarget();
+              if (!node || !corner || !target) return;
+              const dragRect = toolsEl.getBoundingClientRect();
+              if (dragRect.width <= 1 || dragRect.height <= 1) return;
+              if (dragRect.width < radiusHandleMinTargetSize || dragRect.height < radiusHandleMinTargetSize) return;
+              ev.preventDefault();
+              ev.stopPropagation();
+              ev.stopImmediatePropagation();
+              const startRadius = radiusCssPx(getComponentStyleRecord(target)['border-radius']);
+              const hostWindow = hostDoc.defaultView;
+              if (!hostWindow) return;
+              try { node.setPointerCapture?.(ev.pointerId); } catch { /* ignore */ }
+              clearActiveRadiusHandle();
+              node.classList.add('is-active');
+              radiusDrag = {
+                target,
+                corner,
+                lastValue: startRadius,
+                rect: dragRect,
+                startClientX: ev.clientX,
+                startClientY: ev.clientY,
+                axis: null,
+                handleNode: node,
+                pointerId: ev.pointerId,
+                restoreCanvasPointerEvents: beginRadiusInputShield(),
+              };
+              positionRadiusHandles();
+              const applyPendingRadiusMove = () => {
+                radiusDragRaf = 0;
+                const drag = radiusDrag;
+                const point = pendingRadiusMove;
+                pendingRadiusMove = null;
+                if (!drag || !point) return;
+                const zoom = (() => {
+                  const z = (editor.Canvas as unknown as { getZoomDecimal?: () => number }).getZoomDecimal?.();
+                  return typeof z === 'number' && z > 0 ? z : (editor.Canvas.getZoom?.() ?? 100) / 100;
+                })();
+                const deltaX = point.clientX - drag.startClientX;
+                const deltaY = point.clientY - drag.startClientY;
+                if (!drag.axis) {
+                  const inwardX = drag.corner.endsWith('r') ? -deltaX : deltaX;
+                  const inwardY = drag.corner.startsWith('b') ? -deltaY : deltaY;
+                  const absX = Math.abs(inwardX);
+                  const absY = Math.abs(inwardY);
+                  if (Math.max(absX, absY) >= 3) {
+                    const bothInward = inwardX > 0 && inwardY > 0;
+                    const minAbs = Math.min(absX, absY);
+                    const maxAbs = Math.max(absX, absY);
+                    if (!bothInward || minAbs <= 3 || maxAbs / Math.max(1, minAbs) >= 4) {
+                      drag.axis = absX >= absY ? 'x' : 'y';
+                    }
+                  }
+                }
+                const next = calculateGrapesjsCornerRadiusFromPointer({
+                  corner: drag.corner,
+                  localX: point.clientX - drag.rect.left,
+                  localY: point.clientY - drag.rect.top,
+                  width: drag.rect.width,
+                  height: drag.rect.height,
+                  zoom,
+                  handleInset: radiusHandleMinInset,
+                  axis: drag.axis,
+                });
+                if (next === drag.lastValue) {
+                  positionRadiusHandles();
+                  return;
+                }
+                drag.lastValue = next;
+                try {
+                  drag.target.setStyle?.({
+                    ...getComponentStyleRecord(drag.target),
+                    'border-radius': `${next}px`,
+                  } as Parameters<typeof drag.target.setStyle>[0]);
+                  positionRadiusHandles();
+                } catch { /* ignore */ }
+              };
+              const move = (me: PointerEvent) => {
+                if (!radiusDrag) return;
+                me.preventDefault();
+                me.stopPropagation();
+                pendingRadiusMove = { clientX: me.clientX, clientY: me.clientY };
+                if (!radiusDragRaf) {
+                  radiusDragRaf = hostWindow.requestAnimationFrame(applyPendingRadiusMove);
+                }
+              };
+              const up = () => {
+                const drag = radiusDrag;
+                if (radiusDragRaf) {
+                  hostWindow.cancelAnimationFrame(radiusDragRaf);
+                  radiusDragRaf = 0;
+                  applyPendingRadiusMove();
+                }
+                try {
+                  if (drag) drag.handleNode.releasePointerCapture?.(drag.pointerId);
+                } catch { /* ignore */ }
+                drag?.restoreCanvasPointerEvents?.();
+                clearActiveRadiusHandle();
+                radiusDrag = null;
+                pendingRadiusMove = null;
+                hostWindow.removeEventListener('pointermove', move, true);
+                hostWindow.removeEventListener('pointerup', up, true);
+                hostWindow.removeEventListener('pointercancel', up, true);
+                refreshSelectionSnapshotRef.current?.();
+                positionRadiusHandles();
+                scheduleEmitRef.current?.();
+              };
+              hostWindow.addEventListener('pointermove', move, true);
+              hostWindow.addEventListener('pointerup', up, true);
+              hostWindow.addEventListener('pointercancel', up, true);
+            };
+            hostDoc.addEventListener('pointerdown', onHostPointerDown, true);
+            detachRadiusHandles = () => {
+              hostDoc.removeEventListener('pointerdown', onHostPointerDown, true);
+              if (radiusDragRaf) {
+                hostDoc.defaultView?.cancelAnimationFrame(radiusDragRaf);
+                radiusDragRaf = 0;
+              }
+              radiusDrag?.restoreCanvasPointerEvents?.();
+              radiusDrag = null;
+              pendingRadiusMove = null;
+              for (const handle of radiusHandles) handle.node.remove();
+              radiusHandles = [];
+              radiusBadge?.remove();
+              radiusBadge = null;
+              radiusAttached = false;
+            };
+            radiusAttached = true;
+          };
+          function positionRadiusHandles() {
+            if (selectionChromeRef.current === 'element-selection') {
+              hideRadiusHandles();
+              return;
+            }
+            const target = selectedRadiusTarget();
+            if (!target) {
+              hideRadiusHandles();
+              return;
+            }
+            ensureRadiusHandles();
+            const toolsEl = (editor.Canvas as unknown as { getToolsEl?: () => HTMLElement | null }).getToolsEl?.();
+            const el = getElementFromComponent(target) as HTMLElement | null;
+            const win = el?.ownerDocument.defaultView ?? null;
+            if (!toolsEl || !el || !win || toolsEl.clientWidth <= 1 || toolsEl.clientHeight <= 1) {
+              hideRadiusHandles();
+              return;
+            }
+            if (toolsEl.clientWidth < radiusHandleMinTargetSize || toolsEl.clientHeight < radiusHandleMinTargetSize) {
+              hideRadiusHandles();
+              return;
+            }
+            const zoom = (() => {
+              const z = (editor.Canvas as unknown as { getZoomDecimal?: () => number }).getZoomDecimal?.();
+              return typeof z === 'number' && z > 0 ? z : (editor.Canvas.getZoom?.() ?? 100) / 100;
+            })();
+            let radius = 0;
+            try { radius = radiusCssPx(win.getComputedStyle(el).getPropertyValue('border-radius')); } catch { radius = 0; }
+            const handleInset = calculateGrapesjsRadiusHandleInset({
+              radius,
+              zoom,
+              width: toolsEl.clientWidth,
+              height: toolsEl.clientHeight,
+              minInset: radiusHandleMinInset,
+            });
+            const positions: Record<RadiusCorner, { x: number; y: number }> = {
+              tl: { x: handleInset, y: handleInset },
+              tr: { x: toolsEl.clientWidth - handleInset, y: handleInset },
+              bl: { x: handleInset, y: toolsEl.clientHeight - handleInset },
+              br: { x: toolsEl.clientWidth - handleInset, y: toolsEl.clientHeight - handleInset },
+            };
+            for (const handle of radiusHandles) {
+              const pos = positions[handle.corner];
+              if (!pos) continue;
+              handle.node.style.left = `${pos.x}px`;
+              handle.node.style.top = `${pos.y}px`;
+              handle.node.style.display = 'block';
+            }
+            if (radiusBadge) {
+              radiusBadge.textContent = `Radius ${Math.round(radius)}`;
+              radiusBadge.style.display = radiusDrag ? 'block' : 'none';
+            }
+          }
+          editor.on('component:deselected', hideRadiusHandles);
           // ── Spacing guides: draggable padding / gap / margin overlays ──
           // The visible guide is a thin line while the hit target stays large
           // enough to drag. The striped value band and compact value badge only
@@ -1441,6 +2849,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (spacingDrag?.item !== item) item.band.style.backgroundImage = 'none';
             }
             if (!sel || !toolsEl) return;
+            if (isGrapesjsCanvasToolComponent(sel)) return;
             const el = getElementFromComponent(sel) as HTMLElement | null;
             const win = el?.ownerDocument.defaultView ?? null;
             if (!el || !win) return;
@@ -1578,6 +2987,96 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
             if (spacingTip) spacingTip.style.display = 'none';
           };
+          let toolsRefreshRaf = 0;
+          let toolsRefreshNeedsCanvasRefresh = false;
+          let selectionSnapshotRefreshRaf = 0;
+          const forceToolsWrapperVisible = () => {
+            try {
+              const canvasEl = editor.Canvas.getElement?.() as HTMLElement | null | undefined;
+              canvasEl
+                ?.querySelectorAll<HTMLElement>('.gjs-cv-canvas__tools')
+                .forEach((el) => { el.style.display = ''; });
+              const canvasView = (editor.Canvas as unknown as {
+                getCanvasView?: () => { toolsWrapper?: HTMLElement | null } | null;
+              }).getCanvasView?.();
+              if (canvasView?.toolsWrapper) canvasView.toolsWrapper.style.display = '';
+            } catch {
+              // ignore — refresh below still lets GrapesJS recover
+            }
+          };
+          const requestVisibleToolsRefresh = (opts: { refreshCanvas?: boolean } = {}) => {
+            forceToolsWrapperVisible();
+            if (opts.refreshCanvas) toolsRefreshNeedsCanvasRefresh = true;
+            if (toolsRefreshRaf) return;
+            toolsRefreshRaf = window.requestAnimationFrame(() => {
+              toolsRefreshRaf = 0;
+              forceToolsWrapperVisible();
+              const refreshCanvas = toolsRefreshNeedsCanvasRefresh;
+              toolsRefreshNeedsCanvasRefresh = false;
+              if (refreshCanvas) {
+                try {
+                  (editor.Canvas as unknown as { refresh?: () => void }).refresh?.();
+                } catch { /* ignore */ }
+              }
+              try {
+                editor.trigger('canvas:updateTools');
+              } catch { /* ignore */ }
+              positionRadiusHandles();
+              positionSpacingHandles();
+            });
+          };
+          const requestSelectionSnapshotRefresh = (opts: { emit?: boolean } = {}) => {
+            if (selectionSnapshotRefreshRaf) return;
+            selectionSnapshotRefreshRaf = window.requestAnimationFrame(() => {
+              selectionSnapshotRefreshRaf = 0;
+              refreshSelectionSnapshotRef.current?.();
+              if (opts.emit) scheduleEmitRef.current?.();
+            });
+          };
+          const onLiveToolsGeometryChange = () => {
+            requestVisibleToolsRefresh();
+            syncArtboardLabelPositionRef.current?.();
+          };
+          const onResizeCommit = () => {
+            requestVisibleToolsRefresh();
+            requestSelectionSnapshotRefresh({ emit: true });
+          };
+          const detachCanvasViewportSync = attachGrapesjsCanvasViewportSync(
+            editor,
+            [rootRef.current, containerRef.current],
+            () => {
+              requestVisibleToolsRefresh({ refreshCanvas: true });
+              syncArtboardLabelPositionRef.current?.();
+            },
+          );
+          const observeToolsLayoutResize = () => {
+            const ResizeObserverCtor =
+              rootRef.current?.ownerDocument.defaultView?.ResizeObserver ??
+              (typeof ResizeObserver !== 'undefined' ? ResizeObserver : null);
+            if (!ResizeObserverCtor) return null;
+            const observer = new ResizeObserverCtor(() => {
+              requestVisibleToolsRefresh({ refreshCanvas: true });
+              syncArtboardLabelPositionRef.current?.();
+            });
+            const observed = new Set<Element>();
+            const observe = (el: Element | null | undefined) => {
+              if (!el || observed.has(el)) return;
+              observed.add(el);
+              observer.observe(el);
+            };
+            observe(rootRef.current);
+            observe(containerRef.current);
+            try { observe(editor.Canvas.getElement?.() as Element | null | undefined); } catch { /* ignore */ }
+            try { observe(editor.Canvas.getFrameEl?.() as Element | null | undefined); } catch { /* ignore */ }
+            return () => observer.disconnect();
+          };
+          const detachToolsLayoutResize = observeToolsLayoutResize();
+          editor.on('canvas:zoom', onLiveToolsGeometryChange);
+          editor.on('canvas:coords', onLiveToolsGeometryChange);
+          editor.on('component:drag', onLiveToolsGeometryChange);
+          editor.on('component:resize', onLiveToolsGeometryChange);
+          editor.on('component:resize:move', onLiveToolsGeometryChange);
+          editor.on('component:resize:update', onResizeCommit);
           // A single host-doc-level editor for the spacing "click to type"
           // popup. Only one value can be edited at a time, so we keep one
           // floating <input> and re-anchor it to whichever guide handle the
@@ -1898,6 +3397,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                   applyZoomStyleVars(100);
                   if (rootRef.current) rootRef.current.dataset.odCanvasZoom = '100';
                   onZoomChangeRef.current?.(100);
+                  syncArtboardLabelPositionRef.current?.();
                   return;
                 }
                 applyZoomStyleVars(z);
@@ -1914,6 +3414,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             } catch {
               // ignore
             }
+            syncArtboardLabelPositionRef.current?.();
           };
           // Mirror the canvas pan offset too, so tests can assert the pan
           // survives keyup (the "弹回原位" regression) without reaching into
@@ -1929,6 +3430,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             } catch {
               // ignore
             }
+            syncArtboardLabelPositionRef.current?.();
           };
           type ForwardedCanvasEvent = Event & { _parentEvent?: Event };
           const consumeCanvasEvent = (ev: Event) => {
@@ -1964,7 +3466,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // Never hijack keys while the user is typing in an input / the
             // GrapesJS text-edit overlay (contenteditable) — those own the
             // keystroke for editing.
-            if (isTextInputTarget(ev.target)) return;
+            if (isTextInputTarget(ev.target)) {
+              if (ev.key === 'Escape') {
+                ev.preventDefault();
+                stopGrapesjsRichTextEditing(editor);
+              }
+              return;
+            }
             if (ev.code === 'Space') {
               // preventDefault is essential: the browser's default for Space
               // is to scroll the page/canvas. With scrollableCanvas enabled
@@ -2011,7 +3519,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               !ev.ctrlKey &&
               !ev.altKey &&
               (ev.key === 'Delete' || ev.key === 'Backspace') &&
-              !(editor as any).isEditing()
+              !isGrapesjsEditorEditing(editor)
             ) {
               try {
                 const all = editor.getSelectedAll?.() ?? [];
@@ -2292,7 +3800,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             if ((doc as unknown as { __odCanvasKeys?: true }).__odCanvasKeys) return;
             (doc as unknown as { __odCanvasKeys?: true }).__odCanvasKeys = true;
             const onDocKey = (ev: KeyboardEvent) => {
-              if (isTextInputTarget(ev.target)) return;
+              if (isTextInputTarget(ev.target)) {
+                if (ev.key === 'Escape') {
+                  ev.preventDefault();
+                  stopGrapesjsRichTextEditing(editor);
+                }
+                return;
+              }
               if (ev.code === 'Space') {
                 onKeyDownCanvas(ev);
                 consumeCanvasEvent(ev);
@@ -2303,6 +3817,33 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && (ev.key === 'r' || ev.key === 'R')) {
                 ev.preventDefault();
                 onReloadRef.current?.();
+                return;
+              }
+              const key = ev.key.toLowerCase();
+              const primary = ev.metaKey || ev.ctrlKey;
+              const noCommandModifier = !primary && !ev.altKey;
+              let canvasTool: GrapesjsCanvasTool | null = null;
+              if (primary && ev.shiftKey && !ev.altKey && key === 'k') {
+                canvasTool = 'image';
+              } else if (noCommandModifier && key === 'v') {
+                canvasTool = 'cursor';
+              } else if (noCommandModifier && key === 'r') {
+                canvasTool = 'rectangle';
+              } else if (noCommandModifier && key === 'l') {
+                canvasTool = 'line';
+              } else if (noCommandModifier && key === 'o') {
+                canvasTool = 'circle';
+              } else if (noCommandModifier && key === 't') {
+                canvasTool = 'text';
+              }
+              if (canvasTool && !readOnlyRef.current && !cropModeRef.current) {
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+                activeCanvasToolRef.current = canvasTool;
+                onCanvasToolChangeRef.current?.(canvasTool);
+                try {
+                  doc.body.style.cursor = isGrapesjsPlaceableCanvasTool(canvasTool) ? 'crosshair' : '';
+                } catch { /* ignore */ }
                 return;
               }
               if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && (ev.key === 'z' || ev.key === 'Z')) {
@@ -2321,7 +3862,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 } catch { /* ignore */ }
                 return;
               }
-              if (!readOnlyRef.current && !ev.metaKey && !ev.ctrlKey && !ev.altKey && (ev.key === 'Delete' || ev.key === 'Backspace') && !(editor as any).isEditing()) {
+              if (!readOnlyRef.current && !ev.metaKey && !ev.ctrlKey && !ev.altKey && (ev.key === 'Delete' || ev.key === 'Backspace') && !isGrapesjsEditorEditing(editor)) {
                 try {
                   const all = editor.getSelectedAll?.() ?? [];
                   if (all.length > 0) {
@@ -2446,100 +3987,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (!readOnlyRef.current && ev.shiftKey && !ev.metaKey && !ev.ctrlKey && (ev.key === 'a' || ev.key === 'A')) {
                 if (isTextInputTarget(ev.target)) return;
                 try {
-                  const picked = selectionOrderRef.current.length > 0
-                    ? selectionOrderRef.current.slice()
-                    : ((editor.getSelectedAll?.() ?? []) as Component[]);
-                  if (picked.length === 0) return;
                   ev.preventDefault();
-                  const zoom = (editor.Canvas.getZoom?.() ?? 100) / 100 || 1;
-                  const rectOf = (comp: Component): { x: number; y: number; w: number; h: number } | null => {
-                    const el = getElementFromComponent(comp);
-                    if (!el) return null;
-                    const r = el.getBoundingClientRect();
-                    return { x: r.left / zoom, y: r.top / zoom, w: r.width / zoom, h: r.height / zoom };
-                  };
-                  // All picked elements must share the SAME direct parent —
-                  // that parent is where the wrapper gets inserted. If they
-                  // don't share a parent, bail (cross-container grouping is
-                  // out of scope; the user can group within one container).
-                  const parents = new Set(picked.map((c) => c.parent?.() ?? null));
-                  if (parents.size !== 1) return;
-                  const parent = picked[0]?.parent?.();
-                  if (!parent) return;
-                  // Order the picked elements by their current DOM position
-                  // (NOT by pick order). This is what keeps each element where
-                  // it already is once they flow into the new flex wrapper.
-                  const ordered = picked
-                    .map((comp) => ({ comp, rect: rectOf(comp) }))
-                    .filter((e): e is { comp: Component; rect: { x: number; y: number; w: number; h: number } } => !!e.rect);
-                  if (ordered.length === 0) return;
-                  ordered.sort((p, q) => (p.rect.y - q.rect.y) || (p.rect.x - q.rect.x));
-                  const orderedComps = ordered.map((e) => e.comp);
-                  // Orientation from the first/last DOM-ordered centres.
-                  const first = ordered[0]!.rect;
-                  const last = ordered[ordered.length - 1]!.rect;
-                  const horizontal = Math.abs((last.x + last.w / 2) - (first.x + first.w / 2))
-                    >= Math.abs((last.y + last.h / 2) - (first.y + first.h / 2));
-                  const direction = horizontal ? 'row' : 'column';
-                  // Gap = average real spacing between adjacent picked
-                  // elements along the main axis (clamped ≥ 0). This
-                  // preserves the original visual spacing inside the wrapper.
-                  let gap = 0;
-                  if (ordered.length > 1) {
-                    let totalGap = 0;
-                    for (let i = 1; i < ordered.length; i += 1) {
-                      const prev = ordered[i - 1]!.rect;
-                      const cur = ordered[i]!.rect;
-                      if (horizontal) {
-                        totalGap += Math.max(0, cur.x - (prev.x + prev.w));
-                      } else {
-                        totalGap += Math.max(0, cur.y - (prev.y + prev.h));
-                      }
-                    }
-                    gap = Math.round(totalGap / (ordered.length - 1));
+                  if (arrangeGrapesjsSelectionAsFlex(editor, selectionOrderRef.current)) {
+                    refreshSelectionSnapshotRef.current?.();
+                    scheduleEmitRef.current?.();
                   }
-                  // Size the wrapper to the picked elements' bounding box so
-                  // it occupies exactly the region they filled — keeping the
-                  // visual footprint stable regardless of the parent's layout.
-                  const minX = Math.min(...ordered.map((e) => e.rect.x));
-                  const minY = Math.min(...ordered.map((e) => e.rect.y));
-                  const maxX = Math.max(...ordered.map((e) => e.rect.x + e.rect.w));
-                  const maxY = Math.max(...ordered.map((e) => e.rect.y + e.rect.h));
-                  const wrapW = Math.round(maxX - minX);
-                  const wrapH = Math.round(maxY - minY);
-                  // Insert the wrapper at the DOM index of the first
-                  // (DOM-ordered) picked element, so it takes that element's
-                  // slot and the un-picked siblings stay put.
-                  const firstPickedComp = orderedComps[0]!;
-                  const insertAt = (() => {
-                    const pc = parent.components();
-                    for (let i = 0; i < pc.length; i += 1) { if (pc.get(i) === firstPickedComp) return i; }
-                    return pc.length;
-                  })();
-                  const created = parent.append(
-                    {
-                      tagName: 'div',
-                      style: {
-                        'display': 'flex',
-                        'flex-direction': direction,
-                        'gap': `${gap}px`,
-                        'width': `${wrapW}px`,
-                        'height': `${wrapH}px`,
-                      },
-                    } as never,
-                    { at: insertAt } as never,
-                  );
-                  const wrapper = (Array.isArray(created) ? created[0] : created) as Component | null;
-                  if (!wrapper) return;
-                  // Move each picked element into the wrapper in DOM order.
-                  // Re-inserting at sequential indices preserves their order
-                  // and keeps them in the same relative positions inside the
-                  // flex container.
-                  orderedComps.forEach((comp, i) => {
-                    try { comp.move(wrapper, { at: i }); } catch { /* ignore */ }
-                  });
-                  editor.select(wrapper);
-                  scheduleEmitRef.current?.();
                 } catch { /* ignore */ }
                 return;
               }
@@ -2550,58 +4002,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (!readOnlyRef.current && ev.shiftKey && (ev.metaKey || ev.ctrlKey) && (ev.key === 'g' || ev.key === 'G')) {
                 if (isTextInputTarget(ev.target)) return;
                 try {
-                  const sel = editor.getSelected?.() as Component | undefined;
-                  if (!sel) return;
                   ev.preventDefault();
-                  const parent = sel.parent?.();
-                  if (!parent) return;
-                  // Only dissolve when the selection is actually a flex/grid
-                  // container; otherwise this is a no-op.
-                  const el = getElementFromComponent(sel);
-                  const win = el?.ownerDocument.defaultView ?? null;
-                  let display = '';
-                  if (el && win) {
-                    try { display = win.getComputedStyle(el).getPropertyValue('display') || ''; } catch { /* ignore */ }
+                  if (dissolveGrapesjsFlexSelection(editor)) {
+                    refreshSelectionSnapshotRef.current?.();
+                    scheduleEmitRef.current?.();
                   }
-                  const isLayout = display === 'flex' || display === 'inline-flex' || display === 'grid' || display === 'inline-grid'
-                    || String(sel.getStyle?.()?.['display'] ?? sel.getStyle?.()?.display ?? '') === 'flex';
-                  if (!isLayout) return;
-                  // Capture the container's index, then hoist each child into
-                  // the grandparent at that index (preserving order), and clear
-                  // the container's flex/grid styling.
-                  const containerIdx = (() => {
-                    const pc = parent.components();
-                    for (let i = 0; i < pc.length; i += 1) { if (pc.get(i) === sel) return i; }
-                    return -1;
-                  })();
-                  const children = Array.from(sel.components?.() ?? []) as Component[];
-                  // If the container has no children there's nothing to hoist;
-                  // just clear the layout display.
-                  let insertAt = containerIdx >= 0 ? containerIdx : parent.components().length;
-                  for (const child of children.slice()) {
-                    try { child.move(parent, { at: insertAt }); insertAt += 1; } catch { /* ignore */ }
-                  }
-                  try {
-                    const st = { ...(sel.getStyle?.() ?? {}) } as Record<string, string>;
-                    delete st['display'];
-                    delete st['flex-direction'];
-                    delete st['flex-wrap'];
-                    delete st['justify-content'];
-                    delete st['align-items'];
-                    delete st['gap'];
-                    sel.setStyle(st as Parameters<typeof sel.setStyle>[0]);
-                  } catch { /* ignore */ }
-                  // If the container is now empty + styleless, remove it; else
-                  // keep it selected.
-                  if ((sel.components?.() ?? []).length === 0) {
-                    try {
-                      editor.select(parent);
-                      sel.remove();
-                    } catch { /* ignore */ }
-                  } else {
-                    editor.select(sel);
-                  }
-                  scheduleEmitRef.current?.();
                 } catch { /* ignore */ }
                 return;
               }
@@ -3028,6 +4433,335 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // clipboard paste listener works even when focus is on a host UI
             // control rather than inside the canvas frame.
             const hostDocument = containerRef.current?.ownerDocument ?? document;
+            try {
+              const cursor = isGrapesjsPlaceableCanvasTool(activeCanvasToolRef.current) ? 'crosshair' : '';
+              doc.body.style.cursor = cursor;
+            } catch { /* ignore */ }
+
+            const writeElementStyle = (comp: Component, patch: Record<string, string>) => {
+              const el = getElementFromComponent(comp) as HTMLElement | null;
+              if (el) {
+                for (const [key, value] of Object.entries(patch)) {
+                  try { el.style.setProperty(key, value); } catch { /* ignore */ }
+                }
+              }
+            };
+            const previewComponentStyle = (comp: Component, patch: Record<string, string>) => {
+              writeElementStyle(comp, patch);
+            };
+            const commitComponentStyle = (comp: Component, patch: Record<string, string>) => {
+              try {
+                const merged = { ...(comp.getStyle?.() ?? {}), ...patch } as Parameters<typeof comp.setStyle>[0];
+                comp.setStyle?.(merged);
+              } catch { /* ignore */ }
+              writeElementStyle(comp, patch);
+            };
+            const undoManager = () => (
+              editor as unknown as {
+                UndoManager?: {
+                  stop?: () => unknown;
+                  start?: () => unknown;
+                  getInstance?: () => { isTracking?: () => boolean } | null;
+                };
+              }
+            ).UndoManager;
+            const stopUndoTrackingForDrag = (): boolean => {
+              const manager = undoManager();
+              if (!manager?.stop) return false;
+              let wasTracking = true;
+              try {
+                const instance = manager.getInstance?.();
+                if (typeof instance?.isTracking === 'function') {
+                  wasTracking = Boolean(instance.isTracking());
+                }
+              } catch {
+                wasTracking = true;
+              }
+              if (wasTracking) {
+                try { manager.stop(); } catch { /* ignore */ }
+              }
+              return wasTracking;
+            };
+            const restoreUndoTrackingAfterDrag = (wasTracking: boolean) => {
+              if (!wasTracking) return;
+              try { undoManager()?.start?.(); } catch { /* ignore */ }
+            };
+            const parseCssPx = (value: unknown): number => {
+              const match = String(value ?? '').match(/-?[\d.]+/);
+              return match?.[0] ? Number.parseFloat(match[0]) : 0;
+            };
+            const componentAttrs = (comp: Component | null | undefined): Record<string, unknown> => {
+              try { return comp?.getAttributes?.() ?? {}; } catch { return {}; }
+            };
+            const findCanvasToolComponent = (comp: Component | null | undefined): Component | null => {
+              let node: Component | null | undefined = comp;
+              while (node) {
+                if (componentAttrs(node)['data-od-canvas-tool']) return node;
+                const parent = node.parent?.();
+                if (!parent || parent === node) break;
+                node = parent;
+              }
+              return null;
+            };
+            const isAbsoluteCanvasToolComponent = (comp: Component | null | undefined): comp is Component => {
+              const attrs = componentAttrs(comp);
+              return Boolean(attrs['data-od-canvas-tool']) && attrs['data-od-position-mode'] === 'absolute';
+            };
+
+            const insertPlacedCanvasTool = (
+              tool: GrapesjsPlaceableCanvasTool,
+              point: GrapesjsCanvasPoint,
+              options: GrapesjsCanvasToolComponentOptions & { parent?: Component | null } = {},
+            ): Component | null => {
+              try {
+                const node = appendGrapesjsCanvasToolComponent(editor, tool, point, options);
+                if (!node) return null;
+                editor.select(node);
+                try { editor.runCommand(`${odResizablePluginKey}:refresh`); } catch { /* ignore */ }
+                refreshSelectionSnapshotRef.current?.();
+                scheduleEmitRef.current?.();
+                return node;
+              } catch {
+                return null;
+              }
+            };
+
+            const canvasPointFromDocPointer = (ev: PointerEvent): GrapesjsCanvasPoint => {
+              const win = doc.defaultView;
+              return {
+                x: ev.clientX + (win?.scrollX ?? 0),
+                y: ev.clientY + (win?.scrollY ?? 0),
+              };
+            };
+
+            const canvasPointFromHostPointer = (ev: PointerEvent): GrapesjsCanvasPoint | null => {
+              try {
+                const frame = editor.Canvas.getFrameEl?.();
+                const rect = frame?.getBoundingClientRect();
+                if (!rect) return null;
+                const zoom = canvasZoomDecimal();
+                const x = (ev.clientX - rect.left) / zoom;
+                const y = (ev.clientY - rect.top) / zoom;
+                if (x < 0 || y < 0 || x > rect.width / zoom || y > rect.height / zoom) return null;
+                const win = doc.defaultView;
+                return {
+                  x: x + (win?.scrollX ?? 0),
+                  y: y + (win?.scrollY ?? 0),
+                };
+              } catch {
+                return null;
+              }
+            };
+
+            type PointerSource = 'doc' | 'host';
+            type PlacementInteraction = {
+              tool: GrapesjsPlaceableCanvasTool;
+              component: Component;
+              start: GrapesjsCanvasPoint;
+              source: PointerSource;
+              mode: GrapesjsCanvasPlacementMode;
+              moved: boolean;
+              pendingStyle: Record<string, string> | null;
+              undoWasTracking: boolean;
+            };
+            let placementInteraction: PlacementInteraction | null = null;
+
+            type PositionedToolDrag = {
+              component: Component;
+              source: PointerSource;
+              start: GrapesjsCanvasPoint;
+              startLeft: number;
+              startTop: number;
+              moved: boolean;
+              pendingStyle: Record<string, string> | null;
+            };
+            let positionedToolDrag: PositionedToolDrag | null = null;
+
+            const pointForSource = (ev: PointerEvent, source: PointerSource): GrapesjsCanvasPoint | null => (
+              source === 'host' ? canvasPointFromHostPointer(ev) : canvasPointFromDocPointer(ev)
+            );
+
+            const hostPointHitsCanvasChrome = (ev: PointerEvent): boolean => {
+              try {
+                const canvasRoot = editor.Canvas.getElement?.() as HTMLElement | null | undefined;
+                const hostDoc = canvasRoot?.ownerDocument;
+                if (!hostDoc?.elementsFromPoint) return false;
+                return hostDoc.elementsFromPoint(ev.clientX, ev.clientY).some((el) => (
+                  Boolean(canvasRoot?.contains(el)) && isGrapesjsCanvasChromeTarget(el)
+                ));
+              } catch {
+                return false;
+              }
+            };
+
+            const isCanvasChromePointerTarget = (ev: PointerEvent, source: PointerSource): boolean => (
+              isGrapesjsCanvasChromeTarget(ev.target) ||
+              (source === 'host' && hostPointHitsCanvasChrome(ev))
+            );
+
+            const activatePlacedTextEditing = (component: Component) => {
+              let attempts = 0;
+              const activateAndSelect = () => {
+                const el = getElementFromComponent(component) as HTMLElement | null;
+                const win = el?.ownerDocument.defaultView;
+                if (!el || !win) return;
+                try {
+                  const view = textViewFromComponent(component);
+                  void view?.onActive?.({ stopPropagation() {}, stopImmediatePropagation() {} });
+                } catch { /* ignore */ }
+                if (!el.isContentEditable && attempts < 6) {
+                  attempts += 1;
+                  win.requestAnimationFrame(activateAndSelect);
+                  return;
+                }
+                try { el.focus(); } catch { /* ignore */ }
+                try {
+                  const range = el.ownerDocument.createRange();
+                  range.selectNodeContents(el);
+                  const selection = win.getSelection?.();
+                  selection?.removeAllRanges();
+                  selection?.addRange(range);
+                } catch { /* ignore */ }
+              };
+              requestAnimationFrame(activateAndSelect);
+            };
+
+            const finishPlacedCanvasTool = (inserted: Component | null) => {
+              if (!inserted) return;
+              const isTextTool = componentAttrs(inserted)['data-od-canvas-tool'] === 'text';
+              try {
+                editor.select(inserted, isTextTool ? { activate: true } : undefined);
+              } catch {
+                try { editor.select(inserted); } catch { /* ignore */ }
+              }
+              if (isTextTool) {
+                activatePlacedTextEditing(inserted);
+              }
+              activeCanvasToolRef.current = 'cursor';
+              onCanvasToolChangeRef.current?.('cursor');
+              try {
+                const canvasEl = editor.Canvas.getElement?.() as HTMLElement | null | undefined;
+                if (canvasEl) canvasEl.style.cursor = '';
+                doc.body.style.cursor = '';
+              } catch { /* ignore */ }
+              requestVisibleToolsRefresh();
+            };
+
+            const updatePlacementInteraction = (ev: PointerEvent) => {
+              const state = placementInteraction;
+              if (!state) return;
+              const point = pointForSource(ev, state.source);
+              if (!point) return;
+              const distance = Math.hypot(point.x - state.start.x, point.y - state.start.y);
+              if (!state.moved && distance < 3) return;
+              state.moved = true;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              state.pendingStyle = getGrapesjsCanvasToolDragStyle(
+                state.tool,
+                state.start,
+                point,
+                state.mode,
+                { lockAspect: ev.shiftKey },
+              );
+              previewComponentStyle(state.component, state.pendingStyle);
+              requestVisibleToolsRefresh();
+            };
+
+            const finishPlacementInteraction = (ev: PointerEvent) => {
+              const state = placementInteraction;
+              if (!state) return;
+              updatePlacementInteraction(ev);
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              const component = state.component;
+              placementInteraction = null;
+              if (state.pendingStyle) commitComponentStyle(component, state.pendingStyle);
+              restoreUndoTrackingAfterDrag(state.undoWasTracking);
+              refreshSelectionSnapshotRef.current?.();
+              scheduleEmitRef.current?.();
+              finishPlacedCanvasTool(component);
+            };
+
+            const cancelPlacementInteraction = () => {
+              const state = placementInteraction;
+              if (!state) return;
+              placementInteraction = null;
+              if (state.pendingStyle) commitComponentStyle(state.component, state.pendingStyle);
+              restoreUndoTrackingAfterDrag(state.undoWasTracking);
+              refreshSelectionSnapshotRef.current?.();
+              scheduleEmitRef.current?.();
+            };
+
+            const startPlacementInteraction = (
+              ev: PointerEvent,
+              point: GrapesjsCanvasPoint,
+              source: PointerSource,
+              targetComp: Component | null,
+            ) => {
+              const tool = activeCanvasToolRef.current;
+              if (!isGrapesjsPlaceableCanvasTool(tool)) return;
+              const flexParent = findFlexPlacementParent(targetComp);
+              const mode: GrapesjsCanvasPlacementMode = flexParent ? 'flow' : 'absolute';
+              const inserted = insertPlacedCanvasTool(tool, point, { mode, parent: flexParent });
+              if (!inserted) return;
+              const undoWasTracking = stopUndoTrackingForDrag();
+              placementInteraction = {
+                tool,
+                component: inserted,
+                start: point,
+                source,
+                mode,
+                moved: false,
+                pendingStyle: null,
+                undoWasTracking,
+              };
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+            };
+
+            const onPlacementPointerDown = (ev: PointerEvent) => {
+              if (readOnlyRef.current || cropModeRef.current) return;
+              if (ev.button !== 0) return;
+              if (isTextInputTarget(ev.target)) return;
+              if (isCanvasChromePointerTarget(ev, 'doc')) return;
+              stopGrapesjsTextEditingForPointerTarget(editor, ev.target);
+              if (!isGrapesjsPlaceableCanvasTool(activeCanvasToolRef.current)) return;
+              startPlacementInteraction(
+                ev,
+                canvasPointFromDocPointer(ev),
+                'doc',
+                getComponentFromElement(ev.target as Element | null),
+              );
+            };
+
+            const onPlacementHostPointerDown = (ev: PointerEvent) => {
+              if (readOnlyRef.current || cropModeRef.current) return;
+              if (ev.button !== 0) return;
+              if (isTextInputTarget(ev.target)) return;
+              if (isCanvasChromePointerTarget(ev, 'host')) return;
+              stopGrapesjsTextEditingForPointerTarget(editor, ev.target);
+              if (!isGrapesjsPlaceableCanvasTool(activeCanvasToolRef.current)) return;
+              const point = canvasPointFromHostPointer(ev);
+              if (!point) return;
+              startPlacementInteraction(ev, point, 'host', componentFromHostPoint(ev.clientX, ev.clientY));
+            };
+
+            const triggerCanvasCommentPin = (ev: PointerEvent, source: PointerSource): boolean => {
+              const onPin = onCanvasCommentPinRef.current;
+              if (!onPin || readOnlyRef.current || cropModeRef.current) return false;
+              if (ev.button !== 0) return false;
+              if (isTextInputTarget(ev.target)) return false;
+              if (isCanvasChromePointerTarget(ev, source)) return false;
+              stopGrapesjsTextEditingForPointerTarget(editor, ev.target);
+              if (isGrapesjsPlaceableCanvasTool(activeCanvasToolRef.current)) return false;
+              const point = pointForSource(ev, source);
+              if (!point) return false;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              onPin(point);
+              return true;
+            };
 
             // Resolve the computed `display` of a GrapesJS component's rendered
             // element. Returns '' when the element isn't materialised yet.
@@ -3069,6 +4803,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 node = node.parent?.();
               }
               return null;
+            };
+            const findFlexPlacementParent = (comp: Component | null): Component | null => {
+              if (comp && comp.parent?.() && isFlexDisplay(componentDisplay(comp))) return comp;
+              return findNearestFlexAncestor(comp);
             };
             const selectedComponents = (): Component[] => {
               try { return (editor.getSelectedAll?.() ?? []) as Component[]; } catch { return []; }
@@ -3134,7 +4872,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               for (const root of rootComponents()) visit(root);
               return best;
             };
-            const canvasZoomDecimal = (): number => {
+            function canvasZoomDecimal(): number {
               try {
                 const z = (editor.Canvas as unknown as { getZoomDecimal?: () => number }).getZoomDecimal?.();
                 if (typeof z === 'number' && z > 0) return z;
@@ -3143,7 +4881,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               } catch {
                 return 1;
               }
-            };
+            }
             const componentFromHostPoint = (clientX: number, clientY: number): Component | null => {
               try {
                 const frame = editor.Canvas.getFrameEl?.();
@@ -3177,12 +4915,91 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               });
               editor.selectAdd(comp);
             };
+
+            const startPositionedToolDrag = (ev: PointerEvent, source: PointerSource): boolean => {
+              if (readOnlyRef.current || cropModeRef.current || placementInteraction) return false;
+              if (ev.button !== 0) return false;
+              if (isGrapesjsPlaceableCanvasTool(activeCanvasToolRef.current)) return false;
+              if (ev.shiftKey || ev.metaKey || ev.ctrlKey) return false;
+              if (isTextInputTarget(ev.target)) return false;
+              if (isCanvasChromePointerTarget(ev, source)) return false;
+              stopGrapesjsTextEditingForPointerTarget(editor, ev.target);
+              const targetEl = ev.target as Element | null;
+              const compAtPoint = source === 'host'
+                ? componentFromHostPoint(ev.clientX, ev.clientY)
+                : getComponentFromElement(targetEl);
+              const comp = findCanvasToolComponent(compAtPoint);
+              if (!isAbsoluteCanvasToolComponent(comp)) return false;
+              const point = pointForSource(ev, source);
+              if (!point) return false;
+              const style = comp.getStyle?.() ?? {};
+              const el = getElementFromComponent(comp) as HTMLElement | null;
+              const readLeft = style.left ?? el?.style.getPropertyValue('left');
+              const readTop = style.top ?? el?.style.getPropertyValue('top');
+              positionedToolDrag = {
+                component: comp,
+                source,
+                start: point,
+                startLeft: parseCssPx(readLeft),
+                startTop: parseCssPx(readTop),
+                moved: false,
+                pendingStyle: null,
+              };
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              try { editor.select(comp); } catch { /* ignore */ }
+              return true;
+            };
+
+            const updatePositionedToolDrag = (ev: PointerEvent) => {
+              const state = positionedToolDrag;
+              if (!state) return;
+              const point = pointForSource(ev, state.source);
+              if (!point) return;
+              const distance = Math.hypot(point.x - state.start.x, point.y - state.start.y);
+              if (!state.moved && distance < 3) return;
+              state.moved = true;
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              state.pendingStyle = {
+                left: `${Math.max(0, Math.round(state.startLeft + point.x - state.start.x))}px`,
+                top: `${Math.max(0, Math.round(state.startTop + point.y - state.start.y))}px`,
+              };
+              previewComponentStyle(state.component, state.pendingStyle);
+              requestVisibleToolsRefresh();
+            };
+
+            const finishPositionedToolDrag = (ev: PointerEvent) => {
+              if (!positionedToolDrag) return;
+              updatePositionedToolDrag(ev);
+              const component = positionedToolDrag.component;
+              const pendingStyle = positionedToolDrag.pendingStyle;
+              positionedToolDrag = null;
+              if (pendingStyle) commitComponentStyle(component, pendingStyle);
+              try { editor.select(component); } catch { /* ignore */ }
+              refreshSelectionSnapshotRef.current?.();
+              scheduleEmitRef.current?.();
+              requestVisibleToolsRefresh();
+            };
+
+            const cancelPositionedToolDrag = () => {
+              const state = positionedToolDrag;
+              if (!state) return;
+              positionedToolDrag = null;
+              if (state.pendingStyle) {
+                commitComponentStyle(state.component, state.pendingStyle);
+                refreshSelectionSnapshotRef.current?.();
+                scheduleEmitRef.current?.();
+                requestVisibleToolsRefresh();
+              }
+            };
             let suppressClickAfterMarquee = false;
 
             const onClick = (ev: MouseEvent) => {
               if (readOnlyRef.current) return;
               const isDeepPick = ev.shiftKey || ev.metaKey || ev.ctrlKey;
               if (!isDeepPick && isTextInputTarget(ev.target)) return;
+              stopGrapesjsTextEditingForPointerTarget(editor, ev.target);
               if (suppressClickAfterMarquee) {
                 ev.preventDefault();
                 ev.stopImmediatePropagation();
@@ -3233,6 +5050,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (readOnlyRef.current || cropModeRef.current) return;
               if (!(ev.metaKey || ev.ctrlKey)) return;
               if (isTextInputTarget(ev.target)) return;
+              stopGrapesjsTextEditingForPointerTarget(editor, ev.target);
               const canvasRoot = (() => {
                 try { return editor.Canvas.getElement?.() ?? containerRef.current; } catch { return containerRef.current; }
               })();
@@ -3577,6 +5395,27 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               marqueeState = null;
             };
 
+            const hostCanvasEl = (() => {
+              try { return editor.Canvas.getElement?.() as HTMLElement | null | undefined; } catch { return null; }
+            })();
+            const onDocPositionedPointerDown = (ev: PointerEvent) => {
+              startPositionedToolDrag(ev, 'doc');
+            };
+            const onHostPositionedPointerDown = (ev: PointerEvent) => {
+              startPositionedToolDrag(ev, 'host');
+            };
+            const onDocCommentPointerDown = (ev: PointerEvent) => {
+              triggerCanvasCommentPin(ev, 'doc');
+            };
+            const onHostCommentPointerDown = (ev: PointerEvent) => {
+              triggerCanvasCommentPin(ev, 'host');
+            };
+            doc.addEventListener('pointerdown', onDocCommentPointerDown, true);
+            hostCanvasEl?.addEventListener('pointerdown', onHostCommentPointerDown, true);
+            doc.addEventListener('pointerdown', onPlacementPointerDown, true);
+            hostCanvasEl?.addEventListener('pointerdown', onPlacementHostPointerDown, true);
+            doc.addEventListener('pointerdown', onDocPositionedPointerDown, true);
+            hostCanvasEl?.addEventListener('pointerdown', onHostPositionedPointerDown, true);
             doc.addEventListener('click', onClick, true);
             hostDocument.addEventListener('click', onHostChromeClick, true);
             doc.addEventListener('dblclick', onDblClick, true);
@@ -3584,11 +5423,29 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             doc.addEventListener('mouseover', onMouseOver, true);
             doc.addEventListener('mouseout', onMouseOut, true);
             doc.addEventListener('pointerdown', startMarquee, true);
+            doc.addEventListener('pointermove', updatePlacementInteraction, true);
+            hostDocument.addEventListener('pointermove', updatePlacementInteraction, true);
+            doc.addEventListener('pointerup', finishPlacementInteraction, true);
+            hostDocument.addEventListener('pointerup', finishPlacementInteraction, true);
+            doc.addEventListener('pointercancel', cancelPlacementInteraction, true);
+            hostDocument.addEventListener('pointercancel', cancelPlacementInteraction, true);
+            doc.addEventListener('pointermove', updatePositionedToolDrag, true);
+            hostDocument.addEventListener('pointermove', updatePositionedToolDrag, true);
+            doc.addEventListener('pointerup', finishPositionedToolDrag, true);
+            hostDocument.addEventListener('pointerup', finishPositionedToolDrag, true);
+            doc.addEventListener('pointercancel', cancelPositionedToolDrag, true);
+            hostDocument.addEventListener('pointercancel', cancelPositionedToolDrag, true);
             doc.addEventListener('pointermove', moveMarquee, true);
             doc.addEventListener('pointerup', finishMarquee, true);
             doc.addEventListener('pointercancel', cancelMarquee, true);
             detachNestedSelect = () => {
               try {
+                doc.removeEventListener('pointerdown', onDocCommentPointerDown, true);
+                hostCanvasEl?.removeEventListener('pointerdown', onHostCommentPointerDown, true);
+                doc.removeEventListener('pointerdown', onPlacementPointerDown, true);
+                hostCanvasEl?.removeEventListener('pointerdown', onPlacementHostPointerDown, true);
+                doc.removeEventListener('pointerdown', onDocPositionedPointerDown, true);
+                hostCanvasEl?.removeEventListener('pointerdown', onHostPositionedPointerDown, true);
                 doc.removeEventListener('click', onClick, true);
                 hostDocument.removeEventListener('click', onHostChromeClick, true);
                 doc.removeEventListener('dblclick', onDblClick, true);
@@ -3596,9 +5453,23 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 doc.removeEventListener('mouseover', onMouseOver, true);
                 doc.removeEventListener('mouseout', onMouseOut, true);
                 doc.removeEventListener('pointerdown', startMarquee, true);
+                doc.removeEventListener('pointermove', updatePlacementInteraction, true);
+                hostDocument.removeEventListener('pointermove', updatePlacementInteraction, true);
+                doc.removeEventListener('pointerup', finishPlacementInteraction, true);
+                hostDocument.removeEventListener('pointerup', finishPlacementInteraction, true);
+                doc.removeEventListener('pointercancel', cancelPlacementInteraction, true);
+                hostDocument.removeEventListener('pointercancel', cancelPlacementInteraction, true);
+                doc.removeEventListener('pointermove', updatePositionedToolDrag, true);
+                hostDocument.removeEventListener('pointermove', updatePositionedToolDrag, true);
+                doc.removeEventListener('pointerup', finishPositionedToolDrag, true);
+                hostDocument.removeEventListener('pointerup', finishPositionedToolDrag, true);
+                doc.removeEventListener('pointercancel', cancelPositionedToolDrag, true);
+                hostDocument.removeEventListener('pointercancel', cancelPositionedToolDrag, true);
                 doc.removeEventListener('pointermove', moveMarquee, true);
                 doc.removeEventListener('pointerup', finishMarquee, true);
                 doc.removeEventListener('pointercancel', cancelMarquee, true);
+                cancelPlacementInteraction();
+                cancelPositionedToolDrag();
                 cancelMarquee();
                 clearChildHover();
                 delete (doc as unknown as { __odNestedSelect?: true }).__odNestedSelect;
@@ -3610,16 +5481,21 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // insert it as an <img> — or, if an <img> is selected, replace
             // its src. We attach to BOTH the canvas doc and the host window so
             // the paste works whether focus is inside the iframe or outside.
+            let lastInternalPasteAt = 0;
+            const markInternalPaste = () => {
+              lastInternalPasteAt = Date.now();
+            };
+            editor.on('keymap:emit:core:paste', markInternalPaste);
+            editor.on('component:paste', markInternalPaste);
             const handleImagePaste = async (ev: ClipboardEvent) => {
               if (readOnlyRef.current) return;
-              const items = ev.clipboardData?.items;
-              if (!items || items.length === 0) return;
-              let imageItem: DataTransferItem | null = null;
-              for (const item of Array.from(items)) {
-                if (item.kind === 'file' && item.type.startsWith('image/')) { imageItem = item; break; }
+              if (!shouldHandleGrapesjsImagePaste({
+                clipboardData: ev.clipboardData,
+                lastInternalPasteAt,
+              })) {
+                return;
               }
-              if (!imageItem) return;
-              const file = imageItem.getAsFile();
+              const file = firstGrapesjsClipboardImageFile(ev.clipboardData);
               if (!file) return;
               ev.preventDefault();
               ev.stopImmediatePropagation();
@@ -3681,6 +5557,8 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             detachNestedSelect = () => {
               try { doc.removeEventListener('paste', onDocPaste, true); } catch { /* ignore */ }
               try { hostDocument.removeEventListener('paste', onHostPaste, true); } catch { /* ignore */ }
+              try { editor.off('keymap:emit:core:paste', markInternalPaste); } catch { /* ignore */ }
+              try { editor.off('component:paste', markInternalPaste); } catch { /* ignore */ }
               prevDetach?.();
             };
           };
@@ -3771,10 +5649,23 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             detachNestedSelect?.();
             try { editor.off('canvas:tools:update', onToolsUpdate); } catch { /* ignore */ }
             try { editor.off('component:deselected', hideDimensionBadge); } catch { /* ignore */ }
+            try { editor.off('component:deselected', hideRadiusHandles); } catch { /* ignore */ }
+            try { editor.off('canvas:zoom', onLiveToolsGeometryChange); } catch { /* ignore */ }
+            try { editor.off('canvas:coords', onLiveToolsGeometryChange); } catch { /* ignore */ }
+            try { editor.off('component:drag', onLiveToolsGeometryChange); } catch { /* ignore */ }
+            try { editor.off('component:resize', onLiveToolsGeometryChange); } catch { /* ignore */ }
+            try { editor.off('component:resize:move', onLiveToolsGeometryChange); } catch { /* ignore */ }
+            try { editor.off('component:resize:update', onResizeCommit); } catch { /* ignore */ }
+            try { detachCanvasViewportSync(); } catch { /* ignore */ }
+            try { detachToolsLayoutResize?.(); } catch { /* ignore */ }
+            if (toolsRefreshRaf) window.cancelAnimationFrame(toolsRefreshRaf);
+            if (selectionSnapshotRefreshRaf) window.cancelAnimationFrame(selectionSnapshotRefreshRaf);
             try { selectionStroke?.remove(); } catch { /* ignore */ }
             selectionStroke = null;
             try { dimensionBadge?.remove(); } catch { /* ignore */ }
             dimensionBadge = null;
+            detachRadiusHandles?.();
+            detachRadiusHandles = null;
             detachSpacingHandles?.();
             detachSpacingHandles = null;
           };
@@ -3813,17 +5704,23 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const styles = readElementStyles(el);
             let tagName = 'div';
             try { tagName = (comp.get('tagName') as string) ?? 'div'; } catch { /* ignore */ }
+            let componentType = '';
+            try { componentType = String(comp.get('type') ?? ''); } catch { /* ignore */ }
             let selector = tagName;
+            let canvasTool = '';
             try {
               const attrs = comp.getAttributes() as Record<string, unknown>;
               const id = typeof attrs['id'] === 'string' ? attrs['id'] : '';
               const cls = typeof attrs['class'] === 'string' ? attrs['class'] : '';
+              canvasTool = typeof attrs['data-od-canvas-tool'] === 'string' ? attrs['data-od-canvas-tool'] : '';
               selector = `${tagName}${id ? `#${id}` : ''}${cls ? `.${cls.split(/\s+/).join('.')}` : ''}`;
             } catch { /* ignore */ }
             return {
               hasSelection: true,
               tagName,
               selector,
+              componentType,
+              canvasTool,
               styles,
               selectedColors: selectionColorCollectorRef.current.collect(editor),
             };
@@ -3840,6 +5737,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               } catch { /* ignore */ }
             });
           };
+          readSelectionSnapshotRef.current = buildSelectionSnapshot;
 
           // PR2: selection / hover / style / tweaks event forwarding. These
           // replace the iframe postMessage flows (od:comment-target(s),
@@ -4329,6 +6227,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             refreshSelectionSnapshotRef.current?.();
           } catch { /* ignore */ }
         },
+        getSelectionSnapshot: () => (
+          readSelectionSnapshotRef.current?.() ??
+          { hasSelection: false, tagName: '', selector: '', styles: {}, selectedColors: [] }
+        ),
         setCropMode: (on: boolean) => {
           cropModeRef.current = on;
           syncCropOverlayRef.current?.();
@@ -4342,6 +6244,28 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           }
           return count;
         },
+        arrangeSelectionAsFlex: (axis?: 'row' | 'column') => {
+          const editor = editorRef.current;
+          if (!editor) return false;
+          const ok = arrangeGrapesjsSelectionAsFlex(editor, selectionOrderRef.current, axis);
+          if (ok) {
+            selectionColorCollectorRef.current.invalidate();
+            refreshSelectionSnapshotRef.current?.();
+            scheduleEmitRef.current?.();
+          }
+          return ok;
+        },
+        dissolveSelectedFlex: () => {
+          const editor = editorRef.current;
+          if (!editor) return false;
+          const ok = dissolveGrapesjsFlexSelection(editor);
+          if (ok) {
+            selectionColorCollectorRef.current.invalidate();
+            refreshSelectionSnapshotRef.current?.();
+            scheduleEmitRef.current?.();
+          }
+          return ok;
+        },
         getEditor: () => editorRef.current ?? null,
       }),
       [html, layersPanelRef, stylePanelRef],
@@ -4353,6 +6277,69 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       if (selectionChrome === 'element-selection') parts.push('od-gjs-element-selection-mode');
       return parts.filter(Boolean).join(' ');
     }, [className, selectionChrome]);
+
+    const commitArtboardLabel = useCallback(() => {
+      const next = artboardLabelDraft.trim() || artboardName;
+      setArtboardLabelEditing(false);
+      setArtboardLabelDraft(next);
+      onArtboardNameChangeRef.current?.(next);
+    }, [artboardLabelDraft, artboardName]);
+
+    const beginArtboardLabelEdit = useCallback(() => {
+      setArtboardLabelDraft(artboardName);
+      setArtboardLabelEditing(true);
+    }, [artboardName]);
+
+    const onArtboardLabelKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        commitArtboardLabel();
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setArtboardLabelDraft(artboardName);
+        setArtboardLabelEditing(false);
+      }
+    }, [artboardName, commitArtboardLabel]);
+
+    const onArtboardLabelPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+      if (artboardLabelEditing || event.button !== 0) return;
+      const editor = editorRef.current;
+      if (!editor) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let originX = 0;
+      let originY = 0;
+      try {
+        const coords = editor.Canvas.getCoords?.() ?? { x: 0, y: 0 };
+        originX = typeof coords.x === 'number' ? coords.x : 0;
+        originY = typeof coords.y === 'number' ? coords.y : 0;
+      } catch {
+        originX = 0;
+        originY = 0;
+      }
+      const doc = event.currentTarget.ownerDocument;
+      const win = doc.defaultView ?? window;
+      const move = (moveEvent: PointerEvent) => {
+        moveEvent.preventDefault();
+        try {
+          editor.Canvas.setCoords(originX + moveEvent.clientX - startX, originY + moveEvent.clientY - startY);
+          syncCoordsAttrRef.current?.();
+          syncArtboardLabelPositionRef.current?.();
+        } catch { /* ignore */ }
+      };
+      const up = (_upEvent: PointerEvent) => {
+        win.removeEventListener('pointermove', move, true);
+        win.removeEventListener('pointerup', up, true);
+        syncCoordsAttrRef.current?.();
+        syncArtboardLabelPositionRef.current?.();
+      };
+      win.addEventListener('pointermove', move, true);
+      win.addEventListener('pointerup', up, true);
+    }, [artboardLabelEditing]);
 
     return (
       <div className={rootClass} ref={rootRef}>
@@ -4373,6 +6360,28 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           // Inline-block so GrapesJS's internal sizing has a baseline.
           style={{ display: loading ? 'none' : 'block' }}
         />
+        <div
+          ref={artboardLabelRef}
+          className={styles.artboardLabel}
+          style={{ display: loading || loadError ? 'none' : undefined }}
+          onPointerDown={onArtboardLabelPointerDown}
+          onDoubleClick={beginArtboardLabelEdit}
+          title={artboardName}
+        >
+          {artboardLabelEditing ? (
+            <input
+              className={styles.artboardLabelInput}
+              value={artboardLabelDraft}
+              autoFocus
+              onPointerDown={(event) => event.stopPropagation()}
+              onChange={(event) => setArtboardLabelDraft(event.currentTarget.value)}
+              onBlur={commitArtboardLabel}
+              onKeyDown={onArtboardLabelKeyDown}
+            />
+          ) : (
+            <span className={styles.artboardLabelText}>{artboardName}</span>
+          )}
+        </div>
         {ctxMenu ? (
           <CanvasContextMenu
             editor={editorRef.current}

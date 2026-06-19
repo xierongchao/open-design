@@ -753,6 +753,7 @@ export function setPreviewViewportCached(key: string, viewport: PreviewViewportI
 }
 
 const OD_CANVAS_META_REGEX = /<meta\s+name=["']od-canvas["']\s+content=["']width=(\d+),height=(\d+)(?:,viewport=([a-z]+))?["']\s*\/?>/;
+const OD_ARTBOARD_META_REGEX = /<meta\s+name=["']od-artboard["']\s+content=["']name=([^"']*)["']\s*\/?>/;
 
 export function readCanvasSizeFromSource(source: string): { width: number; height: number } | null {
   const match = source.match(OD_CANVAS_META_REGEX);
@@ -783,6 +784,33 @@ export function writeCanvasSizeToSource(
   const metaTag = `<meta name="od-canvas" content="width=${size.width},height=${size.height}${vp}">`;
   if (OD_CANVAS_META_REGEX.test(source)) {
     return source.replace(OD_CANVAS_META_REGEX, metaTag);
+  }
+  if (source.includes('</head>')) {
+    return source.replace('</head>', `  ${metaTag}\n</head>`);
+  }
+  if (source.includes('<head>')) {
+    return source.replace('<head>', `<head>\n  ${metaTag}`);
+  }
+  return `<head>${metaTag}</head>` + source;
+}
+
+export function readArtboardNameFromSource(source: string): string | null {
+  const match = source.match(OD_ARTBOARD_META_REGEX);
+  if (!match || !match[1]) return null;
+  try {
+    const decoded = decodeURIComponent(match[1]).trim();
+    return decoded || null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeArtboardNameToSource(source: string, name: string): string {
+  const cleanName = name.trim();
+  if (!cleanName) return source;
+  const metaTag = `<meta name="od-artboard" content="name=${encodeURIComponent(cleanName)}">`;
+  if (OD_ARTBOARD_META_REGEX.test(source)) {
+    return source.replace(OD_ARTBOARD_META_REGEX, metaTag);
   }
   if (source.includes('</head>')) {
     return source.replace('</head>', `  ${metaTag}\n</head>`);

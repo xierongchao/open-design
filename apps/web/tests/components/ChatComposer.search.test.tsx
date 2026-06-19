@@ -255,7 +255,7 @@ describe('ChatComposer /search command', () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
     expect(mockedUploadProjectFiles).toHaveBeenCalledWith('project-1', [
       expect.objectContaining({ name: 'drawing.png', type: 'image/png' }),
-    ]);
+    ], 'annotations');
     expect(onSend).toHaveBeenCalledWith(
       'please update this spot',
       [{ path: 'uploads/drawing.png', name: 'drawing.png', kind: 'image', order: 0 }],
@@ -348,6 +348,9 @@ describe('ChatComposer /search command', () => {
     }));
 
     await waitFor(() => expect(mockedUploadProjectFiles).toHaveBeenCalledTimes(1));
+    expect(mockedUploadProjectFiles).toHaveBeenCalledWith('project-1', [
+      expect.objectContaining({ name: 'drawing.png', type: 'image/png' }),
+    ], 'annotations');
     await waitFor(() => expect(composerText()).toContain('review this before sending'));
     expect(screen.getByText('drawing.png')).toBeTruthy();
     expect(screen.queryByText('Visual mark')).toBeNull();

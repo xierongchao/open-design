@@ -10,7 +10,7 @@ import {
   reconcileManualEditSourceRoundTrip,
 } from './html-editor-source-roundtrip';
 import { createHtmlFileSaveController } from './html-file-save-controller';
-import type { GrapesjsEditorHandle, SelectionSnapshot } from './grapesjs';
+import type { GrapesjsCanvasTool, GrapesjsEditorHandle, SelectionSnapshot } from './grapesjs';
 import { StylePanel } from './grapesjs';
 import {
   applyPreviewStyle,
@@ -85,6 +85,7 @@ import {
   exportReactComponentAsHtml,
   exportReactComponentAsZip,
   captureHostIframeSnapshot,
+  captureHostRegionSnapshot,
   imageDataUrlToBlob,
   openSandboxedPreviewInNewTab,
   prepareImageExportTarget,
@@ -231,8 +232,10 @@ import {
   resolveShareUrl,
   setMarkdownCodeBlockCopiedState,
   setPreviewViewportCached,
+  readArtboardNameFromSource,
   readCanvasSizeFromSource,
   readViewportPresetFromSource,
+  writeArtboardNameToSource,
   writeCanvasSizeToSource,
   setSlideStateCached,
   shareUrlForDeployment,
@@ -344,6 +347,23 @@ function waitForAnimationFrame(): Promise<void> {
     }
     window.setTimeout(resolve, 0);
   });
+}
+
+function createBlankPreviewSnapshot(rect: { width: number; height: number } | null): { dataUrl: string; w: number; h: number } | null {
+  const width = Math.max(1, Math.round(rect?.width ?? 1));
+  const height = Math.max(1, Math.round(rect?.height ?? 1));
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    return { dataUrl: canvas.toDataURL('image/png'), w: width, h: height };
+  } catch {
+    return null;
+  }
 }
 
 function temporarilyExposeIframeForSnapshot(iframe: HTMLIFrameElement): () => void {
@@ -1916,7 +1936,7 @@ function commentTargetIntersectsPreview(
 }
 
 function commentDisplayLabel(comment: PreviewComment, t: TranslateFn): string {
-  if (comment.elementId.startsWith('pin-')) return t('chat.comments.pin');
+  if (comment.elementId.startsWith('pin-')) return t('chat.comments.comment');
   const label = String(comment.label || '').trim().toLowerCase();
   const htmlHint = String(comment.htmlHint || '').trim().toLowerCase();
   const elementId = String(comment.elementId || '').trim().toLowerCase();
@@ -3212,19 +3232,17 @@ function CommentPreviewOverlays({
               title={`${markerNumber}. ${label}: ${comment.note}`}
               aria-label={`Open comment for ${label}`}
             >
-              {markerNumber}
+              <span aria-hidden="true" className="comment-saved-pin-dot" />
             </button>
+            <div className="comment-saved-bubble" role="tooltip">
+              <span className="comment-saved-bubble-label">{label}</span>
+              <span className="comment-saved-bubble-note">{comment.note}</span>
+            </div>
           </div>
         );
       }),
     [visibleComments, scale, overlayOffset],
   );
-  const activeSavedIndex = activeExistingCommentId
-    ? comments.findIndex((comment) => comment.id === activeExistingCommentId)
-    : -1;
-  const activePinNumber = activeSavedIndex >= 0
-    ? activeSavedIndex + 1
-    : comments.length + 1;
   const targetOverlay = activeTarget ?? hoveredTarget;
   return (
     <div className="comment-overlay-layer" aria-hidden={false}>
@@ -3246,7 +3264,7 @@ function CommentPreviewOverlays({
           data-testid="comment-active-pin"
           aria-hidden="true"
         >
-          {activePinNumber}
+          <span className="comment-saved-pin-dot" />
         </div>
       ) : null}
       {boardTool === 'pod' && strokePoints.length > 1 ? (
@@ -3368,18 +3386,23 @@ export function ElementSelectionAddButton({
   target,
   busy,
   disabled = false,
+  placement = 'floating',
   onAdd,
   t,
 }: {
   target: PreviewCommentSnapshot;
   busy: boolean;
   disabled?: boolean;
+  placement?: 'floating' | 'toolbar';
   onAdd: () => void | Promise<void>;
   t: TranslateFn;
 }) {
   const targetName = commentTargetDisplayName(target, t('chat.comments.targetArea'));
   return (
-    <div className="element-selection-action" data-testid="element-selection-action">
+    <div
+      className={`element-selection-action${placement === 'toolbar' ? ' element-selection-action-toolbar' : ''}`}
+      data-testid="element-selection-action"
+    >
       <span className="element-selection-target-chip" title={targetName}>
         <RemixIcon name="cursor-line" size={13} />
         <span>{targetName}</span>
@@ -3454,6 +3477,20 @@ function buildPodSnapshot(input: {
   );
   const refined = pruneContainerSelections(intersected);
   const selected = refined.length > 0 ? refined : intersected;
+  return buildPodSnapshotFromSnapshots({
+    filePath: input.filePath,
+    snapshots: selected,
+    idPrefix: 'pod',
+  });
+}
+
+function buildPodSnapshotFromSnapshots(input: {
+  filePath: string;
+  snapshots: PreviewCommentSnapshot[];
+  idPrefix?: string;
+}): PreviewCommentSnapshot | null {
+  const refined = pruneContainerSelections(input.snapshots);
+  const selected = refined.length > 0 ? refined : input.snapshots;
   if (selected.length === 0) return null;
   const bounds = selected.reduce(
     (acc, snapshot) => {
@@ -3497,10 +3534,10 @@ function buildPodSnapshot(input: {
     .join(', ');
   return {
     filePath: input.filePath,
-    elementId: `pod-${Date.now()}`,
+    elementId: `${input.idPrefix ?? 'pod'}-${Date.now()}`,
     selector: combinedSelector || 'body *',
-    label: summary || `Pod of ${intersected.length} items`,
-    text: intersected
+    label: summary || `Pod of ${selected.length} items`,
+    text: selected
       .slice(0, 4)
       .map((snapshot) => snapshot.text)
       .filter(Boolean)
@@ -4372,6 +4409,11 @@ function HtmlViewer({
   // StylePanel watches this counter and opens the fill panel's image tab to
   // replace the selected image's src.
   const [imageEditSignal, setImageEditSignal] = useState(0);
+  const [grapesjsCanvasTool, setGrapesjsCanvasTool] = useState<GrapesjsCanvasTool>('cursor');
+  const [grapesjsShapeMenuOpen, setGrapesjsShapeMenuOpen] = useState(false);
+  const [grapesjsOverlayVersion, setGrapesjsOverlayVersion] = useState(0);
+  const grapesjsOverlaySyncRafRef = useRef<number | null>(null);
+  const grapesjsBottomToolbarRef = useRef<HTMLDivElement | null>(null);
   const MAX_MANUAL_EDIT_HISTORY = 500;
   // for hint managing hint box state
   const [openHintBox, setOpenHintBox] = useState(true);
@@ -5167,7 +5209,26 @@ function HtmlViewer({
   useEffect(() => {
     if (useGrapesjs) return;
     setGrapesjsSelectionActive(false);
+    setGrapesjsCanvasTool('cursor');
+    setGrapesjsShapeMenuOpen(false);
   }, [useGrapesjs]);
+  const scheduleGrapesjsOverlaySync = useCallback(() => {
+    if (typeof window === 'undefined') {
+      setGrapesjsOverlayVersion((current) => (current + 1) % 1_000_000);
+      return;
+    }
+    if (grapesjsOverlaySyncRafRef.current !== null) return;
+    grapesjsOverlaySyncRafRef.current = window.requestAnimationFrame(() => {
+      grapesjsOverlaySyncRafRef.current = null;
+      setGrapesjsOverlayVersion((current) => (current + 1) % 1_000_000);
+    });
+  }, []);
+  useEffect(() => () => {
+    if (grapesjsOverlaySyncRafRef.current !== null) {
+      window.cancelAnimationFrame(grapesjsOverlaySyncRafRef.current);
+      grapesjsOverlaySyncRafRef.current = null;
+    }
+  }, []);
   // PR3: locate the edit portal host for GrapesJS. Same DOM lookup pattern
   // as the manualEdit branch, but active for the whole GrapesJS preview path
   // so the right-panel Edit tab is ready before the first element click.
@@ -5208,6 +5269,40 @@ function HtmlViewer({
     if (mode !== 'preview') return;
     onViewportPresetChange?.(previewViewport);
   }, [previewViewport, mode, onViewportPresetChange]);
+  const grapesjsFrameOverlayTransform = useCallback(
+    (editor: NonNullable<ReturnType<GrapesjsEditorHandle['getEditor']>> | null | undefined) => {
+      const frame = (() => {
+        try { return editor?.Canvas.getFrameEl?.() ?? null; } catch { return null; }
+      })();
+      const frameRect = frame?.getBoundingClientRect();
+      const bodyRect = previewBodyRef.current?.getBoundingClientRect();
+      if (!frameRect || !bodyRect) return { scale: 1, offsetX: 0, offsetY: 0 };
+      const rawZoom = (() => {
+        try { return editor?.Canvas.getZoom?.(); } catch { return null; }
+      })();
+      const scale = typeof rawZoom === 'number' && Number.isFinite(rawZoom) && rawZoom > 0
+        ? rawZoom / 100
+        : 1;
+      const doc = (() => {
+        try { return editor?.Canvas.getDocument?.() ?? null; } catch { return null; }
+      })();
+      const win = doc?.defaultView ?? null;
+      const scrollX = (typeof win?.scrollX === 'number' ? win.scrollX : undefined)
+        ?? doc?.documentElement?.scrollLeft
+        ?? doc?.body?.scrollLeft
+        ?? 0;
+      const scrollY = (typeof win?.scrollY === 'number' ? win.scrollY : undefined)
+        ?? doc?.documentElement?.scrollTop
+        ?? doc?.body?.scrollTop
+        ?? 0;
+      return {
+        scale,
+        offsetX: frameRect.left - bodyRect.left - scrollX * scale,
+        offsetY: frameRect.top - bodyRect.top - scrollY * scale,
+      };
+    },
+    [],
+  );
   // PR2: build a PreviewCommentSnapshot from a GrapesJS Component so the
   // comment overlay can render markers / hover cards without the iframe
   // postMessage bridge. Position is pixel-perfect in the canvas iframe
@@ -5244,6 +5339,41 @@ function HtmlViewer({
     },
     [],
   );
+  const handleGrapesjsCanvasCommentPin = useCallback((point: { x: number; y: number }) => {
+    const x = Math.max(0, Math.round(point.x));
+    const y = Math.max(0, Math.round(point.y));
+    const idSeed = Date.now().toString(36);
+    const snapshot: PreviewCommentSnapshot = {
+      filePath: file.name,
+      elementId: `pin-${idSeed}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+      selector: 'html',
+      label: t('chat.comments.comment'),
+      text: '',
+      position: {
+        x,
+        y,
+        width: 1,
+        height: 1,
+      },
+      hoverPoint: {
+        x,
+        y,
+      },
+      htmlHint: '',
+      selectionKind: 'element',
+    };
+    setCommentPanelOpen(true);
+    setCommentSidePanelCollapsed(false);
+    setBoardMode(true);
+    setCommentCreateMode(true);
+    setActiveCommentTarget(snapshot);
+    setHoveredCommentTarget(snapshot);
+    setActivePreviewCommentId(null);
+    setCommentDraft('');
+    setQueuedBoardNotes([]);
+    setActiveCommentExistingAttachments([]);
+    setLiveCommentTargets((current) => new Map(current).set(snapshot.elementId, snapshot));
+  }, [file.name, t]);
   const grapesjsEditorRef = useRef<GrapesjsEditorHandle | null>(null);
   const grapesjsSelectionStoreRef = useRef(createGrapesjsSelectionStore());
   // Debounce the expensive computed-style snapshot read that runs on every
@@ -5289,6 +5419,37 @@ function HtmlViewer({
       flushGrapesjsSourceState();
     }, GRAPESJS_SOURCE_STATE_SYNC_DELAY_MS);
   }
+  const grapesjsLiveSource = previewSource ?? source ?? '';
+  const grapesjsArtboardKey = `${projectId}\0${file.name}`;
+  const [grapesjsArtboardNames, setGrapesjsArtboardNames] = useState<Record<string, string>>({});
+  const persistedGrapesjsArtboardName =
+    grapesjsArtboardNames[grapesjsArtboardKey]
+    ?? readArtboardNameFromSource(grapesjsLiveSource);
+  const grapesjsArtboardName =
+    persistedGrapesjsArtboardName
+    ?? defaultGrapesjsArtboardName(file.name);
+  const grapesjsArtboardNameRef = useRef<string | null>(persistedGrapesjsArtboardName);
+  grapesjsArtboardNameRef.current = persistedGrapesjsArtboardName;
+  const withGrapesjsArtboardNameMeta = useCallback((next: string): string => {
+    const currentName = grapesjsArtboardNameRef.current ?? readArtboardNameFromSource(sourceRef.current ?? '');
+    return currentName ? writeArtboardNameToSource(next, currentName) : next;
+  }, []);
+  const setGrapesjsArtboardName = useCallback((name: string) => {
+    const cleanName = name.trim() || defaultGrapesjsArtboardName(file.name);
+    grapesjsArtboardNameRef.current = cleanName;
+    setGrapesjsArtboardNames((current) => ({
+      ...current,
+      [grapesjsArtboardKey]: cleanName,
+    }));
+    const current = sourceRef.current;
+    if (current == null) return;
+    const updated = writeArtboardNameToSource(current, cleanName);
+    if (updated === current) return;
+    sourceRef.current = updated;
+    queueGrapesjsSourceStateSync(updated);
+    setCodeDirty(true);
+    htmlFileSaveController.scheduleSave(updated, 'grapesjs-artboard-name');
+  }, [file.name, grapesjsArtboardKey, htmlFileSaveController]);
   // Flush pending edits when the file changes or the component unmounts.
   // Keyed on projectId + file.name so switching files in the tree triggers
   // the cleanup (and save) before the new file's content loads.
@@ -5302,7 +5463,8 @@ function HtmlViewer({
         clearTimeout(grapesjsInspectDebounceRef.current);
       }
       try {
-        const next = grapesjsEditorRef.current?.getDocument();
+        const rawNext = grapesjsEditorRef.current?.getDocument();
+        const next = rawNext ? withGrapesjsArtboardNameMeta(rawNext) : rawNext;
         if (next && next !== sourceRef.current) {
           sourceRef.current = next;
           controller.cancelScheduledSave();
@@ -5327,7 +5489,8 @@ function HtmlViewer({
       if (value && !prev) {
         htmlFileSaveController.cancelScheduledSave();
         // Sync the latest editor document to source + immediately save.
-        const doc = grapesjsEditorRef.current?.getDocument();
+        const rawDoc = grapesjsEditorRef.current?.getDocument();
+        const doc = rawDoc ? withGrapesjsArtboardNameMeta(rawDoc) : rawDoc;
         if (doc && doc !== sourceRef.current) {
           sourceRef.current = doc;
           flushGrapesjsSourceState(doc);
@@ -5338,11 +5501,36 @@ function HtmlViewer({
       return value;
     });
   }, [htmlFileSaveController]);
+  useEffect(() => {
+    if (mode !== 'preview' || grapesjsViewMode) {
+      setGrapesjsCanvasTool('cursor');
+      setGrapesjsShapeMenuOpen(false);
+    }
+  }, [grapesjsViewMode, mode]);
   // Canvas zoom from GrapesJS (0-100), drives the toolbar zoom % display on
   // the GrapesJS preview path. The non-GrapesJS path uses the legacy `zoom` state.
   const [grapesjsCanvasZoom, setGrapesjsCanvasZoom] = useState(100);
   const displayedGrapesjsCanvasZoom = Number.isFinite(grapesjsCanvasZoom) ? grapesjsCanvasZoom : 100;
-  const grapesjsLiveSource = previewSource ?? source ?? '';
+  const grapesjsOverlayTransform = useMemo<PreviewOverlayTransform>(() => {
+    if (!useGrapesjs || mode !== 'preview' || grapesjsViewMode) {
+      return overlayPreviewTransform;
+    }
+    return grapesjsFrameOverlayTransform(grapesjsEditorRef.current?.getEditor());
+  }, [
+    grapesjsFrameOverlayTransform,
+    grapesjsCanvasZoom,
+    grapesjsOverlayVersion,
+    grapesjsViewMode,
+    mode,
+    overlayPreviewScale,
+    previewBodySize?.height,
+    previewBodySize?.width,
+    useGrapesjs,
+  ]);
+  const activeCommentOverlayTransform =
+    useGrapesjs && mode === 'preview' && !grapesjsViewMode
+      ? grapesjsOverlayTransform
+      : overlayPreviewTransform;
   // Inject <base href> into the interactive-mode iframe srcDoc so relative CSS
   // / asset links resolve against the project root (same as the GrapesJS
   // editor path which calls applyCanvasHeadAssets). Without this, files that
@@ -7296,7 +7484,7 @@ function HtmlViewer({
             persistStyleOverride(editor, elementId, flat);
           }
         }
-        const next = grapesjsEditorRef.current?.getDocument() ?? source;
+        const next = withGrapesjsArtboardNameMeta(grapesjsEditorRef.current?.getDocument() ?? source);
         await htmlFileSaveController.saveOrThrow(next, 'inspect-save');
         setSource(next);
         setInspectSavedAt(Date.now());
@@ -7383,6 +7571,24 @@ function HtmlViewer({
       document.removeEventListener('keydown', onKey);
     };
   }, [zoomMenuOpen]);
+
+  useEffect(() => {
+    if (!grapesjsShapeMenuOpen) return;
+    const onDocClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (target && grapesjsBottomToolbarRef.current?.contains(target)) return;
+      setGrapesjsShapeMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setGrapesjsShapeMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [grapesjsShapeMenuOpen]);
 
   useEffect(() => {
     if (!agentToolsOpen) return;
@@ -7802,8 +8008,9 @@ function HtmlViewer({
 
   function syncGrapesjsDocumentToSource(): string | null {
     if (!useGrapesjs) return null;
-    const next = grapesjsEditorRef.current?.getDocument();
-    if (!next) return null;
+    const rawNext = grapesjsEditorRef.current?.getDocument();
+    if (!rawNext) return null;
+    const next = withGrapesjsArtboardNameMeta(rawNext);
     const changed = next !== sourceRef.current || next !== source;
     sourceRef.current = next;
     flushGrapesjsSourceState(next);
@@ -7874,10 +8081,48 @@ function HtmlViewer({
 
   function closeArtifactToolMenus() {
     setAgentToolsOpen(false);
+    setGrapesjsShapeMenuOpen(false);
+  }
+
+  function currentGrapesjsHasSelection(): boolean {
+    if (!useGrapesjs) return false;
+    const editor = grapesjsEditorRef.current?.getEditor();
+    if (!editor) return grapesjsSelectionActive;
+    try {
+      const selectedAll = editor.getSelectedAll?.();
+      if (Array.isArray(selectedAll)) return selectedAll.length > 0;
+    } catch {
+      // Fall through to getSelected.
+    }
+    try {
+      return Boolean(editor.getSelected?.());
+    } catch {
+      return grapesjsSelectionActive;
+    }
+  }
+
+  function restoreGrapesjsEditPanelState() {
+    if (!useGrapesjs) {
+      onEditModeChange?.(false);
+      onEditSelectionChange?.(false);
+      return;
+    }
+    const snapshot = grapesjsEditorRef.current?.getSelectionSnapshot?.() ?? null;
+    const hasSelection = snapshot?.hasSelection ?? currentGrapesjsHasSelection();
+    if (snapshot) setGrapesjsSelection(snapshot);
+    setGrapesjsSelectionActive(hasSelection);
+    setInspectMode(true);
+    setGrapesjsSidebarTab('inspect');
+    setDrawOverlayOpen(false);
+    setMode('preview');
+    onEditModeChange?.(true);
+    onEditSelectionChange?.(hasSelection);
+    grapesjsEditorRef.current?.reselectCurrent?.();
   }
 
   function activateDrawTool() {
     fireArtifactToolbarClick('draw');
+    setGrapesjsCanvasTool('cursor');
     const next = !drawOverlayOpen;
     if (!next) {
       setDrawOverlayOpen(false);
@@ -7905,20 +8150,20 @@ function HtmlViewer({
   }
 
   function deactivateElementSelectionMode() {
+    setGrapesjsCanvasTool('cursor');
     setBoardMode(false);
     setCommentCreateMode(false);
     setCommentPanelOpen(false);
     clearBoardComposer();
-    setGrapesjsSelectionActive(false);
     setAgentToolsOpen(false);
-    onEditModeChange?.(false);
-    onEditSelectionChange?.(false);
+    restoreGrapesjsEditPanelState();
     closeArtifactToolMenus();
   }
 
   function activateCommentTool() {
     fireArtifactToolbarClick('comment');
     capturePreviewScrollPosition();
+    setGrapesjsCanvasTool('cursor');
     if (boardMode && !commentCreateMode && boardTool === 'inspect') {
       deactivateElementSelectionMode();
       return;
@@ -7944,14 +8189,49 @@ function HtmlViewer({
     activateComment();
   }
 
+  function activateGrapesjsCursorTool() {
+    setGrapesjsCanvasTool('cursor');
+    setGrapesjsShapeMenuOpen(false);
+    setDrawOverlayOpen(false);
+    if (boardMode && !commentCreateMode && boardTool === 'inspect') {
+      deactivateElementSelectionMode();
+      return;
+    }
+    setBoardMode(false);
+    setCommentCreateMode(false);
+    setCommentPanelOpen(false);
+    clearBoardComposer();
+    restoreGrapesjsEditPanelState();
+    closeArtifactToolMenus();
+  }
+
+  function activateGrapesjsCanvasTool(tool: GrapesjsCanvasTool) {
+    if (tool === 'cursor') {
+      activateGrapesjsCursorTool();
+      return;
+    }
+    setGrapesjsCanvasTool(tool);
+    setGrapesjsShapeMenuOpen(false);
+    setBoardMode(false);
+    setCommentCreateMode(false);
+    setCommentPanelOpen(false);
+    clearBoardComposer();
+    setInspectMode(false);
+    setDrawOverlayOpen(false);
+    setMode('preview');
+    closeArtifactToolMenus();
+  }
+
   function activateCommentCreateTool() {
     fireArtifactToolbarClick('comment');
     capturePreviewScrollPosition();
+    setGrapesjsCanvasTool('cursor');
     if (boardMode && commentCreateMode) {
       setBoardMode(false);
       setCommentCreateMode(false);
       setCommentPanelOpen(false);
       clearBoardComposer();
+      restoreGrapesjsEditPanelState();
       closeArtifactToolMenus();
       return;
     }
@@ -7974,6 +8254,48 @@ function HtmlViewer({
     }
     activateCommentCreate();
   }
+
+  useEffect(() => {
+    if (!useGrapesjs || mode !== 'preview' || grapesjsViewMode || source === null) return;
+    const isTypingTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof Element)) return false;
+      const el = target as HTMLElement;
+      return Boolean(el.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || isTypingTarget(event.target)) return;
+      const key = event.key.toLowerCase();
+      const primary = event.metaKey || event.ctrlKey;
+      const noCommandModifier = !primary && !event.altKey;
+      let tool: GrapesjsCanvasTool | null = null;
+      if (primary && event.shiftKey && !event.altKey && key === 'k') {
+        tool = 'image';
+      } else if (noCommandModifier && key === 'v') {
+        tool = 'cursor';
+      } else if (noCommandModifier && key === 'r') {
+        tool = 'rectangle';
+      } else if (noCommandModifier && key === 'l') {
+        tool = 'line';
+      } else if (noCommandModifier && key === 'o') {
+        tool = 'circle';
+      } else if (noCommandModifier && key === 't') {
+        tool = 'text';
+      }
+      if (tool) {
+        event.preventDefault();
+        event.stopPropagation();
+        activateGrapesjsCanvasTool(tool);
+        return;
+      }
+      if (noCommandModifier && key === 'c') {
+        event.preventDefault();
+        event.stopPropagation();
+        activateCommentTool();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  });
 
   useEffect(() => {
     if (!boardMode || commentCreateMode) return;
@@ -8149,7 +8471,6 @@ function HtmlViewer({
     if (!activeCommentTarget || !onSavePreviewComment) return;
     // Allow saving when there is text OR an attached image (image-only notes).
     if (!commentDraft.trim() && boardImages.length === 0 && currentActiveComposerAttachments().length === 0) return;
-    const isFreePin = activeCommentTarget.elementId.startsWith('pin-');
     setSendingBoardBatch(true);
     try {
       const target = withDeckSlideIndex(targetFromSnapshot(activeCommentTarget));
@@ -8168,7 +8489,7 @@ function HtmlViewer({
         setCommentPanelOpen(true);
         setCommentSidePanelCollapsed(false);
         setActivePreviewCommentId(saved.id);
-        setCommentSavedToast(isFreePin ? t('chat.comments.pinSavedToast') : t('chat.comments.savedToast'));
+        setCommentSavedToast(t('chat.comments.savedToast'));
       }
     } finally {
       setSendingBoardBatch(false);
@@ -8350,6 +8671,24 @@ function HtmlViewer({
     useLazySrcDocTransport,
     useUrlLoadPreview,
   ]);
+  const captureGrapesjsDrawSnapshot = useCallback(async () => {
+    const previewRect = previewBodyRef.current?.getBoundingClientRect() ?? null;
+    const hostSnapshot = await withExportCaptureIsolation(() => captureHostRegionSnapshot(previewRect));
+    if (hostSnapshot) return hostSnapshot;
+
+    const editor = grapesjsEditorRef.current?.getEditor();
+    const frame = (() => {
+      try { return editor?.Canvas.getFrameEl?.() ?? null; } catch { return null; }
+    })();
+    if (frame) {
+      await waitForIframeLoadOrTimeout(frame, 250);
+      await waitForAnimationFrame();
+      const frameSnapshot = await requestPreviewSnapshotWithRetry(frame);
+      if (frameSnapshot) return frameSnapshot;
+    }
+
+    return createBlankPreviewSnapshot(previewRect);
+  }, []);
 
   const handleCopyScreenshot = useCallback(async () => {
     if (screenshotInFlightRef.current) return;
@@ -8495,8 +8834,8 @@ function HtmlViewer({
   const activeSideCommentId = activePreviewCommentId;
   const activeCommentTargetVisible = commentTargetIntersectsPreview(
     activeCommentTarget,
-    overlayPreviewScale,
-    { x: overlayPreviewTransform.offsetX, y: overlayPreviewTransform.offsetY },
+    activeCommentOverlayTransform.scale,
+    { x: activeCommentOverlayTransform.offsetX, y: activeCommentOverlayTransform.offsetY },
     previewBodySize,
   );
   useEffect(() => {
@@ -8899,13 +9238,14 @@ function HtmlViewer({
       queueOnSend={commentQueueOnSend}
       sendDisabled={commentSendDisabled}
       t={t}
-      scale={overlayPreviewScale}
-      offset={{ x: overlayPreviewTransform.offsetX, y: overlayPreviewTransform.offsetY }}
+      scale={activeCommentOverlayTransform.scale}
+      offset={{ x: activeCommentOverlayTransform.offsetX, y: activeCommentOverlayTransform.offsetY }}
       bounds={previewBodySize}
       docked={false}
       commenting
     />
   ) : null;
+  const showGrapesjsBottomToolbar = useGrapesjs && mode === 'preview' && source !== null && !grapesjsViewMode;
   const elementSelectionAction = shouldShowElementSelectionAction({
     boardMode,
     commentCreateMode,
@@ -8915,9 +9255,148 @@ function HtmlViewer({
       target={activeCommentTarget}
       busy={sendingBoardBatch}
       disabled={!onStageBoardCommentAttachments}
+      placement={showGrapesjsBottomToolbar ? 'toolbar' : 'floating'}
       onAdd={stageActiveElementSelection}
       t={t}
     />
+  ) : null;
+  const grapesjsShapeToolDefs: Array<{ tool: GrapesjsCanvasTool; icon: string; label: string; shortcut: string; testId: string }> = [
+    { tool: 'rectangle', icon: 'square-line', label: '矩形', shortcut: 'R', testId: 'grapesjs-tool-rectangle' },
+    { tool: 'line', icon: 'subtract-line', label: '直线', shortcut: 'L', testId: 'grapesjs-tool-line' },
+    { tool: 'circle', icon: 'circle-line', label: '圆形', shortcut: 'O', testId: 'grapesjs-tool-circle' },
+    { tool: 'image', icon: 'image-line', label: '图片', shortcut: '⇧⌘K', testId: 'grapesjs-tool-image' },
+  ];
+  const activeShapeTool = grapesjsShapeToolDefs.find((item) => item.tool === grapesjsCanvasTool);
+  const shapeTriggerLabel = activeShapeTool ? `${activeShapeTool.label} ${activeShapeTool.shortcut}` : '形状 R';
+  const grapesjsBottomToolbar = showGrapesjsBottomToolbar ? (
+    <div
+      ref={grapesjsBottomToolbarRef}
+      className="grapesjs-bottom-toolbar"
+      role="toolbar"
+      aria-label="画布工具"
+      data-testid="grapesjs-bottom-toolbar"
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      <div className="grapesjs-bottom-toolbar-group">
+        <button
+          type="button"
+          className={`grapesjs-bottom-tool grapesjs-bottom-tool-primary od-tooltip${grapesjsCanvasTool === 'cursor' && !boardMode && !drawOverlayOpen ? ' active' : ''}`}
+          data-testid="grapesjs-tool-cursor"
+          aria-label="光标 V"
+          aria-pressed={grapesjsCanvasTool === 'cursor' && !boardMode && !drawOverlayOpen}
+          title="光标 V"
+          data-tooltip="光标 V"
+          data-tooltip-placement="top"
+          onClick={activateGrapesjsCursorTool}
+        >
+          <RemixIcon name="cursor-line" size={16} />
+        </button>
+        <div className="grapesjs-bottom-menu-anchor">
+          <button
+            type="button"
+            className={`grapesjs-bottom-tool grapesjs-bottom-tool-menu od-tooltip${activeShapeTool ? ' active' : ''}`}
+            data-testid="grapesjs-tool-shapes"
+            aria-label={shapeTriggerLabel}
+            aria-pressed={Boolean(activeShapeTool)}
+            aria-haspopup="menu"
+            aria-expanded={grapesjsShapeMenuOpen}
+            title={shapeTriggerLabel}
+            data-tooltip={shapeTriggerLabel}
+            data-tooltip-placement="top"
+            onClick={() => setGrapesjsShapeMenuOpen((open) => !open)}
+          >
+            <RemixIcon name={activeShapeTool?.icon ?? 'square-line'} size={16} />
+            <RemixIcon name="arrow-down-s-line" size={12} className="grapesjs-bottom-tool-caret" />
+          </button>
+          {grapesjsShapeMenuOpen ? (
+            <div className="grapesjs-shape-menu" role="menu" data-testid="grapesjs-shape-menu">
+              {grapesjsShapeToolDefs.map((item) => {
+                const active = grapesjsCanvasTool === item.tool;
+                return (
+                  <button
+                    key={item.tool}
+                    type="button"
+                    className={`grapesjs-shape-menu-item${active ? ' active' : ''}`}
+                    role="menuitem"
+                    data-testid={item.testId}
+                    onClick={() => activateGrapesjsCanvasTool(item.tool)}
+                  >
+                    <span className="grapesjs-shape-menu-check" aria-hidden>
+                      {active ? <RemixIcon name="check-line" size={14} /> : null}
+                    </span>
+                    <RemixIcon name={item.icon} size={15} className="grapesjs-shape-menu-icon" />
+                    <span className="grapesjs-shape-menu-label">{item.label}</span>
+                    <span className="grapesjs-shape-menu-shortcut">{item.shortcut}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className={`grapesjs-bottom-tool od-tooltip${grapesjsCanvasTool === 'text' ? ' active' : ''}`}
+          data-testid="grapesjs-tool-text"
+          aria-label="文本 T"
+          aria-pressed={grapesjsCanvasTool === 'text'}
+          title="文本 T"
+          data-tooltip="文本 T"
+          data-tooltip-placement="top"
+          onClick={() => activateGrapesjsCanvasTool('text')}
+        >
+          <RemixIcon name="text" size={16} />
+        </button>
+      </div>
+      <span className="grapesjs-bottom-toolbar-divider" aria-hidden />
+      <div className="grapesjs-bottom-toolbar-group">
+        <button
+          type="button"
+          className={`grapesjs-bottom-tool od-tooltip${boardMode && !commentCreateMode && boardTool === 'inspect' ? ' active' : ''}`}
+          data-testid="grapesjs-tool-annotation"
+          aria-label="标注 C"
+          aria-pressed={boardMode && !commentCreateMode && boardTool === 'inspect'}
+          title="标注 C"
+          data-tooltip="标注 C"
+          data-tooltip-placement="top"
+          onClick={activateCommentTool}
+        >
+          <RemixIcon name="focus-3-line" size={16} />
+        </button>
+        <button
+          type="button"
+          className={`grapesjs-bottom-tool od-tooltip${drawOverlayOpen ? ' active' : ''}`}
+          data-testid="grapesjs-tool-mark"
+          aria-label="手绘"
+          aria-pressed={drawOverlayOpen}
+          title="手绘"
+          data-tooltip="手绘"
+          data-tooltip-placement="top"
+          onClick={activateDrawTool}
+        >
+          <RemixIcon name="mark-pen-line" size={16} />
+        </button>
+        <button
+          type="button"
+          className={`grapesjs-bottom-tool grapesjs-bottom-tool-count od-tooltip${boardMode && commentCreateMode ? ' active' : ''}`}
+          data-testid="grapesjs-tool-comments"
+          aria-label={`${t('chat.tabComments')} (${visibleSideComments.length})`}
+          aria-pressed={boardMode && commentCreateMode}
+          title={t('chat.tabComments')}
+          data-tooltip={t('chat.tabComments')}
+          data-tooltip-placement="top"
+          onClick={activateCommentCreateTool}
+        >
+          <RemixIcon name="message-3-line" size={16} />
+          <span aria-hidden>{visibleSideComments.length}</span>
+        </button>
+      </div>
+      {elementSelectionAction ? (
+        <>
+          <span className="grapesjs-bottom-toolbar-divider" aria-hidden />
+          {elementSelectionAction}
+        </>
+      ) : null}
+    </div>
   ) : null;
   const boardPreviewImage =
     boardPreviewIndex !== null ? boardImagePreviews[boardPreviewIndex] ?? null : null;
@@ -9172,63 +9651,53 @@ function HtmlViewer({
                   <RemixIcon name="screenshot-2-line" size={15} />
                 </button>
               ) : null}
-              <div className="artifact-tool-menu-anchor">
-                <button
-                  type="button"
-                  className={`viewer-action viewer-action-icon viewer-comment-toggle od-tooltip${boardMode && !commentCreateMode && boardTool === 'inspect' ? ' active' : ''}`}
-                  data-testid="board-mode-toggle"
-                  data-tooltip={t('fileViewer.comment')}
-                  data-tooltip-placement="bottom"
-                  title={t('fileViewer.comment')}
-                  aria-label={t('fileViewer.comment')}
-                  aria-pressed={boardMode && !commentCreateMode && boardTool === 'inspect'}
-                  onClick={activateCommentTool}
-                >
-                  <RemixIcon name="cursor-line" size={15} />
-                </button>
-              </div>
-              <button
-                className={`viewer-action viewer-action-icon od-tooltip${drawOverlayOpen ? ' active' : ''}`}
-                type="button"
-                data-testid="draw-overlay-toggle"
-                data-tooltip={t('fileViewer.mark')}
-                data-tooltip-placement="bottom"
-                title={t('fileViewer.mark')}
-                aria-label={t('fileViewer.mark')}
-                aria-pressed={drawOverlayOpen}
-                onClick={activateDrawTool}
-              >
-                <RemixIcon name="mark-pen-line" size={15} />
-              </button>
-              <span className="viewer-toolbar-tool-divider" aria-hidden />
-              {/* <button
-                className={`viewer-action viewer-action-icon od-tooltip${manualEditMode ? ' active' : ''}`}
-                type="button"
-                data-testid="manual-edit-mode-toggle"
-                data-tooltip={t('fileViewer.edit')}
-                data-tooltip-placement="bottom"
-                title={t('fileViewer.edit')}
-                aria-label={t('fileViewer.edit')}
-                aria-pressed={manualEditMode}
-                onClick={activateManualEditTool}
-              >
-                <RemixIcon name="edit-line" size={15} />
-              </button> */}
-              <span className="viewer-toolbar-tool-divider" aria-hidden />
-              <button
-                type="button"
-                className={`viewer-action viewer-comment-count-trigger viewer-comment-toggle od-tooltip${boardMode && commentCreateMode ? ' active' : ''}`}
-                data-testid="comment-panel-toggle"
-                data-tooltip={t('chat.tabComments')}
-                data-tooltip-placement="bottom"
-                title={t('chat.tabComments')}
-                aria-label={`${t('chat.tabComments')} (${visibleSideComments.length})`}
-                aria-pressed={boardMode && commentCreateMode}
-                onClick={activateCommentCreateTool}
-              >
-                <RemixIcon name="message-3-line" size={15} />
-                <span className="viewer-comment-count" aria-hidden>{visibleSideComments.length}</span>
-              </button>
+              {!showGrapesjsBottomToolbar ? (
+                <>
+                  <div className="artifact-tool-menu-anchor">
+                    <button
+                      type="button"
+                      className={`viewer-action viewer-action-icon viewer-comment-toggle od-tooltip${boardMode && !commentCreateMode && boardTool === 'inspect' ? ' active' : ''}`}
+                      data-testid="board-mode-toggle"
+                      data-tooltip={t('fileViewer.comment')}
+                      data-tooltip-placement="bottom"
+                      title={t('fileViewer.comment')}
+                      aria-label={t('fileViewer.comment')}
+                      aria-pressed={boardMode && !commentCreateMode && boardTool === 'inspect'}
+                      onClick={activateCommentTool}
+                    >
+                      <RemixIcon name="cursor-line" size={15} />
+                    </button>
+                  </div>
+                  <button
+                    className={`viewer-action viewer-action-icon od-tooltip${drawOverlayOpen ? ' active' : ''}`}
+                    type="button"
+                    data-testid="draw-overlay-toggle"
+                    data-tooltip={t('fileViewer.mark')}
+                    data-tooltip-placement="bottom"
+                    title={t('fileViewer.mark')}
+                    aria-label={t('fileViewer.mark')}
+                    aria-pressed={drawOverlayOpen}
+                    onClick={activateDrawTool}
+                  >
+                    <RemixIcon name="mark-pen-line" size={15} />
+                  </button>
+                  <span className="viewer-toolbar-tool-divider" aria-hidden />
+                  <button
+                    type="button"
+                    className={`viewer-action viewer-comment-count-trigger viewer-comment-toggle od-tooltip${boardMode && commentCreateMode ? ' active' : ''}`}
+                    data-testid="comment-panel-toggle"
+                    data-tooltip={t('chat.tabComments')}
+                    data-tooltip-placement="bottom"
+                    title={t('chat.tabComments')}
+                    aria-label={`${t('chat.tabComments')} (${visibleSideComments.length})`}
+                    aria-pressed={boardMode && commentCreateMode}
+                    onClick={activateCommentCreateTool}
+                  >
+                    <RemixIcon name="message-3-line" size={15} />
+                    <span className="viewer-comment-count" aria-hidden>{visibleSideComments.length}</span>
+                  </button>
+                </>
+              ) : null}
               {source !== null && mode === 'preview' ? (
                 <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>
                   <button
@@ -9307,7 +9776,7 @@ function HtmlViewer({
             active={drawOverlayOpen}
             onActiveChange={setDrawOverlayOpen}
             captureViewport
-            captureSnapshot={captureExportImageSnapshot}
+            captureSnapshot={captureGrapesjsDrawSnapshot}
             captureTarget={null}
             filePath={file.name}
             sendDisabled={streaming}
@@ -9347,14 +9816,21 @@ function HtmlViewer({
                 baseHref={projectRawUrl(projectId, baseDirFor(file.name))}
                 selectionTone={boardMode && !commentCreateMode ? 'element-selection' : 'default'}
                 selectionChrome={boardMode && !commentCreateMode ? 'element-selection' : 'edit'}
+                activeCanvasTool={grapesjsCanvasTool}
+                onCanvasToolChange={activateGrapesjsCanvasTool}
+                onCanvasCommentPin={boardMode && commentCreateMode ? handleGrapesjsCanvasCommentPin : undefined}
+                onCanvasViewportChange={scheduleGrapesjsOverlaySync}
+                artboardName={grapesjsArtboardName}
+                onArtboardNameChange={setGrapesjsArtboardName}
                 {...(boardMode && !commentCreateMode ? { onEscapeKey: deactivateElementSelectionMode } : {})}
                 onChange={(next) => {
                   grapesjsSelectionStoreRef.current.invalidate();
-                  sourceRef.current = next;
-                  queueGrapesjsSourceStateSync(next);
+                  const nextWithArtboardMeta = withGrapesjsArtboardNameMeta(next);
+                  sourceRef.current = nextWithArtboardMeta;
+                  queueGrapesjsSourceStateSync(nextWithArtboardMeta);
                   setCodeDirty(true);
                   if (useGrapesjs && mode === 'preview') {
-                    htmlFileSaveController.scheduleSave(next, 'grapesjs-autosave-flush');
+                    htmlFileSaveController.scheduleSave(nextWithArtboardMeta, 'grapesjs-autosave-flush');
                   }
                 }}
                 onSave={() => {
@@ -9421,20 +9897,35 @@ function HtmlViewer({
                     const editor = grapesjsEditorRef.current?.getEditor();
                     if (!editor) return;
                     if (!hasSelection) {
+                      if (commentCreateMode) return;
                       setActiveCommentTarget((current) => (current ? null : current));
                       return;
                     }
-                    const selectedId = ids[0];
-                    if (!selectedId) return;
-                    const snapshot = buildGrapesjsCommentSnapshot(editor, selectedId, file.name);
+                    const snapshots = ids
+                      .map((id) => buildGrapesjsCommentSnapshot(editor, id, file.name))
+                      .filter((snapshot): snapshot is PreviewCommentSnapshot => Boolean(snapshot));
+                    if (snapshots.length === 0) return;
+                    const snapshot = snapshots.length > 1
+                      ? buildPodSnapshotFromSnapshots({
+                          filePath: file.name,
+                          snapshots,
+                          idPrefix: 'selected-pod',
+                        }) ?? snapshots[0]
+                      : snapshots[0];
                     if (!snapshot) return;
                     const shouldOpenComposer = boardMode || commentCreateMode;
                     setActiveCommentTarget((current) => (shouldOpenComposer ? snapshot : current));
                     setHoveredCommentTarget(snapshot);
                     setLiveCommentTargets((current) => {
-                      const existing = current.get(snapshot.elementId);
-                      if (existing && commentSnapshotEqual(existing, snapshot)) return current;
-                      return new Map(current).set(snapshot.elementId, snapshot);
+                      let changed = false;
+                      const next = new Map(current);
+                      for (const item of [...snapshots, snapshot]) {
+                        const existing = next.get(item.elementId);
+                        if (existing && commentSnapshotEqual(existing, item)) continue;
+                        next.set(item.elementId, item);
+                        changed = true;
+                      }
+                      return changed ? next : current;
                     });
                     if (shouldOpenComposer) {
                       setActivePreviewCommentId(null);
@@ -9545,7 +10036,48 @@ function HtmlViewer({
               )}
             </Suspense>
           </PreviewDrawOverlay>
-          {elementSelectionAction}
+          {boardMode ? (
+            <CommentPreviewOverlays
+              comments={commentCreateMode ? visibleSideComments : []}
+              liveTargets={liveCommentTargets}
+              hoveredTarget={hoveredCommentTarget}
+              hoveredPodMemberId={hoveredPodMemberId}
+              activeTarget={activeCommentTarget}
+              activeExistingCommentId={activeComposerComment?.id ?? null}
+              boardTool={boardTool}
+              showActivePin={commentCreateMode}
+              targetTone={commentCreateMode ? 'comment' : 'element-selection'}
+              scale={activeCommentOverlayTransform.scale}
+              offsetX={activeCommentOverlayTransform.offsetX}
+              offsetY={activeCommentOverlayTransform.offsetY}
+              strokePoints={strokePoints}
+              activeSlideIndex={effectiveDeck ? slideState?.active ?? null : null}
+              onOpenComment={(comment, snapshot) => {
+                setCommentPanelOpen(true);
+                setCommentSidePanelCollapsed(false);
+                setCommentCreateMode(true);
+                setBoardMode(true);
+                setActiveCommentTarget(snapshot);
+                setHoveredCommentTarget(snapshot);
+                setActivePreviewCommentId(comment.id);
+                setCommentDraft(comment.note);
+                setQueuedBoardNotes([]);
+                setActiveCommentExistingAttachments(comment.attachments ?? []);
+              }}
+            />
+          ) : null}
+          {commentComposer}
+          {commentSavedToast ? (
+            <div className="comment-toast-anchor">
+              <Toast
+                message={commentSavedToast}
+                ttlMs={2200}
+                onDismiss={() => setCommentSavedToast(null)}
+              />
+            </div>
+          ) : null}
+          {grapesjsBottomToolbar}
+          {showGrapesjsBottomToolbar ? null : elementSelectionAction}
           {useGrapesjs && mode === 'preview' && !grapesjsViewMode ? (() => {
             const sidebar = (
               <aside className={`grapesjs-sidebar${grapesjsInspectPortalHost ? ' grapesjs-sidebar-portal' : ''}`} data-testid="grapesjs-sidebar">
@@ -9757,9 +10289,9 @@ function HtmlViewer({
                   boardTool={boardTool}
                   showActivePin={commentCreateMode}
                   targetTone={commentCreateMode ? 'comment' : 'element-selection'}
-                  scale={overlayPreviewScale}
-                  offsetX={overlayPreviewTransform.offsetX}
-                  offsetY={overlayPreviewTransform.offsetY}
+                  scale={activeCommentOverlayTransform.scale}
+                  offsetX={activeCommentOverlayTransform.offsetX}
+                  offsetY={activeCommentOverlayTransform.offsetY}
                   strokePoints={strokePoints}
                   activeSlideIndex={effectiveDeck ? slideState?.active ?? null : null}
                   onOpenComment={(comment, snapshot) => {
@@ -10471,6 +11003,11 @@ function HtmlViewer({
 function baseDirFor(fileName: string): string {
   const idx = fileName.lastIndexOf('/');
   return idx >= 0 ? fileName.slice(0, idx + 1) : '';
+}
+
+function defaultGrapesjsArtboardName(fileName: string): string {
+  const leaf = fileName.split('/').pop()?.trim() || fileName.trim();
+  return leaf.replace(/\.html?$/i, '') || leaf || '画板1';
 }
 
 function toOwnerRelativePath(ownerFileName: string, targetPath: string): string {

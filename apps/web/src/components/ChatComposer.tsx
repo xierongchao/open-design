@@ -95,6 +95,8 @@ type ToolsTab = 'plugins' | 'skills' | 'mcp' | 'import';
 
 type MentionTab = 'all' | 'tabs' | 'files' | 'plugins' | 'skills' | 'mcp' | 'connectors';
 
+const ANNOTATION_ASSET_DIR = 'annotations';
+
 const USER_PLUGIN_SOURCE_KINDS = new Set<PluginSourceKind>([
   'user',
   'project',
@@ -1431,7 +1433,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 return;
               }
               setUploading(true);
-              const result = await uploadProjectFiles(id, annotationFiles);
+              const result = await uploadProjectFiles(id, annotationFiles, ANNOTATION_ASSET_DIR);
               if (result.uploaded.length > 0) {
                 uploaded = assignChatAttachmentOrders(result.uploaded, orderStart);
                 const screenshot = detail.file ? uploaded[0] : null;

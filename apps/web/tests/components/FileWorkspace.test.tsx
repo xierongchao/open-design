@@ -115,6 +115,7 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
       getSelectedSrc: () => '',
       insertImageComponent: () => {},
       reselectCurrent: () => {},
+      getSelectionSnapshot: () => ({ hasSelection: false, tagName: '', selector: '', styles: {}, selectedColors: [] }),
       setCropMode: () => {},
       replaceColors: () => 0,
       getEditor: () => null,

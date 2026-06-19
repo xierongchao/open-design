@@ -347,9 +347,21 @@ export function getNormalizedBoxFromComponent(editor: Editor, comp: Component): 
   const frameRect = frame?.getBoundingClientRect();
   if (!frameRect || frameRect.width === 0 || frameRect.height === 0) return null;
   const rect = el.getBoundingClientRect();
+  const doc = (() => {
+    try { return editor.Canvas.getDocument?.() ?? null; } catch { return null; }
+  })();
+  const win = doc?.defaultView ?? null;
+  const scrollX = (typeof win?.scrollX === 'number' ? win.scrollX : undefined)
+    ?? doc?.documentElement?.scrollLeft
+    ?? doc?.body?.scrollLeft
+    ?? 0;
+  const scrollY = (typeof win?.scrollY === 'number' ? win.scrollY : undefined)
+    ?? doc?.documentElement?.scrollTop
+    ?? doc?.body?.scrollTop
+    ?? 0;
   return {
-    x: rect.left - frameRect.left,
-    y: rect.top - frameRect.top,
+    x: rect.left + scrollX,
+    y: rect.top + scrollY,
     width: rect.width,
     height: rect.height,
   };

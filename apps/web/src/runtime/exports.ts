@@ -975,7 +975,7 @@ export async function scaleAndEncodeSnapshot(
   return canvasToBlob(canvas, spec.mime, opts.format === 'jpeg' ? 0.92 : undefined);
 }
 
-export type ProjectPdfExportResult = 'desktop' | 'fallback';
+export type ProjectPdfExportResult = 'desktop' | 'fallback' | 'cancelled';
 
 export async function exportProjectAsPdf(opts: {
   deck: boolean;
@@ -997,6 +997,7 @@ export async function exportProjectAsPdf(opts: {
     if (!resp.ok) throw new Error(`desktop PDF export unavailable (${resp.status})`);
     const body = await resp.json().catch(() => ({}));
     if (body && body.ok === false) throw new Error(body.error || 'desktop PDF export failed');
+    if (body && body.canceled === true) return 'cancelled';
     return 'desktop';
   } catch (err) {
     console.warn('[exportProjectAsPdf] falling back to browser print:', err);
@@ -1051,6 +1052,27 @@ export function exportReactComponentAsZip(
     },
   ]);
   triggerDownload(blob, `${slug}.zip`);
+}
+
+export async function exportProjectAsHtml(opts: {
+  projectId: string;
+  filePath: string;
+  fallbackHtml: string;
+  fallbackTitle: string;
+}): Promise<void> {
+  const url = `/api/projects/${encodeURIComponent(opts.projectId)}/export/${
+    opts.filePath.split('/').map((part) => encodeURIComponent(part)).join('/')
+  }?inline=1`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTML export request failed (${resp.status})`);
+    const html = await resp.text();
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    triggerDownload(blob, `${safeFilename(opts.fallbackTitle, 'artifact')}.html`);
+  } catch (err) {
+    console.warn('[exportProjectAsHtml] falling back to source HTML export:', err);
+    exportAsHtml(opts.fallbackHtml, opts.fallbackTitle);
+  }
 }
 
 // Project ZIP export — asks the daemon to bundle the on-disk project tree.
@@ -1152,11 +1174,24 @@ export function openSandboxedPreviewInNewTab(
   title: string,
   srcdocOptions?: SrcdocOptions,
 ): void {
-  const doc = buildSandboxedPreviewDocument(buildSrcdoc(html, srcdocOptions), title);
+  const baseHref = srcdocOptions?.baseHref ?? currentOriginBaseHref();
+  const doc = buildSandboxedPreviewDocument(buildSrcdoc(html, {
+    ...srcdocOptions,
+    ...(baseHref ? { baseHref } : {}),
+  }), title);
   const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   window.open(url, '_blank', 'noopener,noreferrer');
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function currentOriginBaseHref(): string | undefined {
+  try {
+    const origin = typeof window !== 'undefined' ? window.location?.origin : '';
+    return origin ? `${origin.replace(/\/+$/, '')}/` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // Open the artifact in a new tab via a Blob URL with a self-printing
@@ -1268,9 +1303,7 @@ function absolutePdfResourceUrl(value: string): string {
     const base =
       typeof document !== 'undefined' && document.baseURI
         ? document.baseURI
-        : typeof window !== 'undefined' && window.location?.href
-          ? window.location.href
-          : 'http://localhost/';
+        : 'http://localhost/';
     if (typeof NativeURL === 'function') return new NativeURL(value, base).href;
     return value;
   } catch {

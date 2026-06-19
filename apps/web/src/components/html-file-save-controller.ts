@@ -6,6 +6,7 @@ import type { ProjectFile } from '../types';
 
 export type HtmlFileSaveReason =
   | 'code-save'
+  | 'grapesjs-artboard-name'
   | 'grapesjs-autosave-flush'
   | 'grapesjs-view-mode-flush'
   | 'inspect-save'

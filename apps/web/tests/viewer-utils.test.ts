@@ -6,8 +6,10 @@ import {
   desktopEditAutoFitTransform,
   manualEditPanFromPointer,
   manualEditZoomPanAtPoint,
+  readArtboardNameFromSource,
   readCanvasSizeFromSource,
   readViewportPresetFromSource,
+  writeArtboardNameToSource,
   writeCanvasSizeToSource,
 } from '../src/components/viewer-utils';
 
@@ -238,5 +240,23 @@ describe('od-canvas source metadata', () => {
     expect(readCanvasSizeFromSource(updated)).toEqual({ width: 390, height: 1344 });
     expect(readViewportPresetFromSource(updated)).toBe('mobile');
     expect(updated).toContain('width=390,height=1344,viewport=mobile');
+  });
+});
+
+describe('od-artboard source metadata', () => {
+  it('round-trips a renamed GrapesJS artboard name', () => {
+    const source = '<!doctype html><html><head></head><body>Approval</body></html>';
+    const updated = writeArtboardNameToSource(source, '首页画板');
+
+    expect(readArtboardNameFromSource(updated)).toBe('首页画板');
+    expect(updated).toContain('name=%E9%A6%96%E9%A1%B5%E7%94%BB%E6%9D%BF');
+  });
+
+  it('updates an existing GrapesJS artboard name meta tag', () => {
+    const source = '<html><head><meta name="od-artboard" content="name=Old"></head><body></body></html>';
+    const updated = writeArtboardNameToSource(source, 'New Board');
+
+    expect(readArtboardNameFromSource(updated)).toBe('New Board');
+    expect(updated.match(/name=["']od-artboard["']/g)).toHaveLength(1);
   });
 });

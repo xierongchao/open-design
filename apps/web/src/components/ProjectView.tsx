@@ -386,6 +386,18 @@ function mergeChatAttachments(...groups: ChatAttachment[][]): ChatAttachment[] {
   return out;
 }
 
+export function mergeServerMessagesIntoConversation(
+  localMessages: ChatMessage[],
+  serverMessages: ChatMessage[],
+): ChatMessage[] {
+  const localById = new Map(localMessages.map((message) => [message.id, message]));
+  return serverMessages.map((message) => {
+    const local = localById.get(message.id);
+    if (!local?.producedFiles || message.producedFiles) return message;
+    return { ...message, producedFiles: local.producedFiles };
+  });
+}
+
 function historyWithWorkspaceContext(
   history: ChatMessage[],
   messageId: string,
@@ -887,6 +899,12 @@ export function ProjectView({
     }
   }, []);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
+  const handleCommentModeChange = useCallback((active: boolean) => {
+    if (active) {
+      setWorkspaceSideTab('chat');
+    }
+    setCommentInspectorActive(false);
+  }, []);
   const commentInspectorPortalId = useId();
   const editInspectorPortalId = useId();
   const leftInspectorActive = commentInspectorActive;
@@ -1386,7 +1404,7 @@ export function ProjectView({
           fetchPreviewComments(project.id, activeConversationId),
         ]);
         if (cancelled) return;
-        setMessages(list);
+        setMessages((curr) => mergeServerMessagesIntoConversation(curr, list));
         setMessagesInitialized(true);
         setPreviewComments(comments);
         setAttachedComments([]);
@@ -4830,15 +4848,8 @@ export function ProjectView({
   }, [githubConnected, onOpenSettings, designSystemProject, projectFiles]);
 
   // "Next step" affordance handlers (shown under the last assistant message
-  // once it produced a previewable HTML artifact). Recommended-direction chips
-  // prefill the composer (not auto-send) so the user reviews before sending;
-  // Share reuses the preview workspace's existing Share/Export menu. There is
-  // deliberately no generic "continue editing" / "optimize visuals" action —
-  // free-form follow-ups belong in the composer and the visual directions are
-  // already covered by the concrete chips, so vague catch-alls only added noise.
-  const handleArtifactChip = useCallback((_fileName: string, prompt: string) => {
-    setComposerDraftSignal({ text: prompt, nonce: Date.now() });
-  }, []);
+  // once it produced a previewable HTML artifact). Share reuses the preview
+  // workspace's existing Share/Export menu.
   const handleArtifactShare = useCallback(
     (fileName: string) => {
       requestOpenFile(fileName);
@@ -5553,7 +5564,6 @@ export function ProjectView({
               onContinueRemainingTasks={handleContinueRemainingTasks}
               onAssistantFeedback={handleAssistantFeedback}
               onArtifactShare={handleArtifactShare}
-              onArtifactChip={handleArtifactChip}
               onForkFromMessage={handleForkFromMessage}
               forkingMessageId={forkingMessageId}
               onNewConversation={handleNewConversation}
@@ -5745,7 +5755,7 @@ export function ProjectView({
           onConnectRepo={handleConnectRepo}
           githubConnected={githubConnected}
           commentPortalId={commentInspectorPortalId}
-          onCommentModeChange={setCommentInspectorActive}
+          onCommentModeChange={handleCommentModeChange}
           editPortalId={editInspectorPortalId}
           onEditSelectionChange={handleEditSelectionChange}
           chatConfig={config}

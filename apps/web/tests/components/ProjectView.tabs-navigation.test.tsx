@@ -101,11 +101,12 @@ vi.mock('../../src/components/AvatarMenu', () => ({
 }));
 
 vi.mock('../../src/components/FileWorkspace', () => ({
-  FileWorkspace: ({ tabsState, onTabsStateChange, onEditModeChange, onEditSelectionChange }: {
+  FileWorkspace: ({ tabsState, onTabsStateChange, onEditModeChange, onEditSelectionChange, onCommentModeChange }: {
     tabsState: { tabs: string[]; active: string | null };
     onTabsStateChange: (state: { tabs: string[]; active: string | null }) => void;
     onEditModeChange?: (active: boolean) => void;
     onEditSelectionChange?: (active: boolean) => void;
+    onCommentModeChange?: (active: boolean) => void;
   }) => (
     <div data-testid="file-workspace">
       <output data-testid="workspace-active-tab">{tabsState.active ?? ''}</output>
@@ -129,6 +130,13 @@ vi.mock('../../src/components/FileWorkspace', () => ({
         onClick={() => onEditSelectionChange?.(true)}
       >
         select html element
+      </button>
+      <button
+        type="button"
+        data-testid="activate-comment-mode"
+        onClick={() => onCommentModeChange?.(true)}
+      >
+        activate comment mode
       </button>
     </div>
   ),
@@ -388,6 +396,22 @@ describe('ProjectView tab URL hydration', () => {
 
     expect(screen.getByTestId('workspace-side-tab-edit').getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('workspace-side-edit-view').hasAttribute('hidden')).toBe(false);
+    expect(screen.getByTestId('chat-pane')).toBeTruthy();
+  });
+
+  it('keeps the Chat tab visible when comment mode is activated', async () => {
+    renderProjectView();
+
+    await waitFor(() => expect(screen.getByTestId('chat-pane')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('activate-html-edit-mode'));
+    fireEvent.click(screen.getByTestId('select-html-element'));
+    expect(screen.getByTestId('workspace-side-tab-edit').getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByTestId('activate-comment-mode'));
+
+    expect(screen.queryByLabelText('Comments')).toBeNull();
+    expect(screen.getByTestId('workspace-side-tab-chat').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('workspace-side-chat-view').hasAttribute('hidden')).toBe(false);
     expect(screen.getByTestId('chat-pane')).toBeTruthy();
   });
 });

@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const grapesjsMockState = vi.hoisted(() => ({
   setViewport: vi.fn(),
+  frameLeft: 0,
+  frameTop: 0,
+  zoom: 100,
 }));
 
 vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
@@ -14,11 +17,18 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
     className?: string;
     initialViewport?: { width: number; height: number };
     selectionChrome?: 'edit' | 'element-selection';
+    activeCanvasTool?: string;
+    artboardName?: string;
+    onCanvasToolChange?: (tool: string) => void;
+    onCanvasCommentPin?: (point: { x: number; y: number }) => void;
+    onCanvasViewportChange?: () => void;
     onEscapeKey?: () => void;
     onSelectTargets?: (ids: string[]) => void;
+    onSelectionChange?: (info: { hasSelection: boolean; tagName: string; selector: string; componentType?: string; canvasTool?: string; styles: Record<string, string>; selectedColors: string[] }) => void;
     onViewportSizeChange?: (width: number, height: number) => void;
   }>(
     (props, ref) => {
+      const selectedIdsRef = React.useRef<string[]>([]);
       const heroElement = {
         nodeType: 1,
         getBoundingClientRect: () => ({
@@ -28,6 +38,17 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
           height: 40,
           right: 180,
           bottom: 70,
+        }),
+      };
+      const subtitleElement = {
+        nodeType: 1,
+        getBoundingClientRect: () => ({
+          left: 24,
+          top: 86,
+          width: 220,
+          height: 30,
+          right: 244,
+          bottom: 116,
         }),
       };
       const heroComponent = {
@@ -41,23 +62,51 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
         components: () => ({ length: 0, get: () => null }),
         toHTML: () => '<div data-od-id="hero-title" class="hero-title">Hero title</div>',
       };
+      const subtitleComponent = {
+        getAttributes: () => ({
+          'data-od-id': 'hero-subtitle',
+          'data-od-label': 'Hero subtitle',
+          class: 'hero-subtitle',
+        }),
+        get: (key: string) => key === 'tagName' ? 'p' : undefined,
+        getEl: () => subtitleElement,
+        components: () => ({ length: 0, get: () => null }),
+        toHTML: () => '<p data-od-id="hero-subtitle" class="hero-subtitle">Hero subtitle</p>',
+      };
+      const rootComponents = [heroComponent, subtitleComponent];
+      const componentById = new Map<string, typeof heroComponent | typeof subtitleComponent>([
+        ['hero-title', heroComponent],
+        ['hero-subtitle', subtitleComponent],
+      ]);
+      const emitSelection = (ids: string[]) => {
+        selectedIdsRef.current = ids;
+        props.onSelectTargets?.(ids);
+        props.onSelectionChange?.({
+          hasSelection: ids.length > 0,
+          tagName: ids.length > 0 ? 'div' : '',
+          selector: ids.length > 0 ? 'div.hero-title' : '',
+          styles: ids.length > 0 ? { width: '160px', height: '40px' } : {},
+          selectedColors: [],
+        });
+      };
       const editor = {
         Components: {
           getComponents: () => ({
-            length: 1,
-            get: (index: number) => index === 0 ? heroComponent : null,
+            length: rootComponents.length,
+            get: (index: number) => rootComponents[index] ?? null,
           }),
         },
         Canvas: {
           setZoom: () => {},
+          getZoom: () => grapesjsMockState.zoom,
           getFrameEl: () => ({
             getBoundingClientRect: () => ({
-              left: 0,
-              top: 0,
-              width: 390,
-              height: 844,
-              right: 390,
-              bottom: 844,
+              left: grapesjsMockState.frameLeft,
+              top: grapesjsMockState.frameTop,
+              width: 390 * (grapesjsMockState.zoom / 100),
+              height: 844 * (grapesjsMockState.zoom / 100),
+              right: grapesjsMockState.frameLeft + 390 * (grapesjsMockState.zoom / 100),
+              bottom: grapesjsMockState.frameTop + 844 * (grapesjsMockState.zoom / 100),
             }),
           }),
           getDocument: () => ({
@@ -66,7 +115,20 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
             },
           }),
         },
-        getSelected: () => heroComponent,
+        getSelected: () => componentById.get(selectedIdsRef.current[0] ?? '') ?? null,
+        getSelectedAll: () => selectedIdsRef.current
+          .map((id) => componentById.get(id))
+          .filter(Boolean),
+      };
+      const selectionSnapshot = () => {
+        const hasSelection = selectedIdsRef.current.length > 0;
+        return {
+          hasSelection,
+          tagName: hasSelection ? 'div' : '',
+          selector: hasSelection ? 'div.hero-title' : '',
+          styles: hasSelection ? { width: '160px', height: '40px' } : {},
+          selectedColors: [],
+        };
       };
       React.useImperativeHandle(ref, () => ({
         getHtml: () => '',
@@ -85,6 +147,7 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
         getSelectedSrc: () => '',
         insertImageComponent: () => {},
         reselectCurrent: () => {},
+        getSelectionSnapshot: selectionSnapshot,
         setCropMode: () => {},
         replaceColors: () => 0,
         getEditor: () => editor,
@@ -95,6 +158,9 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
         'data-initial-width': String(props.initialViewport?.width ?? ''),
         'data-initial-height': String(props.initialViewport?.height ?? ''),
         'data-selection-chrome': props.selectionChrome ?? 'edit',
+        'data-active-tool': props.activeCanvasTool ?? 'cursor',
+        'data-artboard-name': props.artboardName ?? '',
+        'data-comment-pin-enabled': String(Boolean(props.onCanvasCommentPin)),
       }, React.createElement('button', {
         type: 'button',
         'data-testid': 'mock-resize-canvas',
@@ -102,7 +168,34 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
       }, 'resize'), React.createElement('button', {
         type: 'button',
         'data-testid': 'mock-select-target',
-        onClick: () => props.onSelectTargets?.(['hero-title']),
+        onClick: () => emitSelection(['hero-title']),
+      }, 'select'), React.createElement('button', {
+        type: 'button',
+        'data-testid': 'mock-select-multiple-targets',
+        onClick: () => emitSelection(['hero-title', 'hero-subtitle']),
+      }, 'select'), React.createElement('button', {
+        type: 'button',
+        'data-testid': 'mock-clear-targets',
+        onClick: () => emitSelection([]),
+      }, 'select'), React.createElement('button', {
+        type: 'button',
+        'data-testid': 'mock-comment-pin',
+        onClick: () => props.onCanvasCommentPin?.({ x: 88, y: 144 }),
+      }, 'select'), React.createElement('button', {
+        type: 'button',
+        'data-testid': 'mock-pan-canvas',
+        onClick: () => {
+          grapesjsMockState.frameLeft = 40;
+          grapesjsMockState.frameTop = 25;
+          props.onCanvasViewportChange?.();
+        },
+      }, 'select'), React.createElement('button', {
+        type: 'button',
+        'data-testid': 'mock-zoom-canvas',
+        onClick: () => {
+          grapesjsMockState.zoom = 50;
+          props.onCanvasViewportChange?.();
+        },
       }, 'select'), React.createElement('button', {
         type: 'button',
         'data-testid': 'mock-escape-key',
@@ -116,11 +209,15 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
 
 import { FileViewer } from '../../src/components/FileViewer';
 import { I18nProvider } from '../../src/i18n';
+import type { PreviewComment, PreviewCommentTarget } from '../../src/types';
 import type { ProjectFile } from '../../src/types';
 
 afterEach(() => {
   cleanup();
   grapesjsMockState.setViewport.mockReset();
+  grapesjsMockState.frameLeft = 0;
+  grapesjsMockState.frameTop = 0;
+  grapesjsMockState.zoom = 100;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -313,13 +410,90 @@ describe('FileViewer GrapesJS interactive mode', () => {
     );
 
     await screen.findByTestId('mock-grapesjs-editor');
-    const drawButton = await screen.findByTestId('draw-overlay-toggle');
+    expect(await screen.findByTestId('grapesjs-bottom-toolbar')).toBeTruthy();
+    const drawButton = await screen.findByTestId('grapesjs-tool-mark');
     expect(drawButton.getAttribute('aria-pressed')).toBe('false');
 
     fireEvent.click(drawButton);
 
     expect(drawButton.getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByTestId('mock-grapesjs-editor')).toBeTruthy();
+  });
+
+  it('keeps shape tools collapsed in a Chinese shortcut menu and activates placement tools from it', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()} />
+      </I18nProvider>,
+    );
+
+    const editor = await screen.findByTestId('mock-grapesjs-editor');
+    expect(editor.getAttribute('data-artboard-name')).toBe('page');
+    expect(screen.queryByTestId('grapesjs-tool-rectangle')).toBeNull();
+
+    fireEvent.click(await screen.findByTestId('grapesjs-tool-shapes'));
+
+    expect(await screen.findByTestId('grapesjs-shape-menu')).toBeTruthy();
+    expect(screen.getByText('矩形')).toBeTruthy();
+    expect(screen.getByText('R')).toBeTruthy();
+    expect(screen.queryByText('箭头')).toBeNull();
+    expect(screen.queryByText('连接线')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('grapesjs-tool-rectangle'));
+
+    await waitFor(() => {
+      expect(editor.getAttribute('data-active-tool')).toBe('rectangle');
+    });
+    expect(screen.queryByTestId('grapesjs-shape-menu')).toBeNull();
+  });
+
+  it('switches GrapesJS canvas tools from keyboard shortcuts', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()} />
+      </I18nProvider>,
+    );
+
+    const editor = await screen.findByTestId('mock-grapesjs-editor');
+
+    fireEvent.keyDown(window, { key: 'r' });
+    await waitFor(() => {
+      expect(editor.getAttribute('data-active-tool')).toBe('rectangle');
+    });
+
+    fireEvent.keyDown(window, { key: 'L', shiftKey: true });
+    await waitFor(() => {
+      expect(editor.getAttribute('data-active-tool')).toBe('line');
+    });
+
+    fireEvent.keyDown(window, { key: 'x' });
+    await waitFor(() => {
+      expect(editor.getAttribute('data-active-tool')).toBe('line');
+    });
   });
 
   it('shows an add-to-chat action after selecting an element in element selection mode', async () => {
@@ -354,7 +528,7 @@ describe('FileViewer GrapesJS interactive mode', () => {
     const editor = await screen.findByTestId('mock-grapesjs-editor');
     expect(editor.getAttribute('data-selection-chrome')).toBe('edit');
 
-    fireEvent.click(await screen.findByTestId('board-mode-toggle'));
+    fireEvent.click(await screen.findByTestId('grapesjs-tool-annotation'));
 
     await waitFor(() => {
       expect(editor.getAttribute('data-selection-chrome')).toBe('element-selection');
@@ -365,6 +539,7 @@ describe('FileViewer GrapesJS interactive mode', () => {
     fireEvent.click(screen.getByTestId('mock-select-target'));
 
     const addButton = await screen.findByTestId('element-selection-add-to-chat');
+    expect(screen.getByTestId('grapesjs-bottom-toolbar').contains(addButton)).toBe(true);
     expect(screen.getByTestId('element-selection-action').textContent).toContain('Hero title');
     await waitFor(() => {
       expect(onEditSelectionChange).toHaveBeenLastCalledWith(false);
@@ -383,6 +558,266 @@ describe('FileViewer GrapesJS interactive mode', () => {
         htmlHint: '<div data-od-id="hero-title" class="hero-title">Hero title</div>',
         source: 'board-batch',
         commentContext: 'context',
+      }),
+    ]);
+  });
+
+  it('restores the GrapesJS edit panel state when leaving element selection mode with a selection', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+    const onEditModeChange = vi.fn();
+    const onEditSelectionChange = vi.fn();
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlFile()}
+          onEditModeChange={onEditModeChange}
+          onEditSelectionChange={onEditSelectionChange}
+          onStageBoardCommentAttachments={() => true}
+        />
+      </I18nProvider>,
+    );
+
+    const editor = await screen.findByTestId('mock-grapesjs-editor');
+    const annotationTool = await screen.findByTestId('grapesjs-tool-annotation');
+
+    fireEvent.click(annotationTool);
+    await waitFor(() => {
+      expect(editor.getAttribute('data-selection-chrome')).toBe('element-selection');
+    });
+    fireEvent.click(screen.getByTestId('mock-select-target'));
+    expect(await screen.findByTestId('element-selection-add-to-chat')).toBeTruthy();
+
+    fireEvent.click(annotationTool);
+
+    await waitFor(() => {
+      expect(editor.getAttribute('data-selection-chrome')).toBe('edit');
+    });
+    expect(screen.queryByTestId('element-selection-add-to-chat')).toBeNull();
+    expect(onEditModeChange).toHaveBeenLastCalledWith(true);
+    expect(onEditSelectionChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it('opens and saves a free comment pin in GrapesJS comment mode', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+    const onSavePreviewComment = vi.fn(async (target: PreviewCommentTarget, note: string): Promise<PreviewComment> => ({
+      id: 'saved-pin',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      filePath: target.filePath,
+      elementId: target.elementId,
+      selector: target.selector,
+      label: target.label,
+      text: target.text,
+      htmlHint: target.htmlHint,
+      position: target.position,
+      note,
+      status: 'open',
+      selectionKind: 'element',
+      attachments: [],
+      createdAt: 10,
+      updatedAt: 10,
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlFile()}
+          onSavePreviewComment={onSavePreviewComment}
+        />
+      </I18nProvider>,
+    );
+
+    const commentsTool = await screen.findByTestId('grapesjs-tool-comments');
+    fireEvent.click(commentsTool);
+    await waitFor(() => {
+      expect(commentsTool.getAttribute('aria-pressed')).toBe('true');
+      expect(screen.getByTestId('mock-grapesjs-editor').getAttribute('data-comment-pin-enabled')).toBe('true');
+    });
+    fireEvent.click(await screen.findByTestId('mock-comment-pin'));
+    fireEvent.click(await screen.findByTestId('mock-clear-targets'));
+
+    const input = await screen.findByTestId('comment-popover-input');
+    expect(await screen.findByTestId('comment-active-pin')).toBeTruthy();
+    fireEvent.change(input, { target: { value: '这里需要说明' } });
+    fireEvent.click(screen.getByTestId('comment-popover-save'));
+
+    await waitFor(() => {
+      expect(onSavePreviewComment).toHaveBeenCalledTimes(1);
+    });
+    expect(onSavePreviewComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        elementId: expect.stringMatching(/^pin-/),
+        label: '评论',
+        position: expect.objectContaining({ x: 88, y: 144, width: 1, height: 1 }),
+      }),
+      '这里需要说明',
+      false,
+      [],
+    );
+  });
+
+  it('restores the GrapesJS edit panel state after toggling comment mode off', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+    const onEditModeChange = vi.fn();
+    const onEditSelectionChange = vi.fn();
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlFile()}
+          onEditModeChange={onEditModeChange}
+          onEditSelectionChange={onEditSelectionChange}
+        />
+      </I18nProvider>,
+    );
+
+    const commentsTool = await screen.findByTestId('grapesjs-tool-comments');
+    fireEvent.click(commentsTool);
+    fireEvent.click(await screen.findByTestId('mock-select-target'));
+    await waitFor(() => {
+      expect(commentsTool.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    fireEvent.click(commentsTool);
+
+    await waitFor(() => {
+      expect(commentsTool.getAttribute('aria-pressed')).toBe('false');
+    });
+    expect(onEditModeChange).toHaveBeenLastCalledWith(true);
+    expect(onEditSelectionChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it('keeps GrapesJS comment pins aligned when the canvas frame pans', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()} />
+      </I18nProvider>,
+    );
+
+    const commentsTool = await screen.findByTestId('grapesjs-tool-comments');
+    fireEvent.click(commentsTool);
+    fireEvent.click(await screen.findByTestId('mock-comment-pin'));
+
+    const pin = await screen.findByTestId('comment-active-pin');
+    expect(pin.style.left).toBe('88px');
+    expect(pin.style.top).toBe('144px');
+
+    fireEvent.click(screen.getByTestId('mock-pan-canvas'));
+
+    await waitFor(() => {
+      expect(pin.style.left).toBe('128px');
+      expect(pin.style.top).toBe('169px');
+    });
+
+    fireEvent.click(screen.getByTestId('mock-zoom-canvas'));
+
+    await waitFor(() => {
+      expect(pin.style.left).toBe('84px');
+      expect(pin.style.top).toBe('97px');
+    });
+  });
+
+  it('stages multiple selected GrapesJS elements as one pod attachment', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+    const onStageBoardCommentAttachments = vi.fn(() => true);
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlFile()}
+          onStageBoardCommentAttachments={onStageBoardCommentAttachments}
+        />
+      </I18nProvider>,
+    );
+
+    fireEvent.click(await screen.findByTestId('grapesjs-tool-annotation'));
+    fireEvent.click(await screen.findByTestId('mock-select-multiple-targets'));
+
+    const addButton = await screen.findByTestId('element-selection-add-to-chat');
+    fireEvent.click(addButton);
+
+    await waitFor(() => {
+      expect(onStageBoardCommentAttachments).toHaveBeenCalledTimes(1);
+    });
+    expect(onStageBoardCommentAttachments).toHaveBeenCalledWith([
+      expect.objectContaining({
+        selectionKind: 'pod',
+        memberCount: 2,
+        source: 'board-batch',
+        commentContext: 'context',
+        podMembers: expect.arrayContaining([
+          expect.objectContaining({
+            elementId: 'hero-title',
+            selector: 'div.hero-title',
+            label: 'Hero title',
+          }),
+          expect.objectContaining({
+            elementId: 'hero-subtitle',
+            selector: 'p.hero-subtitle',
+            label: 'Hero subtitle',
+          }),
+        ]),
       }),
     ]);
   });
@@ -417,7 +852,7 @@ describe('FileViewer GrapesJS interactive mode', () => {
 
     const editor = await screen.findByTestId('mock-grapesjs-editor');
 
-    fireEvent.click(await screen.findByTestId('board-mode-toggle'));
+    fireEvent.click(await screen.findByTestId('grapesjs-tool-annotation'));
     await waitFor(() => {
       expect(editor.getAttribute('data-selection-chrome')).toBe('element-selection');
     });
@@ -430,7 +865,7 @@ describe('FileViewer GrapesJS interactive mode', () => {
       expect(editor.getAttribute('data-selection-chrome')).toBe('edit');
     });
     expect(screen.queryByTestId('element-selection-add-to-chat')).toBeNull();
-    expect(onEditModeChange).toHaveBeenLastCalledWith(false);
-    expect(onEditSelectionChange).toHaveBeenLastCalledWith(false);
+    expect(onEditModeChange).toHaveBeenLastCalledWith(true);
+    expect(onEditSelectionChange).toHaveBeenLastCalledWith(true);
   });
 });
