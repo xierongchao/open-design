@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { detectOpenDesignHostClientType } from '@open-design/host';
@@ -9,9 +9,21 @@ import {
   markManualEditLocalSave,
   reconcileManualEditSourceRoundTrip,
 } from './html-editor-source-roundtrip';
-import { createHtmlFileSaveController } from './html-file-save-controller';
+import { createHtmlFileSaveController, type HtmlFileSaveReason } from './html-file-save-controller';
 import type { GrapesjsCanvasTool, GrapesjsEditorHandle, SelectionSnapshot } from './grapesjs';
 import { StylePanel } from './grapesjs';
+import { GRAPESJS_SHORTCUT_GROUPS, type GrapesjsShortcutGroupId } from './grapesjs/shortcuts';
+import {
+  GRAPESJS_ICON_LIBRARIES,
+  GRAPESJS_ICON_PAGE_SIZE,
+  GRAPESJS_REMOTE_ICON_PAGE_SIZE,
+  buildIconifySearchUrl,
+  iconifySearchResultsToIcons,
+  visibleGrapesjsIconPage,
+  type GrapesjsIconDefinition,
+  type GrapesjsIconLibraryId,
+  type GrapesjsIconVariant,
+} from './grapesjs/icon-library';
 import {
   applyPreviewStyle,
   persistStyleOverride,
@@ -246,6 +258,54 @@ import {
 
 const GrapesjsEditor = lazy(() => import('./grapesjs/GrapesjsEditor').then((m) => ({ default: m.default })));
 const GRAPESJS_SOURCE_STATE_SYNC_DELAY_MS = 500;
+const GRAPESJS_DEFAULT_ICON_COLOR = '#000000';
+
+function GrapesjsIconLibraryPreview({
+  icon,
+  size = 24,
+  color,
+  strokeWidth,
+  variant,
+}: {
+  icon: GrapesjsIconDefinition;
+  size?: number;
+  color: string;
+  strokeWidth: number;
+  variant: GrapesjsIconVariant;
+}) {
+  if (icon.remoteSvgUrl) {
+    return (
+      <span
+        aria-hidden="true"
+        className="grapesjs-icon-library-remote-preview"
+        style={{
+          width: size,
+          height: size,
+          backgroundColor: color,
+          WebkitMaskImage: `url("${icon.remoteSvgUrl}")`,
+          maskImage: `url("${icon.remoteSvgUrl}")`,
+        }}
+      />
+    );
+  }
+  const fill = variant === 'fill' ? color : 'none';
+  const stroke = variant === 'fill' ? 'none' : color;
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill={fill}
+      stroke={stroke}
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={icon.path} />
+    </svg>
+  );
+}
 
 function previewViewportIcon(viewport: PreviewViewportId): string {
   if (viewport === 'tablet') return 'tablet-line';
@@ -528,7 +588,7 @@ interface Props {
   onRemovePreviewComment?: (commentId: string) => Promise<void>;
   onStageBoardCommentAttachments?: (attachments: ChatCommentAttachment[]) => Promise<boolean | void> | boolean | void;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<boolean | void> | boolean | void;
-  onFileSaved?: () => Promise<void> | void;
+  onFileSaved?: (event: { fileName: string; reason: HtmlFileSaveReason }) => Promise<void> | void;
   // Open `openName` as a tab (focusing it) and close `closeName` in one
   // atomic tab-state update. The React module pointer uses this to jump to the
   // HTML entry that renders a module and drop the dead-end module tab.
@@ -1069,7 +1129,7 @@ export function LiveArtifactViewer({
               </button>
               {zoomMenuOpen && mode === 'preview' ? (
                 <div className="zoom-menu-popover" role="menu">
-                  {[50, 75, 100, 125, 150, 200].map((level) => (
+                  {[50, 75, 100, 125, 150, 200, 300, 400, 500, 750, 1000].map((level) => (
                     <button
                       key={level}
                       type="button"
@@ -2478,7 +2538,7 @@ function clamp(n: number, lo: number, hi: number): number {
 }
 
 function clampManualEditZoom(value: number): number {
-  return clamp(value, 25, 400);
+  return clamp(value, 25, 1000);
 }
 
 const MANUAL_EDIT_WHEEL_ZOOM_SENSITIVITY = 0.0012;
@@ -4143,7 +4203,7 @@ function HtmlViewer({
   onRemovePreviewComment?: (commentId: string) => Promise<void>;
   onStageBoardCommentAttachments?: (attachments: ChatCommentAttachment[]) => Promise<boolean | void> | boolean | void;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[], images?: File[]) => Promise<boolean | void> | boolean | void;
-  onFileSaved?: () => Promise<void> | void;
+  onFileSaved?: (event: { fileName: string; reason: HtmlFileSaveReason }) => Promise<void> | void;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
   editPortalId?: string;
@@ -4163,7 +4223,7 @@ function HtmlViewer({
     projectId,
     fileName: file.name,
     artifactManifest: file.artifactManifest,
-    onSaved: onFileSaved,
+    onSaved: (event) => onFileSaved?.({ fileName: event.file.name, reason: event.reason }),
   }), [projectId, file.name, file.artifactManifest, onFileSaved]);
   // Shared helper for the share menu: emit studio_click share_option on
   // entry and artifact_export_result on resolution. Sync exports report
@@ -4411,6 +4471,19 @@ function HtmlViewer({
   const [imageEditSignal, setImageEditSignal] = useState(0);
   const [grapesjsCanvasTool, setGrapesjsCanvasTool] = useState<GrapesjsCanvasTool>('cursor');
   const [grapesjsShapeMenuOpen, setGrapesjsShapeMenuOpen] = useState(false);
+  const [grapesjsShortcutHelpOpen, setGrapesjsShortcutHelpOpen] = useState(false);
+  const [grapesjsShortcutGroup, setGrapesjsShortcutGroup] = useState<GrapesjsShortcutGroupId>('arrange');
+  const [grapesjsIconLibraryOpen, setGrapesjsIconLibraryOpen] = useState(false);
+  const [grapesjsIconLibrary, setGrapesjsIconLibrary] = useState<GrapesjsIconLibraryId | 'all'>('all');
+  const [grapesjsIconQuery, setGrapesjsIconQuery] = useState('');
+  const [grapesjsIconVariant, setGrapesjsIconVariant] = useState<GrapesjsIconVariant>('linear');
+  const [grapesjsIconSize, setGrapesjsIconSize] = useState(24);
+  const [grapesjsIconStrokeWidth, setGrapesjsIconStrokeWidth] = useState(2);
+  const [grapesjsIconColor, setGrapesjsIconColor] = useState(GRAPESJS_DEFAULT_ICON_COLOR);
+  const [grapesjsIconLimit, setGrapesjsIconLimit] = useState(GRAPESJS_ICON_PAGE_SIZE);
+  const [grapesjsRemoteIcons, setGrapesjsRemoteIcons] = useState<GrapesjsIconDefinition[]>([]);
+  const [grapesjsRemoteIconsLoading, setGrapesjsRemoteIconsLoading] = useState(false);
+  const [grapesjsRemoteIconsError, setGrapesjsRemoteIconsError] = useState<string | null>(null);
   const [grapesjsOverlayVersion, setGrapesjsOverlayVersion] = useState(0);
   const grapesjsOverlaySyncRafRef = useRef<number | null>(null);
   const grapesjsBottomToolbarRef = useRef<HTMLDivElement | null>(null);
@@ -7194,7 +7267,7 @@ function HtmlViewer({
         reconcileManualEditStyleSave(patch.id, patch.styles, result.source);
       }
       setManualEditError(null);
-      await onFileSaved?.();
+      await onFileSaved?.({ fileName: file.name, reason: 'manual-edit-patch' });
       return true;
     } finally {
       manualEditSavingRef.current = false;
@@ -7573,14 +7646,20 @@ function HtmlViewer({
   }, [zoomMenuOpen]);
 
   useEffect(() => {
-    if (!grapesjsShapeMenuOpen) return;
+    if (!grapesjsShapeMenuOpen && !grapesjsShortcutHelpOpen && !grapesjsIconLibraryOpen) return;
     const onDocClick = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (target && grapesjsBottomToolbarRef.current?.contains(target)) return;
       setGrapesjsShapeMenuOpen(false);
+      setGrapesjsShortcutHelpOpen(false);
+      setGrapesjsIconLibraryOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setGrapesjsShapeMenuOpen(false);
+      if (event.key === 'Escape') {
+        setGrapesjsShapeMenuOpen(false);
+        setGrapesjsShortcutHelpOpen(false);
+        setGrapesjsIconLibraryOpen(false);
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onKey);
@@ -7588,7 +7667,43 @@ function HtmlViewer({
       document.removeEventListener('mousedown', onDocClick);
       document.removeEventListener('keydown', onKey);
     };
-  }, [grapesjsShapeMenuOpen]);
+  }, [grapesjsShapeMenuOpen, grapesjsShortcutHelpOpen, grapesjsIconLibraryOpen]);
+
+  useEffect(() => {
+    setGrapesjsIconLimit(GRAPESJS_ICON_PAGE_SIZE);
+  }, [grapesjsIconLibrary, grapesjsIconQuery]);
+
+  useEffect(() => {
+    const query = grapesjsIconQuery.trim();
+    if (!grapesjsIconLibraryOpen || !query) {
+      setGrapesjsRemoteIcons([]);
+      setGrapesjsRemoteIconsLoading(false);
+      setGrapesjsRemoteIconsError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setGrapesjsRemoteIconsLoading(true);
+    setGrapesjsRemoteIconsError(null);
+    const url = buildIconifySearchUrl({ query, limit: GRAPESJS_REMOTE_ICON_PAGE_SIZE });
+    void fetch(url, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Icon search failed: ${response.status}`);
+        return response.json() as Promise<{ icons?: string[] }>;
+      })
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        setGrapesjsRemoteIcons(iconifySearchResultsToIcons(payload));
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setGrapesjsRemoteIcons([]);
+        setGrapesjsRemoteIconsError(error instanceof Error ? error.message : '远程图标加载失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setGrapesjsRemoteIconsLoading(false);
+      });
+    return () => controller.abort();
+  }, [grapesjsIconLibraryOpen, grapesjsIconQuery]);
 
   useEffect(() => {
     if (!agentToolsOpen) return;
@@ -9268,6 +9383,28 @@ function HtmlViewer({
   ];
   const activeShapeTool = grapesjsShapeToolDefs.find((item) => item.tool === grapesjsCanvasTool);
   const shapeTriggerLabel = activeShapeTool ? `${activeShapeTool.label} ${activeShapeTool.shortcut}` : '形状 R';
+  const activeShortcutGroup = GRAPESJS_SHORTCUT_GROUPS.find((group) => group.id === grapesjsShortcutGroup)
+    ?? GRAPESJS_SHORTCUT_GROUPS.find((group) => group.id === 'arrange')
+    ?? GRAPESJS_SHORTCUT_GROUPS[0];
+  const visibleGrapesjsIconPageResult = visibleGrapesjsIconPage({
+    library: grapesjsIconLibrary,
+    query: grapesjsIconQuery,
+    limit: grapesjsIconLimit,
+  });
+  const visibleGrapesjsIcons = visibleGrapesjsIconPageResult.items;
+  const displayedGrapesjsIcons = grapesjsIconQuery.trim()
+    ? [...grapesjsRemoteIcons, ...visibleGrapesjsIcons]
+    : visibleGrapesjsIcons;
+  const grapesjsIconPreviewColor = grapesjsIconColor.trim().toLowerCase() === GRAPESJS_DEFAULT_ICON_COLOR
+    ? 'currentColor'
+    : grapesjsIconColor;
+  const handleGrapesjsIconGridScroll = (event: ReactUIEvent<HTMLDivElement>) => {
+    if (!visibleGrapesjsIconPageResult.hasMore) return;
+    const target = event.currentTarget;
+    const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (distanceToBottom > 96) return;
+    setGrapesjsIconLimit((limit) => limit + GRAPESJS_ICON_PAGE_SIZE);
+  };
   const grapesjsBottomToolbar = showGrapesjsBottomToolbar ? (
     <div
       ref={grapesjsBottomToolbarRef}
@@ -9275,7 +9412,11 @@ function HtmlViewer({
       role="toolbar"
       aria-label="画布工具"
       data-testid="grapesjs-bottom-toolbar"
-      onMouseDown={(event) => event.preventDefault()}
+      onMouseDown={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest('.grapesjs-icon-library-panel')) return;
+        event.preventDefault();
+      }}
     >
       <div className="grapesjs-bottom-toolbar-group">
         <button
@@ -9303,7 +9444,11 @@ function HtmlViewer({
             title={shapeTriggerLabel}
             data-tooltip={shapeTriggerLabel}
             data-tooltip-placement="top"
-            onClick={() => setGrapesjsShapeMenuOpen((open) => !open)}
+            onClick={() => {
+              setGrapesjsShortcutHelpOpen(false);
+              setGrapesjsIconLibraryOpen(false);
+              setGrapesjsShapeMenuOpen((open) => !open);
+            }}
           >
             <RemixIcon name={activeShapeTool?.icon ?? 'square-line'} size={16} />
             <RemixIcon name="arrow-down-s-line" size={12} className="grapesjs-bottom-tool-caret" />
@@ -9344,8 +9489,186 @@ function HtmlViewer({
           data-tooltip-placement="top"
           onClick={() => activateGrapesjsCanvasTool('text')}
         >
-          <RemixIcon name="text" size={16} />
+          <RemixIcon name="font-size" size={16} />
         </button>
+        <div className="grapesjs-bottom-menu-anchor">
+          <button
+            type="button"
+            className={`grapesjs-bottom-tool od-tooltip${grapesjsIconLibraryOpen ? ' active' : ''}`}
+            data-testid="grapesjs-tool-icons"
+            aria-label="图标库"
+            aria-pressed={grapesjsIconLibraryOpen}
+            aria-haspopup="dialog"
+            aria-expanded={grapesjsIconLibraryOpen}
+            title="图标库"
+            data-tooltip="图标库"
+            data-tooltip-placement="top"
+            onClick={() => {
+              setGrapesjsShapeMenuOpen(false);
+              setGrapesjsShortcutHelpOpen(false);
+              setGrapesjsIconLibraryOpen((open) => !open);
+            }}
+          >
+            <RemixIcon name="apps-2-line" size={16} />
+          </button>
+          {grapesjsIconLibraryOpen ? (
+            <div
+              className="grapesjs-icon-library-panel"
+              role="dialog"
+              aria-label="图标库"
+              data-testid="grapesjs-icon-library-panel"
+            >
+              <div className="grapesjs-icon-library-main">
+                <div className="grapesjs-icon-library-search-row">
+                  <label className="grapesjs-icon-library-search">
+                    <RemixIcon name="search-line" size={14} />
+                    <input
+                      type="search"
+                      aria-label="搜索图标"
+                      placeholder="请输入图标关键词"
+                      value={grapesjsIconQuery}
+                      onChange={(event) => setGrapesjsIconQuery(event.target.value)}
+                    />
+                  </label>
+                </div>
+                {grapesjsRemoteIconsLoading ? (
+                  <div className="grapesjs-icon-library-loading">正在加载远程图标...</div>
+                ) : null}
+                {grapesjsRemoteIconsError ? (
+                  <div className="grapesjs-icon-library-error">远程图标暂时不可用，已显示本地图标</div>
+                ) : null}
+                <div
+                  className="grapesjs-icon-library-grid"
+                  role="list"
+                  aria-label="图标列表"
+                  onScroll={handleGrapesjsIconGridScroll}
+                >
+                  {displayedGrapesjsIcons.map((icon) => {
+                    const libraryLabel = icon.library === 'remote'
+                      ? 'Iconify'
+                      : GRAPESJS_ICON_LIBRARIES.find((item) => item.id === icon.library)?.label ?? icon.library;
+                    return (
+                      <button
+                        key={icon.id}
+                        type="button"
+                        className="grapesjs-icon-library-item"
+                        aria-label={`添加图标 ${icon.label} ${libraryLabel}`}
+                        title={`${icon.label} · ${libraryLabel}`}
+                        onClick={() => {
+                          grapesjsEditorRef.current?.insertIconComponent({
+                            label: icon.label,
+                            path: icon.path,
+                            library: icon.library,
+                            size: grapesjsIconSize,
+                            strokeWidth: grapesjsIconStrokeWidth,
+                            color: grapesjsIconColor,
+                            variant: grapesjsIconVariant,
+                            remoteIcon: icon.remoteIcon,
+                            remoteSvgUrl: icon.remoteSvgUrl,
+                          });
+                          setGrapesjsIconLibraryOpen(false);
+                        }}
+                      >
+                        <GrapesjsIconLibraryPreview
+                          icon={icon}
+                          size={22}
+                          color={grapesjsIconPreviewColor}
+                          strokeWidth={grapesjsIconStrokeWidth}
+                          variant={grapesjsIconVariant}
+                        />
+                        <span>{icon.label}</span>
+                      </button>
+                    );
+                  })}
+                  {displayedGrapesjsIcons.length === 0 && !grapesjsRemoteIconsLoading ? (
+                    <div className="grapesjs-icon-library-empty">没有找到图标</div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="grapesjs-icon-library-side">
+                <label className="grapesjs-icon-library-field">
+                  <span>类型</span>
+                  <select
+                    aria-label="图标库"
+                    value={grapesjsIconLibrary}
+                    onChange={(event) => setGrapesjsIconLibrary(event.target.value as GrapesjsIconLibraryId | 'all')}
+                  >
+                    <option value="all">全部</option>
+                    {GRAPESJS_ICON_LIBRARIES.map((library) => (
+                      <option key={library.id} value={library.id}>{library.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grapesjs-icon-library-field">
+                  <span>风格</span>
+                  <select
+                    aria-label="图标样式"
+                    value={grapesjsIconVariant}
+                    onChange={(event) => setGrapesjsIconVariant(event.target.value as GrapesjsIconVariant)}
+                  >
+                    <option value="linear">线性</option>
+                    <option value="fill">填充</option>
+                  </select>
+                </label>
+                <label className="grapesjs-icon-library-field">
+                  <span>大小</span>
+                  <select
+                    aria-label="图标大小"
+                    value={String(grapesjsIconSize)}
+                    onChange={(event) => setGrapesjsIconSize(Number(event.target.value))}
+                  >
+                    {[16, 20, 24, 32, 40, 48, 64].map((size) => (
+                      <option key={size} value={size}>{size}px</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grapesjs-icon-library-field">
+                  <span>粗细</span>
+                  <select
+                    aria-label="图标粗细"
+                    value={String(grapesjsIconStrokeWidth)}
+                    onChange={(event) => setGrapesjsIconStrokeWidth(Number(event.target.value))}
+                  >
+                    {[1, 1.5, 2, 2.5, 3].map((width) => (
+                      <option key={width} value={width}>{width}px</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grapesjs-icon-library-field">
+                  <span>描边颜色</span>
+                  <div className="grapesjs-icon-library-color-row">
+                    <input
+                      type="color"
+                      aria-label="图标描边颜色"
+                      value={grapesjsIconColor}
+                      onChange={(event) => setGrapesjsIconColor(event.target.value)}
+                    />
+                    <input
+                      type="text"
+                      aria-label="图标颜色值"
+                      value={grapesjsIconColor}
+                      onChange={(event) => setGrapesjsIconColor(event.target.value)}
+                    />
+                  </div>
+                </label>
+                <button
+                  type="button"
+                  className="grapesjs-icon-library-clear"
+                  onClick={() => {
+                    setGrapesjsIconLibrary('all');
+                    setGrapesjsIconQuery('');
+                    setGrapesjsIconVariant('linear');
+                    setGrapesjsIconSize(24);
+                    setGrapesjsIconStrokeWidth(2);
+                    setGrapesjsIconColor(GRAPESJS_DEFAULT_ICON_COLOR);
+                  }}
+                >
+                  清空配置
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
       <span className="grapesjs-bottom-toolbar-divider" aria-hidden />
       <div className="grapesjs-bottom-toolbar-group">
@@ -9396,6 +9719,65 @@ function HtmlViewer({
           {elementSelectionAction}
         </>
       ) : null}
+      <span className="grapesjs-bottom-toolbar-divider" aria-hidden />
+      <div className="grapesjs-bottom-menu-anchor">
+        <button
+          type="button"
+          className={`grapesjs-bottom-tool od-tooltip${grapesjsShortcutHelpOpen ? ' active' : ''}`}
+          data-testid="grapesjs-shortcut-help-trigger"
+          aria-label="快捷键说明"
+          aria-pressed={grapesjsShortcutHelpOpen}
+          aria-haspopup="dialog"
+          aria-expanded={grapesjsShortcutHelpOpen}
+          title="快捷键说明"
+          data-tooltip="快捷键说明"
+          data-tooltip-placement="top"
+          onClick={() => {
+            setGrapesjsShapeMenuOpen(false);
+            setGrapesjsIconLibraryOpen(false);
+            setGrapesjsShortcutHelpOpen((open) => !open);
+          }}
+        >
+          <Icon name="help-circle" size={16} />
+        </button>
+        {grapesjsShortcutHelpOpen && activeShortcutGroup ? (
+          <div
+            className="grapesjs-shortcut-help-panel"
+            role="dialog"
+            aria-label="快捷键说明"
+            data-testid="grapesjs-shortcut-help-panel"
+          >
+            <div className="grapesjs-shortcut-help-tabs" role="tablist" aria-label="快捷键分类">
+              {GRAPESJS_SHORTCUT_GROUPS.map((group) => {
+                const active = group.id === activeShortcutGroup.id;
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    className={`grapesjs-shortcut-help-tab${active ? ' active' : ''}`}
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setGrapesjsShortcutGroup(group.id)}
+                  >
+                    {group.title}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="grapesjs-shortcut-help-grid">
+              {activeShortcutGroup.items.map((item) => (
+                <div className="grapesjs-shortcut-help-item" key={`${activeShortcutGroup.id}-${item.label}`}>
+                  <span className="grapesjs-shortcut-help-mark" aria-hidden>
+                    <RemixIcon name={item.icon} size={14} />
+                  </span>
+                  <span className="grapesjs-shortcut-help-label">{item.label}</span>
+                  <span className="grapesjs-shortcut-help-keys">{item.shortcut}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   ) : null;
   const boardPreviewImage =
@@ -9717,7 +10099,7 @@ function HtmlViewer({
                   </button>
                   {zoomMenuOpen ? (
                     <div className="zoom-menu-popover" role="menu">
-                      {[50, 75, 100, 125, 150, 200].map((level) => (
+                      {[50, 75, 100, 125, 150, 200, 300, 400, 500, 750, 1000].map((level) => (
                         <button
                           key={level}
                           type="button"

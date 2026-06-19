@@ -51,7 +51,8 @@ import {
   upsertPreviewComment,
   writeProjectTextFile,
 } from '../providers/registry';
-import { useProjectFileEvents, type ProjectEvent } from '../providers/project-events';
+import { recordOpenDesignEditorDiagnostic } from '../diagnostics/editor-diagnostics';
+import { useProjectFileEvents, type ProjectEvent, type ProjectFileChangeEvent } from '../providers/project-events';
 import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
 import {
   composeSystemPrompt,
@@ -306,6 +307,7 @@ const DESIGN_SYSTEM_AUDIT_AUTO_REPAIR_ATTEMPTS = 2;
 // Embedded-browser navigation bursts settle well within this; the local cache
 // is written immediately so nothing is lost if the daemon write is coalesced.
 const TAB_PERSIST_DEBOUNCE_MS = 400;
+const LOCAL_FILE_REFRESH_SUPPRESSION_MS = 750;
 type DesignSystemReviewEntry = NonNullable<ProjectMetadata['designSystemReview']>[string];
 type DesignSystemReviewAgentTask = NonNullable<DesignSystemReviewEntry['agentTask']>;
 interface DesignSystemReviewDetails {
@@ -875,6 +877,8 @@ export function ProjectView({
   const [workingDirReplacing, setWorkingDirReplacing] = useState(false);
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
   const projectFilesRef = useRef<ProjectFile[]>([]);
+  const lastLocalFileRefreshRef = useRef<{ at: number; fileName?: string; reason?: string } | null>(null);
+  const pendingFileChangeEventsRef = useRef<ProjectFileChangeEvent[]>([]);
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
   const [workspaceFocused, setWorkspaceFocused] = useState(false);
@@ -1678,6 +1682,21 @@ export function ProjectView({
     return nextFiles;
   }, [refreshLiveArtifacts, refreshProjectFiles]);
 
+  const refreshWorkspaceItemsFromFileWorkspace = useCallback(
+    async (request?: { source?: 'local-save'; fileName?: string; reason?: string }): Promise<void> => {
+      if (request?.source === 'local-save') {
+        lastLocalFileRefreshRef.current = {
+          at: Date.now(),
+          fileName: request.fileName,
+          reason: request.reason,
+        };
+        recordOpenDesignEditorDiagnostic('project-files:local-save-refresh', request);
+      }
+      await refreshWorkspaceItems();
+    },
+    [refreshWorkspaceItems],
+  );
+
   useEffect(() => {
     if (!tabsLoadedRef.current) return;
     if (hasAppliedInitialPrimaryOpenRef.current) return;
@@ -1877,6 +1896,25 @@ export function ProjectView({
   // out of their preview. A short trailing wait absorbs the burst; the
   // maxWait cap stops a sustained edit storm from starving the UI.
   const refreshFilesAndDesignMd = useCallback(() => {
+    const pendingEvents = pendingFileChangeEventsRef.current;
+    pendingFileChangeEventsRef.current = [];
+    const lastLocalRefresh = lastLocalFileRefreshRef.current;
+    const suppressAfterLocalSave = Boolean(
+      lastLocalRefresh &&
+      Date.now() - lastLocalRefresh.at < LOCAL_FILE_REFRESH_SUPPRESSION_MS &&
+      (
+        pendingEvents.length === 0 ||
+        pendingEvents.every((event) => !lastLocalRefresh.fileName || event.path === lastLocalRefresh.fileName)
+      ),
+    );
+    if (suppressAfterLocalSave) {
+      recordOpenDesignEditorDiagnostic('project-files:file-event-suppressed-after-local-save', {
+        local: lastLocalRefresh,
+        events: pendingEvents,
+      });
+      setDesignMdRefreshKey((n) => n + 1);
+      return;
+    }
     setFilesRefresh((n) => n + 1);
     // Round 7 (mrcfps): file mutations are the dominant staleness signal
     // post-finalize — bump the refresh key so DESIGN.md staleness
@@ -1890,6 +1928,7 @@ export function ProjectView({
   const handleProjectEvent = useCallback((evt: ProjectEvent) => {
     if (evt.type === 'file-changed') {
       iframeKeepAlivePool.evictProject(project.id);
+      pendingFileChangeEventsRef.current = [...pendingFileChangeEventsRef.current, evt];
       coalescedFileChangedRefresh();
       return;
     }
@@ -5719,9 +5758,7 @@ export function ProjectView({
           files={projectFiles}
           liveArtifacts={liveArtifacts}
           filesRefreshKey={filesRefresh}
-          onRefreshFiles={() => {
-            void refreshWorkspaceItems();
-          }}
+          onRefreshFiles={refreshWorkspaceItemsFromFileWorkspace}
           onDesignFilesPreviewChange={setDesignFilesPreviewName}
           isDeck={isDeck}
           onExportAsPptx={handleExportAsPptx}

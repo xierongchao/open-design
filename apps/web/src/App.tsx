@@ -80,6 +80,7 @@ import {
   syncMediaProvidersToDaemon,
 } from './state/config';
 import { applyAppearanceToDocument } from './state/appearance';
+import { installOpenDesignEditorDiagnostics } from './diagnostics/editor-diagnostics';
 import { isMacPlatform } from './utils/platform';
 import {
   createProject,
@@ -344,6 +345,9 @@ function AppInner() {
   );
   const [desktopFullscreen, setDesktopFullscreen] = useState(false);
   useModalWindowDragGuard();
+  useEffect(() => {
+    installOpenDesignEditorDiagnostics();
+  }, []);
   // Listen for macOS native fullscreen state forwarded by the desktop
   // Electron host bridge. The desktop preload exposes
   // shell.onFullscreenChange() which receives the BrowserWindow

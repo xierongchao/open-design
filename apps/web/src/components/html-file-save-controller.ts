@@ -2,6 +2,7 @@ import {
   writeProjectTextFileDetailed,
   type WriteProjectTextFileResult,
 } from '../providers/registry';
+import { recordOpenDesignEditorDiagnostic } from '../diagnostics/editor-diagnostics';
 import type { ProjectFile } from '../types';
 
 export type HtmlFileSaveReason =
@@ -35,7 +36,7 @@ export interface CreateHtmlFileSaveControllerOptions {
   projectId: string;
   fileName: string;
   artifactManifest?: ProjectFile['artifactManifest'];
-  onSaved?: () => Promise<void> | void;
+  onSaved?: (event: { file: ProjectFile; reason: HtmlFileSaveReason }) => Promise<void> | void;
   write?: HtmlFileSaveWriter;
 }
 
@@ -69,13 +70,37 @@ export function createHtmlFileSaveController({
     try {
       while (activeSave) {
         const job = activeSave;
+        recordOpenDesignEditorDiagnostic('html-save:start', {
+          fileName,
+          reason: job.reason,
+          requestId: job.requestId,
+          queued: Boolean(queuedSave),
+        });
         try {
           const result = await write(projectId, fileName, job.source, { artifactManifest });
+          recordOpenDesignEditorDiagnostic('html-save:finish', {
+            fileName,
+            reason: job.reason,
+            requestId: job.requestId,
+            ok: result.ok,
+            status: result.ok ? 200 : result.status,
+          });
           if (result.ok && job.requestId === latestRequestedSaveId && !queuedSave) {
-            await onSaved?.();
+            recordOpenDesignEditorDiagnostic('html-save:on-saved', {
+              fileName,
+              reason: job.reason,
+              requestId: job.requestId,
+            });
+            await onSaved?.({ file: result.file, reason: job.reason });
           }
           for (const waiter of job.waiters) waiter.resolve(result);
         } catch (error) {
+          recordOpenDesignEditorDiagnostic('html-save:error', {
+            fileName,
+            reason: job.reason,
+            requestId: job.requestId,
+            message: error instanceof Error ? error.message : String(error),
+          });
           for (const waiter of job.waiters) waiter.reject(error);
         }
         activeSave = queuedSave;

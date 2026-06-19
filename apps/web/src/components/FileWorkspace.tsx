@@ -101,6 +101,12 @@ import {
 import { AnimatePresence } from 'motion/react';
 import type { ChatMessage } from '../types';
 
+type RefreshFilesRequest = {
+  source?: 'local-save';
+  fileName?: string;
+  reason?: string;
+};
+
 interface Props {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -116,7 +122,7 @@ interface Props {
   files: ProjectFile[];
   liveArtifacts: LiveArtifactSummary[];
   filesRefreshKey?: number;
-  onRefreshFiles: () => Promise<void> | void;
+  onRefreshFiles: (request?: RefreshFilesRequest) => Promise<void> | void;
   onDesignFilesPreviewChange?: (fileName: string | null) => void;
   isDeck: boolean;
   onExportAsPptx?: ((fileName: string) => void) | undefined;
@@ -2645,7 +2651,11 @@ export function FileWorkspace({
                   onRemovePreviewComment={onRemovePreviewComment}
                   onStageBoardCommentAttachments={onStageBoardCommentAttachments}
                   onSendBoardCommentAttachments={onSendBoardCommentAttachments}
-                  onFileSaved={onRefreshFiles}
+                  onFileSaved={(event) => onRefreshFiles({
+                    source: 'local-save',
+                    fileName: event.fileName,
+                    reason: event.reason,
+                  })}
                   onOpenFileReplacing={(openName) => openDesignFilesPreview(openName)}
                   commentPortalId={commentPortalId}
                   onCommentModeChange={onCommentModeChange}
@@ -2801,7 +2811,11 @@ export function FileWorkspace({
             onRemovePreviewComment={onRemovePreviewComment}
             onStageBoardCommentAttachments={onStageBoardCommentAttachments}
             onSendBoardCommentAttachments={onSendBoardCommentAttachments}
-            onFileSaved={onRefreshFiles}
+            onFileSaved={(event) => onRefreshFiles({
+              source: 'local-save',
+              fileName: event.fileName,
+              reason: event.reason,
+            })}
             onOpenFileReplacing={openFileReplacing}
             commentPortalId={commentPortalId}
             onCommentModeChange={onCommentModeChange}

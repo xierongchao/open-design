@@ -67,7 +67,7 @@ import {
   SelectedColor,
   cssColorToHex,
 } from './color-fields';
-import type { GrapesjsEditorHandle, SelectionSnapshot } from './GrapesjsEditor';
+import type { GrapesjsEditorHandle, GrapesjsPositionAlignMode, SelectionSnapshot } from './GrapesjsEditor';
 import {
   ImageFillSummary,
   fillSizeToObjectFit,
@@ -168,13 +168,24 @@ const FLOW_OPTIONS: IconOption[] = [
   { value: 'wrap', label: '自动换行', icon: Grid2X2 },
 ];
 
-const POSITION_ALIGN_OPTIONS: IconOption[] = [
-  { value: 'start-horizontal', label: '水平左对齐', icon: AlignStartHorizontal },
-  { value: 'center-horizontal', label: '水平居中', icon: AlignCenterHorizontal },
-  { value: 'end-horizontal', label: '水平右对齐', icon: AlignEndHorizontal },
-  { value: 'start-vertical', label: '垂直顶部对齐', icon: AlignStartVertical },
-  { value: 'center-vertical', label: '垂直居中', icon: AlignCenterVertical },
-  { value: 'end-vertical', label: '垂直底部对齐', icon: AlignEndVertical },
+type PositionAlignAction = {
+  value: string;
+  label: string;
+  shortcut: string;
+  mode: GrapesjsPositionAlignMode;
+  icon: typeof AlignStartVertical;
+  fallback?: StyleMap;
+};
+
+const POSITION_ALIGN_ACTIONS: PositionAlignAction[] = [
+  { value: 'left', label: '左对齐', shortcut: '⌥ A', mode: 'left', icon: AlignStartVertical, fallback: { justifySelf: 'start' } },
+  { value: 'center-x', label: '左右居中对齐', shortcut: '⌥ H', mode: 'center-x', icon: AlignCenterVertical, fallback: { justifySelf: 'center' } },
+  { value: 'right', label: '右对齐', shortcut: '⌥ D', mode: 'right', icon: AlignEndVertical, fallback: { justifySelf: 'end' } },
+  { value: 'top', label: '顶对齐', shortcut: '⌥ W', mode: 'top', icon: AlignStartHorizontal, fallback: { alignSelf: 'flex-start' } },
+  { value: 'center-y', label: '上下居中对齐', shortcut: '⌥ V', mode: 'center-y', icon: AlignCenterHorizontal, fallback: { alignSelf: 'center' } },
+  { value: 'bottom', label: '底对齐', shortcut: '⌥ S', mode: 'bottom', icon: AlignEndHorizontal, fallback: { alignSelf: 'flex-end' } },
+  { value: 'distribute-y', label: '垂直平均分布', shortcut: '⇧ ⌥ V', mode: 'distribute-y', icon: AlignVerticalSpaceBetween },
+  { value: 'distribute-x', label: '水平平均分布', shortcut: '⇧ ⌥ H', mode: 'distribute-x', icon: AlignHorizontalSpaceBetween },
 ];
 
 const TEXT_ALIGN_OPTIONS: IconOption[] = [
@@ -323,6 +334,37 @@ function AlignmentGrid({
           );
         }),
       )}
+    </div>
+  );
+}
+
+function PositionAlignControls({
+  disabled = false,
+  onAction,
+}: {
+  disabled?: boolean;
+  onAction: (action: PositionAlignAction) => void;
+}) {
+  return (
+    <div className={styles.positionAlignGrid} role="group" aria-label="位置对齐">
+      {POSITION_ALIGN_ACTIONS.map((action) => {
+        const ActionIcon = action.icon;
+        const accessibleLabel = `${action.label} ${action.shortcut}`;
+        return (
+          <button
+            key={action.value}
+            type="button"
+            className={styles.positionAlignButton}
+            aria-label={accessibleLabel}
+            title={accessibleLabel}
+            data-tooltip={accessibleLabel}
+            disabled={disabled}
+            onClick={() => onAction(action)}
+          >
+            <ActionIcon size={13} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -684,6 +726,11 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
           <Frame size={14} strokeWidth={1.8} aria-hidden="true" />
           <strong>画板</strong>
         </div>
+        <PropertySection title="位置">
+          <LabeledControl label="对齐">
+            <PositionAlignControls disabled onAction={() => {}} />
+          </LabeledControl>
+        </PropertySection>
         <PropertySection title="尺寸">
           <div className={styles.twoColumn}>
             <NumberScrub
@@ -749,6 +796,8 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   // screenshot divs and <img>-replaced fills, otherwise the panel stays
   // force-collapsed with only the + button.
   const hasBackgroundImage = !!style.backgroundImage && style.backgroundImage !== 'none';
+  const isIconElement = selection?.canvasTool === 'icon';
+  const iconColorVisible = isIconElement && !isTransparent(style.color);
   const fillVisible = !isTransparent(style.backgroundColor) || isGradient(style.backgroundImage) || hasBackgroundImage;
   const strokeVisible = pxToNum(style.borderTopWidth) > 0 && style.borderStyle !== 'none';
   const effectVisible = !!style.boxShadow && style.boxShadow !== 'none';
@@ -803,6 +852,10 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
       flexDirection: style.flexDirection,
     }));
   };
+  const applyPositionAlignAction = (action: PositionAlignAction) => {
+    if (editorRef.current?.alignPositionedSelection?.(action.mode)) return;
+    if (action.fallback) apply(action.fallback);
+  };
 
   return (
     <div ref={panelRootRef} className={styles.root} data-testid="grapesjs-style-panel">
@@ -813,18 +866,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
 
       <PropertySection title="位置">
         <LabeledControl label="对齐">
-          <IconGroup
-            options={POSITION_ALIGN_OPTIONS}
-            value=""
-            onChange={(value) => {
-              if (value === 'start-horizontal') apply({ justifySelf: 'start' });
-              if (value === 'center-horizontal') apply({ justifySelf: 'center' });
-              if (value === 'end-horizontal') apply({ justifySelf: 'end' });
-              if (value === 'start-vertical') apply({ alignSelf: 'flex-start' });
-              if (value === 'center-vertical') apply({ alignSelf: 'center' });
-              if (value === 'end-vertical') apply({ alignSelf: 'flex-end' });
-            }}
-          />
+          <PositionAlignControls onAction={applyPositionAlignAction} />
         </LabeledControl>
         <LabeledControl label="定位">
           <div className={styles.twoColumn}>
@@ -1219,16 +1261,38 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
         collapsible
         expanded={fillExpanded}
         onToggle={() => setFillExpanded((e) => !e)}
-        hasContent={fillVisible || isImgElement}
+        hasContent={iconColorVisible || fillVisible || isImgElement}
         onAdd={() => {
+          if (isIconElement) {
+            apply({ color: style.color && !isTransparent(style.color) ? style.color : '#333333' });
+            return;
+          }
           setFillMode('solid');
           apply({ backgroundColor: previousFill.current });
         }}
         onRemove={() => {
+          if (isIconElement) {
+            apply({ color: 'transparent' });
+            return;
+          }
           apply({ backgroundColor: 'transparent', backgroundImage: 'none', backgroundSize: '', backgroundRepeat: '' });
         }}
       >
-        {fillMode === 'solid' ? (
+        {isIconElement ? (
+          <ColorProperty
+            label="图标"
+            value={style.color && !isTransparent(style.color) ? style.color : '#333333'}
+            visible={iconColorVisible}
+            onChange={(value) => apply({ color: value })}
+            onVisibleChange={(visible) => apply({ color: visible ? (style.color && !isTransparent(style.color) ? style.color : '#333333') : 'transparent' })}
+            onOpenPicker={(anchor) => openColorEditor(
+              '图标颜色',
+              style.color && !isTransparent(style.color) ? style.color : '#333333',
+              (value) => apply({ color: value }),
+              anchor,
+            )}
+          />
+        ) : fillMode === 'solid' ? (
           <ColorProperty
             label="填充"
             value={style.backgroundColor ?? previousFill.current}

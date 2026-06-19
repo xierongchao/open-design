@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const grapesjsMockState = vi.hoisted(() => ({
   setViewport: vi.fn(),
+  setZoom: vi.fn((zoom: number) => { grapesjsMockState.zoom = zoom; }),
+  insertIconComponent: vi.fn(),
   frameLeft: 0,
   frameTop: 0,
   zoom: 100,
@@ -97,7 +99,7 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
           }),
         },
         Canvas: {
-          setZoom: () => {},
+          setZoom: grapesjsMockState.setZoom,
           getZoom: () => grapesjsMockState.zoom,
           getFrameEl: () => ({
             getBoundingClientRect: () => ({
@@ -146,6 +148,7 @@ vi.mock('../../src/components/grapesjs/GrapesjsEditor', async () => {
         setSelectedSrc: () => {},
         getSelectedSrc: () => '',
         insertImageComponent: () => {},
+        insertIconComponent: grapesjsMockState.insertIconComponent,
         reselectCurrent: () => {},
         getSelectionSnapshot: selectionSnapshot,
         setCropMode: () => {},
@@ -215,6 +218,8 @@ import type { ProjectFile } from '../../src/types';
 afterEach(() => {
   cleanup();
   grapesjsMockState.setViewport.mockReset();
+  grapesjsMockState.setZoom.mockClear();
+  grapesjsMockState.insertIconComponent.mockReset();
   grapesjsMockState.frameLeft = 0;
   grapesjsMockState.frameTop = 0;
   grapesjsMockState.zoom = 100;
@@ -420,6 +425,34 @@ describe('FileViewer GrapesJS interactive mode', () => {
     expect(screen.getByTestId('mock-grapesjs-editor')).toBeTruthy();
   });
 
+  it('offers 1000 percent zoom for the GrapesJS canvas menu', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()} />
+      </I18nProvider>,
+    );
+
+    await screen.findByTestId('mock-grapesjs-editor');
+    fireEvent.click(screen.getByRole('button', { name: /100%/ }));
+
+    const zoom1000 = screen.getByRole('menuitem', { name: /1000%/ });
+    fireEvent.click(zoom1000);
+
+    expect(grapesjsMockState.setZoom).toHaveBeenCalledWith(1000);
+  });
+
   it('keeps shape tools collapsed in a Chinese shortcut menu and activates placement tools from it', async () => {
     const source = '<!doctype html><html><body><main>Design system</main></body></html>';
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
@@ -457,6 +490,136 @@ describe('FileViewer GrapesJS interactive mode', () => {
       expect(editor.getAttribute('data-active-tool')).toBe('rectangle');
     });
     expect(screen.queryByTestId('grapesjs-shape-menu')).toBeNull();
+  });
+
+  it('opens the built-in icon library and inserts a configured icon onto the artboard', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()} />
+      </I18nProvider>,
+    );
+
+    await screen.findByTestId('mock-grapesjs-editor');
+    fireEvent.click(await screen.findByTestId('grapesjs-tool-icons'));
+
+    expect(await screen.findByTestId('grapesjs-icon-library-panel')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /添加图标/i }).length).toBe(100);
+    expect(screen.queryByRole('button', { name: '加载更多图标' })).toBeNull();
+    expect(
+      screen.getAllByRole('button', { name: /添加图标/i })[0]?.querySelector('svg')?.getAttribute('stroke'),
+    ).toBe('currentColor');
+
+    const iconList = screen.getByRole('list', { name: '图标列表' });
+    Object.defineProperties(iconList, {
+      scrollHeight: { configurable: true, value: 1200 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, value: 880 },
+    });
+    fireEvent.scroll(iconList);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /添加图标/i }).length).toBeGreaterThan(100);
+    });
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索图标' }), {
+      target: { value: 'mail' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: '图标大小' }), {
+      target: { value: '32' },
+    });
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /添加图标 Mail/i }))[0] as HTMLElement);
+
+    expect(grapesjsMockState.insertIconComponent).toHaveBeenCalledWith(expect.objectContaining({
+      label: 'Mail',
+      size: 32,
+      color: '#000000',
+    }));
+  });
+
+  it('shows shortcut help without an in-panel close button', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return new Response('', { status: 404 });
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()} />
+      </I18nProvider>,
+    );
+
+    await screen.findByTestId('mock-grapesjs-editor');
+    fireEvent.click(await screen.findByTestId('grapesjs-shortcut-help-trigger'));
+
+    const panel = await screen.findByTestId('grapesjs-shortcut-help-panel');
+    expect(panel.querySelector('.grapesjs-shortcut-help-close')).toBeNull();
+    expect(screen.queryByRole('button', { name: '关闭快捷键说明' })).toBeNull();
+  });
+
+  it('loads remote icon results for Chinese search before inserting a configurable icon', async () => {
+    const source = '<!doctype html><html><body><main>Design system</main></body></html>';
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mobile/page.html')) {
+        return new Response(source, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      if (url.startsWith('https://api.iconify.design/search')) {
+        expect(url).toContain('query=mail');
+        return new Response(JSON.stringify({ icons: ['icon-park-outline:mail'] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <FileViewer projectId="project-1" projectKind="prototype" file={htmlFile()} />
+      </I18nProvider>,
+    );
+
+    await screen.findByTestId('mock-grapesjs-editor');
+    fireEvent.click(await screen.findByTestId('grapesjs-tool-icons'));
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索图标' }), {
+      target: { value: '邮件' },
+    });
+
+    expect(screen.getByText('正在加载远程图标...')).toBeTruthy();
+
+    fireEvent.click(await screen.findByRole('button', { name: /添加图标 Mail Iconify/ }));
+
+    expect(grapesjsMockState.insertIconComponent).toHaveBeenCalledWith(expect.objectContaining({
+      label: 'Mail',
+      library: 'remote',
+      remoteIcon: 'icon-park-outline:mail',
+      remoteSvgUrl: 'https://api.iconify.design/icon-park-outline/mail.svg',
+    }));
   });
 
   it('switches GrapesJS canvas tools from keyboard shortcuts', async () => {

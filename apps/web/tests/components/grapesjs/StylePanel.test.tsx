@@ -35,11 +35,13 @@ function renderPanel(
   options: { tagName?: string; selector?: string; selectedSrc?: string; componentType?: string; canvasTool?: string } = {},
 ) {
   const applyStyle = vi.fn();
+  const alignPositionedSelection = vi.fn(() => false);
   const setSelectedSrc = vi.fn();
   const getSelectedSrc = vi.fn(() => options.selectedSrc ?? '');
   const editorRef = {
     current: {
       applyStyle,
+      alignPositionedSelection,
       replaceColors: vi.fn(),
       reselectCurrent: vi.fn(),
       setCropMode: vi.fn(),
@@ -68,7 +70,7 @@ function renderPanel(
   };
 
   render(<StylePanel editorRef={editorRef} selection={selection} />);
-  return { applyStyle, getSelectedSrc, setSelectedSrc };
+  return { alignPositionedSelection, applyStyle, getSelectedSrc, setSelectedSrc };
 }
 
 function renderCanvasPanel(styles: Record<string, string> = { backgroundColor: 'rgb(246, 246, 246)', fontSize: '16px' }) {
@@ -116,6 +118,62 @@ describe('StylePanel', () => {
       'flex-direction': 'row',
       'flex-wrap': 'nowrap',
     });
+  });
+
+  it('uses positioned geometry alignment before falling back to self alignment styles', () => {
+    const { alignPositionedSelection, applyStyle } = renderPanel({ position: 'absolute' });
+    alignPositionedSelection.mockReturnValueOnce(true);
+
+    fireEvent.click(screen.getByRole('button', { name: '左对齐 ⌥ A' }));
+
+    expect(alignPositionedSelection).toHaveBeenCalledWith('left');
+    expect(applyStyle).not.toHaveBeenCalledWith({ justifySelf: 'start' });
+  });
+
+  it('renders position alignment as icon-only buttons while preserving tooltips', () => {
+    renderPanel({ position: 'absolute' });
+    const leftAlign = screen.getByRole('button', { name: '左对齐 ⌥ A' });
+
+    expect(leftAlign.textContent).toBe('');
+    expect(leftAlign.querySelector('svg')).toBeTruthy();
+    expect(leftAlign.getAttribute('data-tooltip')).toBe('左对齐 ⌥ A');
+  });
+
+  it('keeps position alignment style fallback when geometry alignment is unavailable', () => {
+    const { alignPositionedSelection, applyStyle } = renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: '上下居中对齐 ⌥ V' }));
+
+    expect(alignPositionedSelection).toHaveBeenCalledWith('center-y');
+    expect(applyStyle).toHaveBeenCalledWith({ 'align-self': 'center' });
+  });
+
+  it('adds distribution controls to positioned alignment', () => {
+    const { alignPositionedSelection } = renderPanel({ position: 'absolute' });
+
+    fireEvent.click(screen.getByRole('button', { name: '垂直平均分布 ⇧ ⌥ V' }));
+    fireEvent.click(screen.getByRole('button', { name: '水平平均分布 ⇧ ⌥ H' }));
+
+    expect(alignPositionedSelection).toHaveBeenCalledWith('distribute-y');
+    expect(alignPositionedSelection).toHaveBeenCalledWith('distribute-x');
+  });
+
+  it('edits icon color through the selected icon color property', () => {
+    const { applyStyle } = renderPanel({ color: '#333333' }, { canvasTool: 'icon' });
+
+    fireEvent.change(screen.getByRole('textbox', { name: '图标颜色值' }), {
+      target: { value: '#ff5500' },
+    });
+
+    expect(applyStyle).toHaveBeenCalledWith({ color: '#ff5500' });
+  });
+
+  it('disables position alignment controls when nothing is selected', async () => {
+    renderCanvasPanel();
+
+    const leftAlign = await screen.findByRole('button', { name: '左对齐 ⌥ A' });
+
+    expect(leftAlign.hasAttribute('disabled')).toBe(true);
   });
 
   it('maps the clip content control to overflow', () => {

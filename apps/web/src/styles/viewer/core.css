@@ -343,6 +343,298 @@ html.od-export-capture-active .od-toast {
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
+.grapesjs-icon-library-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 74px;
+  z-index: 22;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 156px;
+  width: min(1040px, calc(100vw - 48px));
+  height: min(720px, calc(100vh - 112px));
+  max-height: min(720px, calc(100vh - 112px));
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-panel) 99%, transparent);
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.08);
+  transform: translateX(-50%);
+  color: var(--text);
+  overflow: hidden;
+}
+.grapesjs-icon-library-main {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  padding: 14px;
+  overflow: hidden;
+}
+.grapesjs-icon-library-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.grapesjs-icon-library-search {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 34px;
+  gap: 7px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+.grapesjs-icon-library-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.grapesjs-icon-library-grid {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  min-height: 0;
+  flex: 1 1 auto;
+  gap: 10px;
+  padding-right: 4px;
+  overflow: auto;
+}
+.grapesjs-icon-library-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  aspect-ratio: 1;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+.grapesjs-icon-library-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  background: var(--accent-tint);
+  transform: translateY(-1px);
+}
+.grapesjs-icon-library-item span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grapesjs-icon-library-remote-preview {
+  display: block;
+  flex: 0 0 auto;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+.grapesjs-icon-library-loading,
+.grapesjs-icon-library-error {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  margin-bottom: 10px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-subtle) 82%, var(--bg-panel));
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.grapesjs-icon-library-error {
+  color: var(--red);
+  background: var(--red-bg);
+}
+.grapesjs-icon-library-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 144px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.grapesjs-icon-library-side {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  background: color-mix(in srgb, var(--bg-subtle) 62%, transparent);
+}
+.grapesjs-icon-library-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.grapesjs-icon-library-field select,
+.grapesjs-icon-library-field input[type='text'] {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-panel) 72%, var(--bg-subtle));
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.grapesjs-icon-library-field select {
+  padding: 0 9px;
+}
+.grapesjs-icon-library-field input[type='text'] {
+  padding: 0 8px;
+}
+.grapesjs-icon-library-color-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 6px;
+}
+.grapesjs-icon-library-color-row input[type='color'] {
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-panel) 72%, var(--bg-subtle));
+  cursor: pointer;
+}
+.grapesjs-icon-library-clear {
+  height: 34px;
+  margin-top: auto;
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-panel) 78%, var(--bg-subtle));
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+.grapesjs-icon-library-clear:hover {
+  background: var(--bg-panel);
+}
+.grapesjs-shortcut-help-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 74px;
+  z-index: 20;
+  width: min(880px, calc(100vw - 48px));
+  min-height: 280px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-panel) 99%, transparent);
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.08);
+  transform: translateX(-50%);
+  color: var(--text);
+  overflow: visible;
+}
+.grapesjs-shortcut-help-tabs {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 8px 14px 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  overflow: visible;
+}
+.grapesjs-shortcut-help-tab {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+  transition:
+    background-color 160ms var(--ease-out),
+    color 160ms var(--ease-out);
+}
+.grapesjs-shortcut-help-tab:hover,
+.grapesjs-shortcut-help-tab.active {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.grapesjs-shortcut-help-tab.active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 58%, transparent);
+}
+.grapesjs-shortcut-help-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 42px;
+  padding: 22px 26px 26px;
+}
+.grapesjs-shortcut-help-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+  color: var(--text);
+  font-size: 13px;
+}
+.grapesjs-shortcut-help-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+.grapesjs-shortcut-help-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grapesjs-shortcut-help-keys {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 1100px) {
+  .grapesjs-icon-library-panel {
+    grid-template-columns: minmax(0, 1fr) 146px;
+    width: min(720px, calc(100vw - 32px));
+  }
+  .grapesjs-icon-library-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
 @media (max-width: 760px) {
   .grapesjs-bottom-toolbar {
     bottom: 10px;
@@ -356,6 +648,28 @@ html.od-export-capture-active .od-toast {
   .grapesjs-shape-menu {
     left: 50%;
     transform: translateX(-50%);
+  }
+  .grapesjs-icon-library-panel {
+    bottom: 64px;
+    grid-template-columns: 1fr;
+    width: calc(100vw - 20px);
+  }
+  .grapesjs-icon-library-side {
+    border-top: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+    border-left: 0;
+  }
+  .grapesjs-icon-library-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-height: 280px;
+  }
+  .grapesjs-shortcut-help-panel {
+    bottom: 64px;
+    width: calc(100vw - 20px);
+  }
+  .grapesjs-shortcut-help-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 16px;
   }
 }
 .viewer-action-icon:not(.od-tooltip)[data-tooltip]::after,

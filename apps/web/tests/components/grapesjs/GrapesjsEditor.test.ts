@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   appendGrapesjsCanvasToolComponent,
+  alignGrapesjsPositionedSelection,
+  applyGrapesjsCssStyleClipboardToComponents,
   arrangeGrapesjsSelectionAsFlex,
   attachGrapesjsCanvasViewportSync,
   attachGrapesjsResizePersistence,
@@ -13,6 +15,8 @@ import {
   calculateGrapesjsCornerRadiusFromPointer,
   calculateCanvasFitToViewport,
   calculateGrapesjsRadiusHandleInset,
+  calculateGrapesjsSelectionStrokeRect,
+  createGrapesjsComponentClipboardState,
   clearGrapesjsManagedInlineStyle,
   clipboardHasImageFile,
   dissolveGrapesjsFlexSelection,
@@ -20,10 +24,23 @@ import {
   getGrapesjsCanvasToolDragStyle,
   isGrapesjsEditorEditing,
   getGrapesjsIframeSelectionOutlineCss,
+  getGrapesjsIframeSelectionStyleCss,
+  getGrapesjsSelectionStrokeCss,
+  GRAPESJS_CUT_EMIT_DELAY_MS,
+  scheduleGrapesjsDeferredCutEmit,
+  cancelGrapesjsDeferredCutEmit,
+  scheduleGrapesjsCutAwareEmit,
+  scheduleGrapesjsClipboardCutRemovalEmit,
+  cancelGrapesjsPendingCutEmit,
   getGrapesjsZoomStyleVars,
   findGrapesjsPositionedDragComponent,
   mergeSelectionSnapshotStyles,
   offsetGrapesjsAbsolutePositionStyle,
+  pasteGrapesjsImageToSelection,
+  grapesjsShortcutLetterFromEvent,
+  runGrapesjsHistoryShortcut,
+  insertGrapesjsIconComponent,
+  resizeGrapesjsPositionedSelectionToBounds,
   resolveGrapesjsPositionedToolDragOrigin,
   isGrapesjsCanvasChromeTarget,
   scheduleGrapesjsPlacementChange,
@@ -32,6 +49,16 @@ import {
   stripGrapesjsCanvasSizeSentinel,
   upsertGrapesjsIframeSelectionStyle,
 } from '../../../src/components/grapesjs/GrapesjsEditor';
+import {
+  GRAPESJS_ICON_CATALOG,
+  GRAPESJS_ICON_PAGE_SIZE,
+  buildIconifySearchUrl,
+  iconifySearchResultsToIcons,
+  renderGrapesjsIconSvg,
+  translateGrapesjsIconSearchQuery,
+  visibleGrapesjsIconPage,
+} from '../../../src/components/grapesjs/icon-library';
+import { GRAPESJS_SHORTCUT_GROUPS } from '../../../src/components/grapesjs/shortcuts';
 
 describe('GrapesjsEditor canvas fit', () => {
   it('centers the HTML frame vertically when it fits inside the canvas', () => {
@@ -66,6 +93,14 @@ describe('GrapesjsEditor zoom style vars', () => {
     expect(getGrapesjsZoomStyleVars(300)).toEqual({
       zoomDecimal: 3,
       canvasHairline: '0.3333px',
+      screenHairline: '1px',
+    });
+  });
+
+  it('keeps iframe canvas outlines accurate at 1000 percent zoom', () => {
+    expect(getGrapesjsZoomStyleVars(1000)).toEqual({
+      zoomDecimal: 10,
+      canvasHairline: '0.1px',
       screenHairline: '1px',
     });
   });
@@ -347,7 +382,15 @@ describe('GrapesjsEditor resize persistence', () => {
     expect(editor.off).toHaveBeenCalledWith('component:drag:end', expect.any(Function));
   });
 
-  it('keeps resize update events visual-only so autosave waits for the end event', () => {
+  it('coalesces resize update events to one visual refresh per animation frame', () => {
+    const rafCallbacks: FrameRequestCallback[] = [];
+    const requestAnimationFrameSpy = vi.fn((callback: FrameRequestCallback) => {
+      rafCallbacks.push(callback);
+      return rafCallbacks.length;
+    });
+    const cancelAnimationFrameSpy = vi.fn();
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrameSpy);
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrameSpy);
     const callbacks = new Map<string, (payload?: unknown) => void>();
     const editor = {
       on: vi.fn((event: string, callback: (payload?: unknown) => void) => {
@@ -366,21 +409,62 @@ describe('GrapesjsEditor resize persistence', () => {
     });
 
     callbacks.get('component:resize:update')?.({ target: { id: 'rect' } });
+    callbacks.get('component:resize:move')?.({ target: { id: 'rect' } });
+
+    expect(refreshGeometry).not.toHaveBeenCalled();
+
+    rafCallbacks.shift()?.(16);
 
     expect(refreshGeometry).toHaveBeenCalledTimes(1);
     expect(cleanupInlineStyle).not.toHaveBeenCalled();
     expect(commitChange).not.toHaveBeenCalled();
+    expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(1);
+    expect(cancelAnimationFrameSpy).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
   });
 });
 
 describe('GrapesjsEditor iframe selection CSS', () => {
-  it('overrides GrapesJS selected outline shorthand instead of only its width', () => {
+  it('draws the custom single-selection stroke without adding border width drift', () => {
+    const css = getGrapesjsSelectionStrokeCss();
+
+    expect(css).toContain('.od-selection-stroke');
+    expect(css).toContain('border: 0;');
+    expect(css).toContain('box-shadow: inset 0 0 0 var(--od-gjs-screen-hairline, 1px) var(--gjs-color-blue);');
+    expect(css).not.toContain('border: var(--od-gjs-screen-hairline');
+  });
+
+  it('positions the host selection stroke from the iframe element rect at high zoom', () => {
+    const rect = calculateGrapesjsSelectionStrokeRect({
+      elementRect: fakeDomRect(32.25, 48.5, 418, 222),
+      frameRect: fakeDomRect(100, 40, 1600, 900),
+      toolsRect: fakeDomRect(199.5, 184.75, 1254, 666),
+      zoom: 3,
+    });
+
+    expect(rect?.left).toBeCloseTo(-2.75);
+    expect(rect?.top).toBeCloseTo(0.75);
+    expect(rect?.width).toBeCloseTo(1254);
+    expect(rect?.height).toBeCloseTo(666);
+  });
+
+  it('disables GrapesJS selected outlines so only the host stroke draws the single-selection box', () => {
     const css = getGrapesjsIframeSelectionOutlineCss();
     const selectedBlock = css.match(/html body \.gjs-selected,[^}]*\}/)?.[0] ?? '';
 
     expect(selectedBlock).toContain('html body .gjs-selected');
-    expect(selectedBlock).toContain('outline: var(--od-gjs-hairline, 1px) solid #3b82f6 !important;');
+    expect(selectedBlock).toContain('outline: 0 !important;');
     expect(selectedBlock).not.toContain('outline-width: var(--od-gjs-hairline, 1px) !important;');
+  });
+
+  it('keeps hover outlines inside the iframe for discovery without affecting selected geometry', () => {
+    const css = getGrapesjsIframeSelectionOutlineCss();
+    const hoverBlock = css.match(/html body \.gjs-hovered,[^}]*\}/)?.[0] ?? '';
+
+    expect(hoverBlock).toContain('html body .gjs-hovered');
+    expect(hoverBlock).toContain('outline: var(--od-gjs-hairline, 1px) solid #3b82f6 !important;');
+    expect(hoverBlock).toContain('outline-offset: calc(-1 * var(--od-gjs-hairline, 1px)) !important;');
   });
 
   it('can render element-picker selection outlines in green', () => {
@@ -388,6 +472,17 @@ describe('GrapesjsEditor iframe selection CSS', () => {
 
     expect(css).toContain('solid #10b981 !important;');
     expect(css).not.toContain('solid #3b82f6 !important;');
+  });
+
+  it('suppresses native single-selection controls while the multi-selection outer box is active', () => {
+    const css = getGrapesjsIframeSelectionStyleCss('od-flex-child-hover');
+
+    expect(css).toContain('.od-gjs-multi-selection-active .gjs-resizer');
+    expect(css).toContain('.od-gjs-multi-selection-active .od-radius-handle');
+    expect(css).toContain('.od-gjs-multi-selection-active .od-radius-badge');
+    expect(css).toContain('.od-gjs-multi-selection-active [data-od-spacing-kind]');
+    expect(css).toContain('.od-gjs-multi-selection-active [data-od-spacing-band]');
+    expect(css).toContain('display: none !important;');
   });
 
   it('refreshes and moves an existing iframe style tag to the end of head', () => {
@@ -438,9 +533,18 @@ describe('GrapesjsEditor iframe selection CSS', () => {
 
 type FakeGrapesjsComponent = {
   append(definition: { attributes?: Record<string, string>; style?: Record<string, string> }, opts?: { at?: number }): FakeGrapesjsComponent[];
-  components(): { length: number; get(index: number): FakeGrapesjsComponent | null };
+  clone(): FakeGrapesjsComponent;
+  components(): {
+    length: number;
+    add(definition: { attributes?: Record<string, string>; style?: Record<string, string> }, opts?: { at?: number }): FakeGrapesjsComponent[];
+    at(index: number): FakeGrapesjsComponent | null;
+    get(index: number): FakeGrapesjsComponent | null;
+  };
+  get(key: string): unknown;
   getAttributes(): Record<string, string>;
   setAttributes(next: Record<string, string>): void;
+  addAttributes(next: Record<string, string>): void;
+  removeAttributes(keys: string | string[]): void;
   getStyle(): Record<string, string>;
   setStyle(next: Record<string, string>): void;
   removeStyle(prop: string): void;
@@ -470,6 +574,7 @@ function fakeComponent(options: {
   rect?: DOMRect | null;
   el?: HTMLElement | null;
   mergeStyleUpdates?: boolean;
+  type?: string;
 } = {}): FakeGrapesjsComponent {
   let parent: FakeGrapesjsComponent | null = null;
   const children: FakeGrapesjsComponent[] = [];
@@ -493,15 +598,37 @@ function fakeComponent(options: {
       child.move(comp, opts);
       return [child];
     },
+    clone() {
+      return fakeComponent({
+        attrs: { ...attrs },
+        style: { ...style },
+        rect: options.rect,
+        type: options.type,
+      });
+    },
     components: () => ({
       get length() {
         return children.length;
       },
+      add: (definition, opts) => comp.append(definition, opts),
+      at: (index: number) => children[index] ?? null,
       get: (index: number) => children[index] ?? null,
     }),
+    get(key) {
+      if (key === 'type') return options.type;
+      return undefined;
+    },
     getAttributes: () => attrs,
     setAttributes(next) {
       Object.assign(attrs, next);
+    },
+    addAttributes(next) {
+      Object.assign(attrs, next);
+    },
+    removeAttributes(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) {
+        delete attrs[key];
+      }
     },
     getStyle: () => style,
     setStyle(next) {
@@ -891,6 +1018,15 @@ describe('GrapesjsEditor image paste filter', () => {
     })).toBe(false);
   });
 
+  it('skips screenshot paste while an internal component paste is suppressing clipboard images', () => {
+    expect(shouldHandleGrapesjsImagePaste({
+      clipboardData: imageClipboard,
+      lastInternalPasteAt: 0,
+      suppressImagePasteUntil: 2_500,
+      now: 2_000,
+    })).toBe(false);
+  });
+
   it('skips mixed document/image clipboards so DOM paste wins', () => {
     expect(shouldHandleGrapesjsImagePaste({
       clipboardData: {
@@ -927,7 +1063,182 @@ describe('GrapesjsEditor image paste filter', () => {
   });
 });
 
+describe('GrapesjsEditor history shortcuts', () => {
+  it('runs one undo command and consumes the key event at the first handler', () => {
+    const editor = { runCommand: vi.fn() };
+    const ev = {
+      key: 'z',
+      metaKey: true,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    } as unknown as KeyboardEvent;
+
+    expect(runGrapesjsHistoryShortcut(editor, ev)).toBe(true);
+
+    expect(editor.runCommand).toHaveBeenCalledTimes(1);
+    expect(editor.runCommand).toHaveBeenCalledWith('core:undo');
+    expect(ev.preventDefault).toHaveBeenCalledTimes(1);
+    expect(ev.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(ev.stopImmediatePropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps shift-undo and ctrl-y to redo', () => {
+    const editor = { runCommand: vi.fn() };
+    const redoFromShiftZ = {
+      key: 'Z',
+      metaKey: true,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: true,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    } as unknown as KeyboardEvent;
+    const redoFromY = {
+      key: 'y',
+      metaKey: false,
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    } as unknown as KeyboardEvent;
+
+    expect(runGrapesjsHistoryShortcut(editor, redoFromShiftZ)).toBe(true);
+    expect(runGrapesjsHistoryShortcut(editor, redoFromY)).toBe(true);
+
+    expect(editor.runCommand).toHaveBeenNthCalledWith(1, 'core:redo');
+    expect(editor.runCommand).toHaveBeenNthCalledWith(2, 'core:redo');
+  });
+
+  it('ignores alternate-modified z shortcuts so style-copy shortcuts keep working', () => {
+    const editor = { runCommand: vi.fn() };
+    const ev = {
+      key: 'z',
+      metaKey: true,
+      ctrlKey: false,
+      altKey: true,
+      shiftKey: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    } as unknown as KeyboardEvent;
+
+    expect(runGrapesjsHistoryShortcut(editor, ev)).toBe(false);
+    expect(editor.runCommand).not.toHaveBeenCalled();
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
 describe('GrapesjsEditor style clipboard', () => {
+  it('stores cloned component snapshots before multi-cut removes the originals', () => {
+    const first = fakeComponent({
+      attrs: { 'data-od-id': 'first', 'data-od-canvas-tool': 'rectangle' },
+      style: { position: 'absolute', left: '10px', top: '12px' },
+    });
+    const second = fakeComponent({
+      attrs: { 'data-od-id': 'second', 'data-od-canvas-tool': 'rectangle' },
+      style: { position: 'absolute', left: '80px', top: '12px' },
+    });
+    const clipboard = createGrapesjsComponentClipboardState([first as never, second as never], true);
+
+    first.setStyle({ position: 'absolute', left: '999px', top: '999px' });
+    second.setStyle({ position: 'absolute', left: '888px', top: '888px' });
+
+    expect(clipboard?.cut).toBe(true);
+    expect(clipboard?.pasteCount).toBe(0);
+    expect(clipboard?.components).toHaveLength(2);
+    expect(clipboard?.components[0]).not.toBe(first);
+    expect(clipboard?.components[0]?.getAttributes()).toEqual({ 'data-od-canvas-tool': 'rectangle' });
+    expect(clipboard?.components[0]?.getStyle()).toMatchObject({ left: '10px', top: '12px' });
+    expect(clipboard?.components[1]?.getAttributes()).toEqual({ 'data-od-canvas-tool': 'rectangle' });
+    expect(clipboard?.components[1]?.getStyle()).toMatchObject({ left: '80px', top: '12px' });
+  });
+
+  it('delays cut removal emits so the first paste can cancel the invisible intermediate state', () => {
+    vi.useFakeTimers();
+    try {
+      const timerRef: { current: ReturnType<typeof setTimeout> | null } = { current: null };
+      const cutPendingRef = { current: false };
+      const emit = vi.fn();
+
+      scheduleGrapesjsClipboardCutRemovalEmit(timerRef, cutPendingRef, emit);
+      expect(cutPendingRef.current).toBe(true);
+      vi.advanceTimersByTime(GRAPESJS_CUT_EMIT_DELAY_MS - 1);
+      expect(emit).not.toHaveBeenCalled();
+
+      expect(cancelGrapesjsPendingCutEmit(timerRef, cutPendingRef)).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(emit).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('defers cut emits long enough for paste to cancel the intermediate removed state', () => {
+    vi.useFakeTimers();
+    try {
+      const ref: { current: ReturnType<typeof setTimeout> | null } = { current: null };
+      const emit = vi.fn();
+
+      scheduleGrapesjsDeferredCutEmit(ref, emit);
+      vi.advanceTimersByTime(GRAPESJS_CUT_EMIT_DELAY_MS - 1);
+      expect(emit).not.toHaveBeenCalled();
+
+      expect(cancelGrapesjsDeferredCutEmit(ref)).toBe(true);
+      vi.advanceTimersByTime(1);
+
+      expect(emit).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('routes component update emits through the pending cut delay until the first paste cancels it', () => {
+    vi.useFakeTimers();
+    try {
+      const timerRef: { current: ReturnType<typeof setTimeout> | null } = { current: null };
+      const cutPendingRef = { current: true };
+      const emit = vi.fn();
+
+      scheduleGrapesjsCutAwareEmit(timerRef, cutPendingRef, emit);
+      vi.advanceTimersByTime(GRAPESJS_CUT_EMIT_DELAY_MS - 1);
+      expect(emit).not.toHaveBeenCalled();
+
+      expect(cancelGrapesjsPendingCutEmit(timerRef, cutPendingRef)).toBe(true);
+      expect(cutPendingRef.current).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(emit).not.toHaveBeenCalled();
+
+      scheduleGrapesjsCutAwareEmit(timerRef, cutPendingRef, emit);
+      expect(emit).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes a delayed cut emit after the grace period when no paste arrives', () => {
+    vi.useFakeTimers();
+    try {
+      const timerRef: { current: ReturnType<typeof setTimeout> | null } = { current: null };
+      const cutPendingRef = { current: true };
+      const emit = vi.fn();
+
+      scheduleGrapesjsCutAwareEmit(timerRef, cutPendingRef, emit);
+      vi.advanceTimersByTime(GRAPESJS_CUT_EMIT_DELAY_MS);
+
+      expect(cutPendingRef.current).toBe(false);
+      expect(emit).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('copies visual CSS properties without layout size or position', () => {
     expect(buildGrapesjsCssStyleClipboard({
       width: '240px',
@@ -955,7 +1266,10 @@ describe('GrapesjsEditor style clipboard', () => {
       lineHeight: '1.4',
       letterSpacing: '0px',
       textAlign: 'center',
+      textDecoration: 'underline',
+      textTransform: 'uppercase',
       color: '#111827',
+      boxShadow: '0 12px 24px rgba(0, 0, 0, 0.16)',
     })).toEqual({
       'background-color': 'rgb(10, 20, 30)',
       'background-image': 'url("shot.png")',
@@ -977,8 +1291,87 @@ describe('GrapesjsEditor style clipboard', () => {
       'line-height': '1.4',
       'letter-spacing': '0px',
       'text-align': 'center',
+      'text-decoration': 'underline',
+      'text-transform': 'uppercase',
       color: '#111827',
+      'box-shadow': '0 12px 24px rgba(0, 0, 0, 0.16)',
     });
+  });
+
+  it('copies authored kebab-case CSS properties when computed styles are unavailable', () => {
+    expect(buildGrapesjsCssStyleClipboard({
+      'background-color': '#ce6666',
+      'border-radius': '18px',
+      'border-color': '#111111',
+      'border-style': 'solid',
+      'border-top-width': '1px',
+      'box-shadow': '0 8px 18px rgba(0, 0, 0, 0.2)',
+      opacity: '0.6',
+    })).toEqual({
+      'background-color': '#ce6666',
+      'border-radius': '18px',
+      'border-color': '#111111',
+      'border-style': 'solid',
+      'border-top-width': '1px',
+      'box-shadow': '0 8px 18px rgba(0, 0, 0, 0.2)',
+      opacity: '0.6',
+    });
+  });
+
+  it('pastes visual CSS to the target rule and live element without replacing layout geometry', () => {
+    const setProperty = vi.fn();
+    const target = fakeComponent({
+      style: {
+        position: 'absolute',
+        left: '770px',
+        top: '327px',
+        width: '397px',
+        height: '181px',
+        'background-color': '#d9d9d9',
+      },
+      el: {
+        nodeType: 1,
+        style: {
+          setProperty,
+          removeProperty: vi.fn(),
+          length: 2,
+        },
+      } as unknown as HTMLElement,
+    });
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    try {
+      expect(applyGrapesjsCssStyleClipboardToComponents([target as never], {
+        width: '999px',
+        height: '999px',
+        position: 'relative',
+        left: '0px',
+        top: '0px',
+        'background-color': 'rgb(199, 103, 103)',
+        'border-radius': '13px',
+        'border-color': '#111111',
+        'border-style': 'solid',
+        'border-top-width': '1px',
+      })).toBe(true);
+
+      expect(target.getStyle()).toMatchObject({
+        position: 'absolute',
+        left: '770px',
+        top: '327px',
+        width: '397px',
+        height: '181px',
+        'background-color': 'rgb(199, 103, 103)',
+        'border-radius': '13px',
+        'border-color': '#111111',
+        'border-style': 'solid',
+        'border-top-width': '1px',
+      });
+      expect(setProperty).toHaveBeenCalledWith('background-color', 'rgb(199, 103, 103)');
+      expect(setProperty).toHaveBeenCalledWith('border-radius', '13px');
+      expect(setProperty).not.toHaveBeenCalledWith('width', expect.any(String));
+      expect(setProperty).not.toHaveBeenCalledWith('left', expect.any(String));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('offsets absolute pasted components without touching other style properties', () => {
@@ -1031,6 +1424,327 @@ describe('GrapesjsEditor style clipboard', () => {
     expect(removeProperty).toHaveBeenCalledWith('box-sizing');
     expect(removeProperty).toHaveBeenCalledWith('border-radius');
     expect(removeAttribute).toHaveBeenCalledWith('style');
+  });
+});
+
+describe('GrapesjsEditor positioned geometry', () => {
+  it('aligns multiple absolute selections to their shared left edge', () => {
+    const canvasBody = {
+      nodeType: 1,
+      getBoundingClientRect: () => fakeDomRect(200, 50, 800, 600),
+    } as HTMLElement;
+    const parent = fakeComponent({ rect: null });
+    const first = fakeComponent({
+      attrs: { 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '20px', top: '30px', width: '64px', height: '36px' },
+      rect: fakeDomRect(220, 80, 64, 36),
+    });
+    const second = fakeComponent({
+      attrs: { 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '100px', top: '90px', width: '80px', height: '40px' },
+      rect: fakeDomRect(300, 140, 80, 40),
+    });
+    first.move(parent);
+    second.move(parent);
+    const editor = {
+      getSelectedAll: () => [first, second],
+      Canvas: {
+        getDocument: () => ({ body: canvasBody, documentElement: canvasBody }),
+      },
+    };
+
+    expect(alignGrapesjsPositionedSelection(editor as never, 'left')).toBe(true);
+
+    expect(first.getStyle()).toMatchObject({ left: '20px', top: '30px' });
+    expect(second.getStyle()).toMatchObject({ left: '20px', top: '90px' });
+  });
+
+  it('distributes multiple absolute selections horizontally without changing outer items', () => {
+    const canvasBody = {
+      nodeType: 1,
+      getBoundingClientRect: () => fakeDomRect(200, 50, 800, 600),
+    } as HTMLElement;
+    const parent = fakeComponent({ rect: null });
+    const first = fakeComponent({
+      attrs: { 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '20px', top: '30px', width: '40px', height: '36px' },
+      rect: fakeDomRect(220, 80, 40, 36),
+    });
+    const second = fakeComponent({
+      attrs: { 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '100px', top: '30px', width: '40px', height: '36px' },
+      rect: fakeDomRect(300, 80, 40, 36),
+    });
+    const third = fakeComponent({
+      attrs: { 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '220px', top: '30px', width: '40px', height: '36px' },
+      rect: fakeDomRect(420, 80, 40, 36),
+    });
+    first.move(parent);
+    second.move(parent);
+    third.move(parent);
+    const editor = {
+      getSelectedAll: () => [first, second, third],
+      Canvas: {
+        getDocument: () => ({ body: canvasBody, documentElement: canvasBody }),
+      },
+    };
+
+    expect(alignGrapesjsPositionedSelection(editor as never, 'distribute-x')).toBe(true);
+
+    expect(first.getStyle()).toMatchObject({ left: '20px' });
+    expect(second.getStyle()).toMatchObject({ left: '120px' });
+    expect(third.getStyle()).toMatchObject({ left: '220px' });
+  });
+
+  it('applies pasted screenshot data as the selected rectangle background', () => {
+    const rectangle = fakeComponent({
+      attrs: { 'data-od-canvas-tool': 'rectangle', 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '20px', top: '30px', width: '240px', height: '120px' },
+      rect: fakeDomRect(220, 80, 240, 120),
+    });
+    const parent = fakeComponent({ rect: null });
+    rectangle.move(parent);
+    const select = vi.fn();
+    const editor = {
+      getSelected: () => rectangle,
+      select,
+    };
+
+    expect(pasteGrapesjsImageToSelection(editor as never, {
+      dataUrl: 'data:image/png;base64,shot',
+      width: 1024,
+      height: 512,
+    })).toBe(rectangle);
+
+    expect(rectangle.components().length).toBe(0);
+    expect(rectangle.getStyle()).toMatchObject({
+      position: 'absolute',
+      left: '20px',
+      top: '30px',
+      width: '240px',
+      height: '120px',
+      'background-image': 'url("data:image/png;base64,shot")',
+      'background-repeat': 'no-repeat',
+      'background-position': 'center',
+      'background-size': 'cover',
+    });
+    expect(select).toHaveBeenCalledWith(rectangle);
+  });
+
+  it('pastes screenshots directly onto the artboard at natural image size', () => {
+    const wrapper = fakeComponent({ rect: null });
+    const select = vi.fn();
+    const editor = {
+      getSelected: () => null,
+      select,
+      Components: {
+        getComponents: () => ({
+          get: (index: number) => (index === 0 ? wrapper : null),
+          at: (index: number) => (index === 0 ? wrapper : null),
+        }),
+      },
+    };
+
+    const created = pasteGrapesjsImageToSelection(editor as never, {
+      dataUrl: 'data:image/png;base64,shot',
+      width: 642,
+      height: 630,
+      point: { x: 12, y: 18 },
+    });
+
+    expect(created).toBe(wrapper.components().get(0));
+    expect(created?.getStyle()).toMatchObject({
+      position: 'absolute',
+      left: '12px',
+      top: '18px',
+      width: '642px',
+      height: '630px',
+      'background-image': 'url("data:image/png;base64,shot")',
+      'background-repeat': 'no-repeat',
+      'background-position': 'center',
+      'background-size': 'cover',
+    });
+    expect(select).toHaveBeenCalledWith(created);
+  });
+});
+
+describe('GrapesjsEditor arrange shortcuts', () => {
+  it('resolves macOS Option-modified keys from KeyboardEvent.code', () => {
+    expect(grapesjsShortcutLetterFromEvent({
+      key: 'å',
+      code: 'KeyA',
+    } as KeyboardEvent)).toBe('a');
+    expect(grapesjsShortcutLetterFromEvent({
+      key: '˙',
+      code: 'KeyH',
+    } as KeyboardEvent)).toBe('h');
+  });
+});
+
+describe('GrapesjsEditor icon components', () => {
+  it('builds remote icon search URLs from Chinese queries with preferred Chinese-friendly collections first', () => {
+    expect(translateGrapesjsIconSearchQuery('邮件')).toBe('mail');
+    const url = buildIconifySearchUrl({ query: '邮件', limit: 24 });
+
+    expect(url).toContain('https://api.iconify.design/search');
+    expect(url).toContain('query=mail');
+    expect(url).toContain('limit=24');
+    expect(url).toContain('prefixes=icon-park-outline%2Cicon-park-solid%2Cant-design');
+  });
+
+  it('expands Chinese mobile searches across more remote icon collections', () => {
+    expect(translateGrapesjsIconSearchQuery('手机')).toBe('mobile phone');
+    const url = buildIconifySearchUrl({ query: '手机' });
+
+    expect(url).toContain('query=mobile+phone');
+    expect(url).toContain('limit=100');
+    expect(url).toContain('material-symbols');
+    expect(url).toContain('lucide');
+    expect(url).toContain('heroicons');
+    expect(url).toContain('mingcute');
+  });
+
+  it('maps remote Iconify search results into currentColor mask icons', () => {
+    const icons = iconifySearchResultsToIcons({
+      icons: ['icon-park-outline:mail', 'ant-design:home-outlined'],
+    });
+
+    expect(icons[0]).toMatchObject({
+      id: 'remote-icon-park-outline-mail',
+      label: 'Mail',
+      library: 'remote',
+      remoteIcon: 'icon-park-outline:mail',
+      remoteSvgUrl: 'https://api.iconify.design/icon-park-outline/mail.svg',
+    });
+
+    const svg = renderGrapesjsIconSvg({
+      label: 'Mail',
+      path: '',
+      size: 32,
+      strokeWidth: 2,
+      color: '#333333',
+      variant: 'linear',
+      remoteSvgUrl: icons[0]?.remoteSvgUrl,
+    });
+
+    expect(svg).toContain('data-od-remote-icon');
+    expect(svg).toContain('background-color:currentColor');
+    expect(svg).toContain('mask-image:url(&quot;https://api.iconify.design/icon-park-outline/mail.svg&quot;)');
+  });
+
+  it('ships an expanded icon catalog in lazily renderable pages', () => {
+    expect(GRAPESJS_ICON_CATALOG.length).toBeGreaterThanOrEqual(320);
+    expect(visibleGrapesjsIconPage({ library: 'all', query: '', limit: GRAPESJS_ICON_PAGE_SIZE }).items.length).toBe(GRAPESJS_ICON_PAGE_SIZE);
+    expect(GRAPESJS_ICON_PAGE_SIZE).toBe(100);
+    expect(visibleGrapesjsIconPage({ library: 'all', query: '', limit: GRAPESJS_ICON_PAGE_SIZE }).hasMore).toBe(true);
+  });
+
+  it('renders inserted SVG icons so resizing the selected element scales the visible icon', () => {
+    const svg = renderGrapesjsIconSvg({
+      label: 'Mail',
+      path: 'M4 6h16v12H4z M4 7l8 6 8-6',
+      size: 32,
+      strokeWidth: 2,
+      color: '#333333',
+      variant: 'linear',
+    });
+
+    expect(svg).toContain('width="100%"');
+    expect(svg).toContain('height="100%"');
+    expect(svg).toContain('stroke="currentColor"');
+    expect(svg).not.toContain('stroke="#333333"');
+  });
+
+  it('adds configured SVG icons directly to the artboard', () => {
+    const wrapper = fakeComponent({ rect: null });
+    const select = vi.fn();
+    const editor = {
+      select,
+      Components: {
+        getComponents: () => ({
+          get: (index: number) => (index === 0 ? wrapper : null),
+          at: (index: number) => (index === 0 ? wrapper : null),
+        }),
+      },
+    };
+
+    const created = insertGrapesjsIconComponent(editor as never, {
+      label: 'Mail',
+      path: 'M4 6h16v12H4z M4 7l8 6 8-6',
+      size: 32,
+      strokeWidth: 2,
+      color: '#333333',
+      variant: 'linear',
+    });
+
+    expect(created).toBe(wrapper.components().get(0));
+    expect(created?.getAttributes()).toMatchObject({
+      'data-od-canvas-tool': 'icon',
+      'data-od-position-mode': 'absolute',
+      'data-od-icon-label': 'Mail',
+    });
+    expect(created?.getStyle()).toMatchObject({
+      position: 'absolute',
+      width: '32px',
+      height: '32px',
+      color: '#333333',
+    });
+    expect(select).toHaveBeenCalledWith(created);
+  });
+});
+
+describe('GrapesjsEditor multi-selection bounds resize', () => {
+  it('resizes multiple positioned selections through a shared outer box without wrapping them', () => {
+    const parent = fakeComponent({ rect: null });
+    const first = fakeComponent({
+      attrs: { 'data-od-canvas-tool': 'rectangle', 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '0px', top: '0px', width: '100px', height: '100px' },
+      rect: fakeDomRect(0, 0, 100, 100),
+    });
+    const second = fakeComponent({
+      attrs: { 'data-od-canvas-tool': 'rectangle', 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '200px', top: '50px', width: '100px', height: '50px' },
+      rect: fakeDomRect(200, 50, 100, 50),
+    });
+    const third = fakeComponent({
+      attrs: { 'data-od-canvas-tool': 'rectangle', 'data-od-position-mode': 'absolute' },
+      style: { position: 'absolute', left: '50px', top: '200px', width: '150px', height: '100px' },
+      rect: fakeDomRect(50, 200, 150, 100),
+    });
+    first.move(parent);
+    second.move(parent);
+    third.move(parent);
+    const beforeChildren = parent.components().length;
+    const editor = {
+      getSelectedAll: () => [first, second, third],
+    };
+
+    expect(resizeGrapesjsPositionedSelectionToBounds(editor as never, {
+      left: 0,
+      top: 0,
+      width: 600,
+      height: 150,
+    })).toBe(true);
+
+    expect(parent.components().length).toBe(beforeChildren);
+    expect(first.getStyle()).toMatchObject({ left: '0px', top: '0px', width: '200px', height: '50px' });
+    expect(second.getStyle()).toMatchObject({ left: '400px', top: '25px', width: '200px', height: '25px' });
+    expect(third.getStyle()).toMatchObject({ left: '100px', top: '100px', width: '300px', height: '50px' });
+  });
+});
+
+describe('GrapesjsEditor shortcut help', () => {
+  it('documents arrange shortcuts alongside the categorized help content', () => {
+    const arrange = GRAPESJS_SHORTCUT_GROUPS.find((group) => group.id === 'arrange');
+
+    expect(arrange?.title).toBe('排列');
+    expect(arrange?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: '左对齐', shortcut: '⌥ A' }),
+      expect.objectContaining({ label: '左对齐', icon: expect.any(String) }),
+      expect.objectContaining({ label: '水平平均分布', shortcut: '⇧ ⌥ H' }),
+      expect.objectContaining({ label: '添加自动布局', shortcut: '⇧ A' }),
+    ]));
   });
 });
 
