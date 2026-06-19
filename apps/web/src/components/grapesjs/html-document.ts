@@ -24,6 +24,7 @@ export interface CanvasUrlEnvironment {
 }
 
 const DEFAULT_DOCTYPE = '<!doctype html>';
+const EDITOR_CSS_STYLE_ATTR = 'data-od-grapesjs-css';
 
 export function parseHtmlDocument(source: string): ParsedDocument {
   // Extract doctype, html tag, head block, body tag, body inner HTML.
@@ -64,9 +65,13 @@ export function reassembleDocument(
   css: string,
   bodyStyle?: Record<string, string>,
 ): string {
-  const styleBlock = css.trim() ? `<style>\n${css}\n</style>\n` : '';
-  const head = parsed.head
-    ? parsed.head.replace(/<\/head>\s*$/i, `${styleBlock}</head>`)
+  const { head: cleanedHead, editorCssSeed } = removeSavedEditorCss(parsed.head);
+  const editorCss = mergeEditorCss(editorCssSeed, css);
+  const styleBlock = editorCss.trim()
+    ? `<style ${EDITOR_CSS_STYLE_ATTR}="">\n${editorCss}\n</style>\n`
+    : '';
+  const head = cleanedHead
+    ? cleanedHead.replace(/<\/head>\s*$/i, `${styleBlock}</head>`)
     : `<head>\n${styleBlock}</head>`;
   // Rebuild the <body> open tag so canvas-level styles (background colour,
   // padding, etc. set on the wrapper component via setCanvasStyles) round-trip
@@ -85,6 +90,19 @@ export function reassembleDocument(
     parsed.bodyClose,
     parsed.htmlClose,
   ].join('\n');
+}
+
+export function normalizeCanvasBodyHtml(bodyHtml: string): string {
+  return bodyHtml
+    .replace(/<!doctype[^>]*>/gi, '')
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<\/?html\b[^>]*>/gi, '')
+    .replace(/<body\b[^>]*>/gi, '')
+    .replace(/<\/body\s*>/gi, '');
+}
+
+export function extractSavedEditorCss(head: string): string {
+  return removeSavedEditorCss(head).editorCssSeed;
 }
 
 export function readCanvasBodyStyleOverrides(parsed: ParsedDocument | null): Record<string, string> {
@@ -178,6 +196,53 @@ function styleBlocksFromHead(head: string): string[] {
     .filter(Boolean);
 }
 
+function removeSavedEditorCss(head: string): { head: string; editorCssSeed: string } {
+  const savedCssBlocks: string[] = [];
+  const cleaned = head.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (full, attrs, css) => {
+    const blockCss = String(css ?? '');
+    if (isEditorCssStyleAttrs(String(attrs ?? '')) || isLegacyGrapesjsCss(blockCss)) {
+      savedCssBlocks.push(blockCss);
+      return '';
+    }
+    return full;
+  });
+  return {
+    head: cleaned,
+    // Legacy files may contain many stale GrapesJS style blocks. The last one
+    // is the newest cascade source, so keep it as the seed and let current
+    // editor CSS override it below.
+    editorCssSeed: savedCssBlocks.at(-1)?.trim() ?? '',
+  };
+}
+
+function isEditorCssStyleAttrs(attrs: string): boolean {
+  return /(?:^|\s)data-od-grapesjs-css(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?(?=\s|$)/i.test(attrs);
+}
+
+function isLegacyGrapesjsCss(css: string): boolean {
+  const compact = css.replace(/\s+/g, '').toLowerCase();
+  return compact.includes('*{box-sizing:border-box;}body{margin:0;}');
+}
+
+function mergeEditorCss(seedCss: string, currentCss: string): string {
+  const combined = [seedCss, currentCss].map((block) => block.trim()).filter(Boolean).join('\n');
+  if (!combined) return '';
+
+  const rules = new Map<string, string>();
+  const ruleRegex = /([^{}]+)\{([^{}]*)\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = ruleRegex.exec(combined)) !== null) {
+    const selector = match[1]?.trim();
+    const declarations = match[2]?.trim();
+    if (!selector || !declarations) continue;
+    rules.set(selector.replace(/\s+/g, ' '), declarations);
+  }
+  if (rules.size === 0) return combined;
+  return Array.from(rules.entries())
+    .map(([selector, declarations]) => `${selector}{${declarations}}`)
+    .join('\n');
+}
+
 function cssRules(css: string): Array<{ selector: string; declarations: string }> {
   const rules: Array<{ selector: string; declarations: string }> = [];
   const regex = /([^{}]+)\{([^{}]*)\}/g;
@@ -227,13 +292,14 @@ export function areDocumentsEqual(a: string, b: string): boolean {
 }
 
 export function extractCanvasHeadAssets(head: string): CanvasHeadAssets {
-  const inlineCss = Array.from(head.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi))
+  const { head: assetHead } = removeSavedEditorCss(head);
+  const inlineCss = Array.from(assetHead.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi))
     .map((match) => match[1]?.trim() ?? '')
     .filter(Boolean)
     .join('\n\n');
 
   const stylesheetLinks: CanvasStylesheetLink[] = [];
-  for (const match of head.matchAll(/<link\b[^>]*>/gi)) {
+  for (const match of assetHead.matchAll(/<link\b[^>]*>/gi)) {
     const tag = match[0] ?? '';
     const rel = readHtmlAttr(tag, 'rel');
     const href = readHtmlAttr(tag, 'href');

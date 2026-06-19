@@ -72,6 +72,45 @@ describe('createHtmlFileSaveController', () => {
     vi.useRealTimers();
   });
 
+  it('serializes in-flight saves and notifies only after the latest queued source is written', async () => {
+    const file = htmlFile();
+    const writes: Array<{
+      source: string;
+      resolve: (result: Awaited<ReturnType<HtmlFileSaveWriter>>) => void;
+    }> = [];
+    const write = vi.fn<HtmlFileSaveWriter>((_projectId, _fileName, source) => new Promise((resolve) => {
+      writes.push({ source, resolve });
+    }));
+    const onSaved = vi.fn();
+    const controller = createHtmlFileSaveController({
+      projectId: 'project-1',
+      fileName: 'index.html',
+      onSaved,
+      write,
+    });
+
+    const first = controller.saveBestEffort('<html>first</html>', 'grapesjs-autosave-flush');
+    const second = controller.saveBestEffort('<html>second</html>', 'grapesjs-autosave-flush');
+    const latest = controller.saveBestEffort('<html>latest</html>', 'grapesjs-autosave-flush');
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(writes[0]?.source).toBe('<html>first</html>');
+
+    writes[0]?.resolve({ ok: true, file });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(writes[1]?.source).toBe('<html>latest</html>');
+
+    writes[1]?.resolve({ ok: true, file });
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    await expect(latest).resolves.toBe(true);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+  });
+
   it('flushes a scheduled save immediately', async () => {
     vi.useFakeTimers();
     const file = htmlFile();

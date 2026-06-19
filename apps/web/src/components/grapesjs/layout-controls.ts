@@ -7,8 +7,8 @@ export type StylePatch = Record<string, string>;
 
 export const DIMENSION_MODE_OPTIONS: Array<{ value: DimensionMode; label: string }> = [
   { value: 'fixed', label: '固定' },
-  { value: 'hug', label: '撑满' },
-  { value: 'fill', label: '填充' },
+  { value: 'hug', label: '适应' },
+  { value: 'fill', label: '撑满' },
 ];
 
 export function dimensionMode(value: string | undefined, tagName?: string): DimensionMode {

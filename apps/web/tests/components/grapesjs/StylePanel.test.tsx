@@ -126,6 +126,45 @@ describe('StylePanel', () => {
     expect(applyStyle).toHaveBeenCalledWith({ overflow: 'hidden' });
   });
 
+  it('shows fixed and fill sizing for non-text elements and maps fill to 100%', () => {
+    const { applyStyle } = renderPanel({ width: '294px', height: '0px' });
+
+    const widthMode = screen.getByRole('combobox', { name: '宽调整模式' }) as HTMLSelectElement;
+    const heightMode = screen.getByRole('combobox', { name: '高调整模式' }) as HTMLSelectElement;
+
+    expect(Array.from(widthMode.options).map((option) => option.textContent)).toEqual(['固定', '撑满']);
+    expect(Array.from(heightMode.options).map((option) => option.textContent)).toEqual(['固定', '撑满']);
+
+    fireEvent.change(widthMode, { target: { value: 'fill' } });
+    fireEvent.change(heightMode, { target: { value: 'fill' } });
+
+    expect(applyStyle).toHaveBeenCalledWith({ width: '100%' });
+    expect(applyStyle).toHaveBeenCalledWith({ height: '100%' });
+  });
+
+  it('keeps fill selected when the selection snapshot carries percentage dimensions', () => {
+    renderPanel({ width: '100%', height: '100%' });
+
+    const widthMode = screen.getByRole('combobox', { name: '宽调整模式' }) as HTMLSelectElement;
+    const heightMode = screen.getByRole('combobox', { name: '高调整模式' }) as HTMLSelectElement;
+
+    expect(widthMode.value).toBe('fill');
+    expect(heightMode.value).toBe('fill');
+  });
+
+  it('adds an adaptive sizing option only for text selections', () => {
+    renderPanel({}, {
+      componentType: 'text',
+      canvasTool: 'text',
+    });
+
+    const widthMode = screen.getByRole('combobox', { name: '宽调整模式' }) as HTMLSelectElement;
+    const heightMode = screen.getByRole('combobox', { name: '高调整模式' }) as HTMLSelectElement;
+
+    expect(Array.from(widthMode.options).map((option) => option.textContent)).toEqual(['固定', '适应', '撑满']);
+    expect(Array.from(heightMode.options).map((option) => option.textContent)).toEqual(['固定', '适应', '撑满']);
+  });
+
   it('expands the four-corner and four-side controls', () => {
     renderPanel({
       borderTopWidth: '1px',

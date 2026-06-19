@@ -39,6 +39,16 @@ export interface CreateHtmlFileSaveControllerOptions {
   write?: HtmlFileSaveWriter;
 }
 
+type SaveJob = {
+  source: string;
+  reason: HtmlFileSaveReason;
+  requestId: number;
+  waiters: Array<{
+    resolve: (result: WriteProjectTextFileResult) => void;
+    reject: (error: unknown) => void;
+  }>;
+};
+
 export function createHtmlFileSaveController({
   projectId,
   fileName,
@@ -48,11 +58,52 @@ export function createHtmlFileSaveController({
 }: CreateHtmlFileSaveControllerOptions): HtmlFileSaveController {
   let scheduledTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledSave: { source: string; reason: HtmlFileSaveReason } | null = null;
+  let latestRequestedSaveId = 0;
+  let drainingSaveQueue = false;
+  let activeSave: SaveJob | null = null;
+  let queuedSave: SaveJob | null = null;
 
-  async function save(source: string, _reason: HtmlFileSaveReason): Promise<WriteProjectTextFileResult> {
-    const result = await write(projectId, fileName, source, { artifactManifest });
-    if (result.ok) await onSaved?.();
-    return result;
+  async function drainSaveQueue() {
+    if (drainingSaveQueue) return;
+    drainingSaveQueue = true;
+    try {
+      while (activeSave) {
+        const job = activeSave;
+        try {
+          const result = await write(projectId, fileName, job.source, { artifactManifest });
+          if (result.ok && job.requestId === latestRequestedSaveId && !queuedSave) {
+            await onSaved?.();
+          }
+          for (const waiter of job.waiters) waiter.resolve(result);
+        } catch (error) {
+          for (const waiter of job.waiters) waiter.reject(error);
+        }
+        activeSave = queuedSave;
+        queuedSave = null;
+      }
+    } finally {
+      drainingSaveQueue = false;
+    }
+  }
+
+  async function save(source: string, reason: HtmlFileSaveReason): Promise<WriteProjectTextFileResult> {
+    const requestId = ++latestRequestedSaveId;
+    return new Promise<WriteProjectTextFileResult>((resolve, reject) => {
+      const waiter = { resolve, reject };
+      if (!activeSave && !drainingSaveQueue) {
+        activeSave = { source, reason, requestId, waiters: [waiter] };
+        void drainSaveQueue();
+        return;
+      }
+      if (queuedSave) {
+        queuedSave.source = source;
+        queuedSave.reason = reason;
+        queuedSave.requestId = requestId;
+        queuedSave.waiters.push(waiter);
+      } else {
+        queuedSave = { source, reason, requestId, waiters: [waiter] };
+      }
+    });
   }
 
   function clearScheduledTimer() {

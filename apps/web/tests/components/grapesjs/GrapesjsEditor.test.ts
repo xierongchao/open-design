@@ -4,12 +4,16 @@ import {
   appendGrapesjsCanvasToolComponent,
   arrangeGrapesjsSelectionAsFlex,
   attachGrapesjsCanvasViewportSync,
+  attachGrapesjsResizePersistence,
+  buildEditorDocument,
   buildGrapesjsCssStyleClipboard,
   buildGrapesjsCanvasToolComponent,
+  canvasComponentHtml,
   calculateGrapesjsCornerRadiusDrag,
   calculateGrapesjsCornerRadiusFromPointer,
   calculateCanvasFitToViewport,
   calculateGrapesjsRadiusHandleInset,
+  clearGrapesjsManagedInlineStyle,
   clipboardHasImageFile,
   dissolveGrapesjsFlexSelection,
   firstGrapesjsClipboardImageFile,
@@ -17,10 +21,15 @@ import {
   isGrapesjsEditorEditing,
   getGrapesjsIframeSelectionOutlineCss,
   getGrapesjsZoomStyleVars,
+  findGrapesjsPositionedDragComponent,
+  mergeSelectionSnapshotStyles,
   offsetGrapesjsAbsolutePositionStyle,
+  resolveGrapesjsPositionedToolDragOrigin,
   isGrapesjsCanvasChromeTarget,
+  scheduleGrapesjsPlacementChange,
   shouldHandleGrapesjsImagePaste,
   stopGrapesjsTextEditingForPointerTarget,
+  stripGrapesjsCanvasSizeSentinel,
   upsertGrapesjsIframeSelectionStyle,
 } from '../../../src/components/grapesjs/GrapesjsEditor';
 
@@ -214,6 +223,27 @@ describe('GrapesjsEditor rectangle radius handles', () => {
   });
 });
 
+describe('GrapesjsEditor selection snapshot styles', () => {
+  it('preserves authored fill dimensions so the style panel does not snap back to fixed', () => {
+    expect(mergeSelectionSnapshotStyles(
+      {
+        width: '294px',
+        height: '0px',
+        backgroundColor: 'rgb(217, 217, 217)',
+      },
+      {
+        width: '100%',
+        height: '100%',
+        background: '#D9D9D9',
+      },
+    )).toEqual({
+      width: '100%',
+      height: '100%',
+      backgroundColor: 'rgb(217, 217, 217)',
+    });
+  });
+});
+
 describe('GrapesjsEditor canvas viewport sync', () => {
   it('updates overlays when either the host canvas or iframe document scrolls', () => {
     const hostCanvas = Object.assign(new EventTarget(), {
@@ -253,6 +283,93 @@ describe('GrapesjsEditor canvas viewport sync', () => {
 
     expect(sync).toHaveBeenCalledTimes(2);
     expect(off).toHaveBeenCalledWith('canvas:frame:load:body', expect.any(Function));
+  });
+});
+
+describe('GrapesjsEditor resize persistence', () => {
+  it('commits changes when GrapesJS finishes a resize interaction', () => {
+    const callbacks = new Map<string, (payload?: unknown) => void>();
+    const editor = {
+      on: vi.fn((event: string, callback: (payload?: unknown) => void) => {
+        callbacks.set(event, callback);
+      }),
+      off: vi.fn(),
+    };
+    const refreshGeometry = vi.fn();
+    const cleanupInlineStyle = vi.fn();
+    const commitChange = vi.fn();
+    const payload = { target: { id: 'rect' } };
+
+    const detach = attachGrapesjsResizePersistence(editor, {
+      refreshGeometry,
+      cleanupInlineStyle,
+      commitChange,
+    });
+
+    callbacks.get('component:resize:end')?.(payload);
+
+    expect(refreshGeometry).toHaveBeenCalledTimes(1);
+    expect(cleanupInlineStyle).toHaveBeenCalledWith(payload);
+    expect(commitChange).toHaveBeenCalledTimes(1);
+
+    detach();
+
+    expect(editor.off).toHaveBeenCalledWith('component:resize:end', expect.any(Function));
+  });
+
+  it('commits and cleans inline styles when GrapesJS finishes a drag interaction', () => {
+    const callbacks = new Map<string, (payload?: unknown) => void>();
+    const editor = {
+      on: vi.fn((event: string, callback: (payload?: unknown) => void) => {
+        callbacks.set(event, callback);
+      }),
+      off: vi.fn(),
+    };
+    const refreshGeometry = vi.fn();
+    const cleanupInlineStyle = vi.fn();
+    const commitChange = vi.fn();
+    const payload = { target: { id: 'rect' } };
+
+    const detach = attachGrapesjsResizePersistence(editor, {
+      refreshGeometry,
+      cleanupInlineStyle,
+      commitChange,
+    });
+
+    callbacks.get('component:drag:end')?.(payload);
+
+    expect(refreshGeometry).toHaveBeenCalledTimes(1);
+    expect(cleanupInlineStyle).toHaveBeenCalledWith(payload);
+    expect(commitChange).toHaveBeenCalledTimes(1);
+
+    detach();
+
+    expect(editor.off).toHaveBeenCalledWith('component:drag:end', expect.any(Function));
+  });
+
+  it('keeps resize update events visual-only so autosave waits for the end event', () => {
+    const callbacks = new Map<string, (payload?: unknown) => void>();
+    const editor = {
+      on: vi.fn((event: string, callback: (payload?: unknown) => void) => {
+        callbacks.set(event, callback);
+      }),
+      off: vi.fn(),
+    };
+    const refreshGeometry = vi.fn();
+    const cleanupInlineStyle = vi.fn();
+    const commitChange = vi.fn();
+
+    attachGrapesjsResizePersistence(editor, {
+      refreshGeometry,
+      cleanupInlineStyle,
+      commitChange,
+    });
+
+    callbacks.get('component:resize:update')?.({ target: { id: 'rect' } });
+
+    expect(refreshGeometry).toHaveBeenCalledTimes(1);
+    expect(cleanupInlineStyle).not.toHaveBeenCalled();
+    expect(commitChange).not.toHaveBeenCalled();
   });
 });
 
@@ -661,6 +778,35 @@ describe('GrapesjsEditor flex auto-layout dissolve', () => {
     expect(child.getAttributes()['data-od-position-mode']).toBe('flow');
     expect(select).toHaveBeenCalledWith(wrapper);
   });
+
+  it('uses an absolute auto-layout wrapper as the free-drag target for its flow children', () => {
+    const wrapper = fakeComponent({
+      attrs: {
+        'data-od-auto-layout-wrapper': 'true',
+        'data-od-position-mode': 'absolute',
+      },
+      style: {
+        display: 'flex',
+        position: 'absolute',
+        left: '20px',
+        top: '30px',
+      },
+    });
+    const child = fakeComponent({
+      attrs: {
+        'data-od-canvas-tool': 'rectangle',
+        'data-od-position-mode': 'flow',
+      },
+      style: {
+        width: '64px',
+        height: '36px',
+      },
+    });
+    child.move(wrapper);
+
+    expect(findGrapesjsPositionedDragComponent(child as never)).toBe(wrapper);
+    expect(findGrapesjsPositionedDragComponent(wrapper as never)).toBe(wrapper);
+  });
 });
 
 describe('GrapesjsEditor keyboard guards', () => {
@@ -848,9 +994,160 @@ describe('GrapesjsEditor style clipboard', () => {
       width: '240px',
     });
   });
+
+  it('uses the DOM position as absolute drag origin when model left/top are temporarily missing', () => {
+    expect(resolveGrapesjsPositionedToolDragOrigin({
+      styleLeft: undefined,
+      styleTop: undefined,
+      elementRect: fakeDomRect(420, 260, 160, 96),
+      rootRect: fakeDomRect(100, 80, 1920, 1080),
+    })).toEqual({ left: 320, top: 180 });
+  });
+
+  it('clears DOM inline styles after promoting canvas tool styles into GrapesJS CSS rules', () => {
+    const removeProperty = vi.fn();
+    const removeAttribute = vi.fn();
+    const component = fakeComponent({
+      style: {
+        width: '281px',
+        height: '316px',
+        'box-sizing': 'border-box',
+        borderRadius: '2px',
+      },
+      el: {
+        nodeType: 1,
+        style: {
+          removeProperty,
+          length: 0,
+        },
+        removeAttribute,
+      } as unknown as HTMLElement,
+    });
+
+    clearGrapesjsManagedInlineStyle(component as never);
+
+    expect(removeProperty).toHaveBeenCalledWith('width');
+    expect(removeProperty).toHaveBeenCalledWith('height');
+    expect(removeProperty).toHaveBeenCalledWith('box-sizing');
+    expect(removeProperty).toHaveBeenCalledWith('border-radius');
+    expect(removeAttribute).toHaveBeenCalledWith('style');
+  });
 });
 
 describe('GrapesjsEditor canvas tools', () => {
+  it('does not emit autosave while a canvas tool is only inserted for live placement', () => {
+    const scheduleEmit = vi.fn();
+
+    scheduleGrapesjsPlacementChange('insert', scheduleEmit);
+
+    expect(scheduleEmit).not.toHaveBeenCalled();
+
+    scheduleGrapesjsPlacementChange('finish', scheduleEmit);
+    scheduleGrapesjsPlacementChange('cancel', scheduleEmit);
+
+    expect(scheduleEmit).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not inject a selectable placeholder div for an empty artboard body', () => {
+    expect(canvasComponentHtml({
+      doctype: '<!doctype html>',
+      htmlOpen: '<html>',
+      head: '<head></head>',
+      bodyOpen: '<body>',
+      bodyInner: '',
+      bodyClose: '</body>',
+      htmlClose: '</html>',
+    })).toBe('');
+  });
+
+  it('removes the legacy empty gjs-size canvas sentinel from loaded body html', () => {
+    expect(canvasComponentHtml({
+      doctype: '<!doctype html>',
+      htmlOpen: '<html>',
+      head: '<head></head>',
+      bodyOpen: '<body>',
+      bodyInner: '<div data-gjs-type="default" data-od-id="gjs-size" id="abc"></div><section>Real</section>',
+      bodyClose: '</body>',
+      htmlClose: '</html>',
+    })).toBe('<section>Real</section>');
+  });
+
+  it('removes an accidental nested body wrapper before GrapesJS parses components', () => {
+    expect(canvasComponentHtml({
+      doctype: '<!doctype html>',
+      htmlOpen: '<html>',
+      head: '<head></head>',
+      bodyOpen: '<body>',
+      bodyInner: '<body data-od-id="gjs-il5b" id="il5b"><div id="rect"></div></body>',
+      bodyClose: '</body>',
+      htmlClose: '</html>',
+    })).toBe('<div id="rect"></div>');
+  });
+
+  it('serializes canvas body styles without stealing style from the first real component', () => {
+    const parsed = {
+      doctype: '<!doctype html>',
+      htmlOpen: '<html>',
+      head: '<head></head>',
+      bodyOpen: '<body>',
+      bodyInner: '',
+      bodyClose: '</body>',
+      htmlClose: '</html>',
+    };
+    const editor = {
+      getHtml: () => '<div style="position:absolute;left:120px;top:80px;width:160px;height:96px"></div>',
+      getCss: () => '',
+      Components: {
+        getComponents: () => ({
+          get: () => ({
+            getStyle: () => ({
+              position: 'absolute',
+              left: '120px',
+              top: '80px',
+              width: '160px',
+              height: '96px',
+            }),
+          }),
+        }),
+      },
+    };
+
+    const serialized = buildEditorDocument(editor as never, parsed, undefined, {
+      backgroundColor: '#ffffff',
+    });
+
+    expect(serialized).toContain('<body style="background-color:#ffffff">');
+    expect(serialized).not.toContain('<body style="position:absolute');
+    expect(serialized).toContain('<div style="position:absolute;left:120px;top:80px;width:160px;height:96px"></div>');
+  });
+
+  it('strips only empty gjs-size sentinel nodes', () => {
+    expect(stripGrapesjsCanvasSizeSentinel(
+      '<div data-gjs-type="default" data-od-id="gjs-size"></div><div data-od-id="gjs-size">content</div>',
+    )).toBe('<div data-od-id="gjs-size">content</div>');
+  });
+
+  it('serializes editor body HTML without nesting a body tag into the saved body', () => {
+    const parsed = {
+      doctype: '<!doctype html>',
+      htmlOpen: '<html>',
+      head: '<head></head>',
+      bodyOpen: '<body>',
+      bodyInner: '',
+      bodyClose: '</body>',
+      htmlClose: '</html>',
+    };
+    const editor = {
+      getHtml: () => '<body id="gjs-root"><div id="rect"></div></body>',
+      getCss: () => '#rect{width:220px;height:96px;}',
+    };
+
+    const serialized = buildEditorDocument(editor as never, parsed);
+
+    expect(serialized).toContain('<body>\n<div id="rect"></div>\n</body>');
+    expect(serialized).not.toContain('<body id="gjs-root">');
+  });
+
   it('creates absolutely positioned rectangle components at the clicked point', () => {
     const component = buildGrapesjsCanvasToolComponent('rectangle', { x: 42.4, y: 75.6 });
 
@@ -868,6 +1165,7 @@ describe('GrapesjsEditor canvas tools', () => {
       background: '#D9D9D9',
       border: '0',
     });
+    expect(component).not.toHaveProperty('draggable');
   });
 
   it('creates text components with editable text content', () => {

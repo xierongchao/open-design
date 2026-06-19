@@ -18,6 +18,8 @@ import {
   applyCanvasBodyAttributes,
   applyCanvasHeadAssets,
   areDocumentsEqual,
+  extractSavedEditorCss,
+  normalizeCanvasBodyHtml,
   parseHtmlDocument,
   readCanvasBodyStyleOverrides,
   reassembleDocument,
@@ -82,6 +84,20 @@ function readElementStyles(el: HTMLElement | null): Record<string, string> {
   }
 }
 
+export function mergeSelectionSnapshotStyles(
+  computed: Record<string, string>,
+  authored: Record<string, string>,
+): Record<string, string> {
+  const out = { ...computed };
+  for (const key of ['width', 'height'] as const) {
+    const authoredValue = authored[key];
+    if (typeof authoredValue === 'string' && authoredValue.trim()) {
+      out[key] = authoredValue;
+    }
+  }
+  return out;
+}
+
 function toCssStyleProps(styles: Record<string, string>): Record<string, string> {
   // Convert kebab-case CSS prop names to camelCase for CSSStyleDeclaration assignment.
   const out: Record<string, string> = {};
@@ -124,6 +140,7 @@ export type GrapesjsCanvasTool =
   | 'text';
 export type GrapesjsPlaceableCanvasTool = Exclude<GrapesjsCanvasTool, 'cursor'>;
 export type GrapesjsCanvasPlacementMode = 'absolute' | 'flow';
+export type GrapesjsPlacementChangePhase = 'insert' | 'finish' | 'cancel';
 
 export interface GrapesjsCanvasPoint {
   x: number;
@@ -145,6 +162,14 @@ function grapesjsSelectionColor(tone: GrapesjsSelectionTone | undefined): string
 
 export function isGrapesjsPlaceableCanvasTool(tool: GrapesjsCanvasTool): tool is GrapesjsPlaceableCanvasTool {
   return tool !== 'cursor';
+}
+
+export function scheduleGrapesjsPlacementChange(
+  phase: GrapesjsPlacementChangePhase,
+  scheduleEmit: (() => void) | null | undefined,
+): void {
+  if (phase === 'insert') return;
+  scheduleEmit?.();
 }
 
 export function isGrapesjsEditorEditing(editor: unknown): boolean {
@@ -295,6 +320,27 @@ export function offsetGrapesjsAbsolutePositionStyle(
   };
 }
 
+function parseCssPxStrict(value: unknown): number | null {
+  const match = String(value ?? '').trim().match(/^(-?\d+(?:\.\d+)?)px$/);
+  if (!match?.[1]) return null;
+  const parsed = Number.parseFloat(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function resolveGrapesjsPositionedToolDragOrigin(input: {
+  styleLeft?: unknown;
+  styleTop?: unknown;
+  elementRect?: Pick<DOMRect, 'left' | 'top'> | null;
+  rootRect?: Pick<DOMRect, 'left' | 'top'> | null;
+}): { left: number; top: number } {
+  const fallbackLeft = input.elementRect && input.rootRect ? input.elementRect.left - input.rootRect.left : 0;
+  const fallbackTop = input.elementRect && input.rootRect ? input.elementRect.top - input.rootRect.top : 0;
+  return {
+    left: parseCssPxStrict(input.styleLeft) ?? fallbackLeft,
+    top: parseCssPxStrict(input.styleTop) ?? fallbackTop,
+  };
+}
+
 function basePlacedStyle(
   point: GrapesjsCanvasPoint,
   width: number,
@@ -423,7 +469,6 @@ export function buildGrapesjsCanvasToolComponent(
     return {
       tagName: 'div',
       attributes: commonAttrs,
-      ...(mode === 'absolute' ? { draggable: false } : {}),
       style: {
         ...basePlacedStyle(point, options.width ?? 160, options.height ?? 96, mode),
         background: GRAPESJS_CANVAS_TOOL_FILL,
@@ -436,7 +481,6 @@ export function buildGrapesjsCanvasToolComponent(
     return {
       tagName: 'div',
       attributes: commonAttrs,
-      ...(mode === 'absolute' ? { draggable: false } : {}),
       style: {
         ...basePlacedStyle(point, options.width ?? 112, options.height ?? 112, mode),
         background: GRAPESJS_CANVAS_TOOL_FILL,
@@ -449,7 +493,6 @@ export function buildGrapesjsCanvasToolComponent(
     return {
       tagName: 'div',
       attributes: commonAttrs,
-      ...(mode === 'absolute' ? { draggable: false } : {}),
       style: {
         ...basePlacedStyle(point, options.width ?? 180, 2, mode),
         background: GRAPESJS_CANVAS_TOOL_FILL,
@@ -475,7 +518,6 @@ export function buildGrapesjsCanvasToolComponent(
       attributes: commonAttrs,
       editable: true,
       droppable: false,
-      ...(mode === 'absolute' ? { draggable: false } : {}),
       content: '输入文本',
       style: {
         ...positionedStyle,
@@ -497,7 +539,6 @@ export function buildGrapesjsCanvasToolComponent(
   return {
     tagName: 'div',
     attributes: commonAttrs,
-    ...(mode === 'absolute' ? { draggable: false } : {}),
     style: {
       ...basePlacedStyle(point, options.width ?? 240, options.height ?? 160, mode),
       background: GRAPESJS_CANVAS_TOOL_FILL,
@@ -569,6 +610,25 @@ function getComponentStyleRecord(comp: Component | null | undefined): Record<str
   try { return { ...(comp?.getStyle?.() ?? {}) } as Record<string, string>; } catch { return {}; }
 }
 
+function toCssPropertyName(prop: string): string {
+  return prop.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+}
+
+export function clearGrapesjsManagedInlineStyle(
+  comp: Component | null | undefined,
+  props?: Iterable<string>,
+): void {
+  const el = getElementFromComponent(comp) as HTMLElement | null;
+  if (!el?.style) return;
+  const styleProps = props ? Array.from(props) : Object.keys(getComponentStyleRecord(comp));
+  for (const prop of styleProps) {
+    try { el.style.removeProperty(toCssPropertyName(prop)); } catch { /* ignore */ }
+  }
+  try {
+    if (el.style.length === 0) el.removeAttribute('style');
+  } catch { /* ignore */ }
+}
+
 const ABSOLUTE_PLACEMENT_STYLE_PROPS = ['position', 'left', 'top', 'right', 'bottom'] as const;
 
 function clearComponentAbsolutePlacement(comp: Component): void {
@@ -604,6 +664,23 @@ export function isGrapesjsCanvasToolComponent(comp: Component | null | undefined
 export function isGrapesjsAbsoluteCanvasToolComponent(comp: Component | null | undefined): boolean {
   const attrs = getComponentAttributes(comp);
   return Boolean(attrs['data-od-canvas-tool']) && attrs['data-od-position-mode'] === 'absolute';
+}
+
+export function isGrapesjsPositionedDragComponent(comp: Component | null | undefined): boolean {
+  const attrs = getComponentAttributes(comp);
+  if (attrs['data-od-position-mode'] !== 'absolute') return false;
+  return Boolean(attrs['data-od-canvas-tool']) || attrs['data-od-auto-layout-wrapper'] === 'true';
+}
+
+export function findGrapesjsPositionedDragComponent(comp: Component | null | undefined): Component | null {
+  let node: Component | null | undefined = comp;
+  while (node) {
+    if (isGrapesjsPositionedDragComponent(node)) return node;
+    const parent = node.parent?.();
+    if (!parent || parent === node) break;
+    node = parent;
+  }
+  return null;
 }
 
 function isGrapesjsAutoLayoutWrapper(comp: Component | null | undefined): boolean {
@@ -955,6 +1032,44 @@ export function attachGrapesjsCanvasViewportSync(
   };
 }
 
+type GrapesjsResizePersistenceEditor = {
+  on?: (event: string, callback: (payload?: unknown) => void) => unknown;
+  off?: (event: string, callback: (payload?: unknown) => void) => unknown;
+};
+
+export function attachGrapesjsResizePersistence(
+  editor: GrapesjsResizePersistenceEditor,
+  handlers: {
+    refreshGeometry: () => void;
+    cleanupInlineStyle?: (payload?: unknown) => void;
+    commitChange: () => void;
+  },
+): () => void {
+  const onLiveResize = () => {
+    handlers.refreshGeometry();
+  };
+  const onInteractionCommit = (payload?: unknown) => {
+    handlers.refreshGeometry();
+    handlers.cleanupInlineStyle?.(payload);
+    handlers.commitChange();
+  };
+  const bindings: Array<[string, (payload?: unknown) => void]> = [
+    ['component:resize', onLiveResize],
+    ['component:resize:move', onLiveResize],
+    ['component:resize:update', onLiveResize],
+    ['component:resize:end', onInteractionCommit],
+    ['component:drag:end', onInteractionCommit],
+  ];
+  for (const [event, callback] of bindings) {
+    try { editor.on?.(event, callback); } catch { /* ignore */ }
+  }
+  return () => {
+    for (const [event, callback] of bindings) {
+      try { editor.off?.(event, callback); } catch { /* ignore */ }
+    }
+  };
+}
+
 function applyCanvasBodyStyleOverrides(
   editor: GrapesjsEditorInstance,
   styles: Record<string, string>,
@@ -987,35 +1102,46 @@ function mergeCanvasStyleSnapshot(
   return { ...computed, ...sourceOverrides };
 }
 
-function readCanvasWrapperStyle(editor: GrapesjsEditorInstance): Record<string, string> | undefined {
-  try {
-    const wrapper = editor.Components.getComponents().get(0);
-    const raw = wrapper?.getStyle?.() ?? {};
-    const coerced: Record<string, string> = {};
-    for (const [key, value] of Object.entries(raw)) {
-      if (typeof value === 'string') coerced[key] = value;
-    }
-    return Object.keys(coerced).length > 0 ? coerced : undefined;
-  } catch {
-    return undefined;
-  }
+function nonEmptyStyleRecord(style: Record<string, string>): Record<string, string> | undefined {
+  return Object.keys(style).length > 0 ? style : undefined;
 }
 
-function buildEditorDocument(
-  editor: GrapesjsEditorInstance,
-  parsed: ParsedDocument,
-  baseHref?: string,
-): string {
-  return reassembleDocument(
-    parsed,
-    restoreCanvasBodyAssetUrls(editor.getHtml(), baseHref),
-    editor.getCss() ?? '',
-    readCanvasWrapperStyle(editor),
+export function stripGrapesjsCanvasSizeSentinel(html: string): string {
+  return html.replace(
+    /<div\b(?=[^>]*\bdata-od-id=(["'])gjs-size\1)(?=[^>]*\bdata-gjs-type=(["'])default\2)[^>]*>\s*<\/div>/gi,
+    '',
   );
 }
 
-function canvasComponentHtml(parsed: ParsedDocument, baseHref?: string): string {
-  return resolveCanvasBodyAssetUrls(parsed.bodyInner || '<div></div>', baseHref);
+export function buildEditorDocument(
+  editor: GrapesjsEditorInstance,
+  parsed: ParsedDocument,
+  baseHref?: string,
+  canvasBodyStyle: Record<string, string> = {},
+): string {
+  const bodyHtml = normalizeCanvasBodyHtml(
+    stripGrapesjsCanvasSizeSentinel(restoreCanvasBodyAssetUrls(editor.getHtml(), baseHref)),
+  );
+  return reassembleDocument(
+    parsed,
+    bodyHtml,
+    editor.getCss() ?? '',
+    nonEmptyStyleRecord(canvasBodyStyle),
+  );
+}
+
+export function canvasComponentHtml(parsed: ParsedDocument, baseHref?: string): string {
+  return normalizeCanvasBodyHtml(
+    stripGrapesjsCanvasSizeSentinel(resolveCanvasBodyAssetUrls(parsed.bodyInner, baseHref)),
+  );
+}
+
+function setEditorManagedCss(editor: GrapesjsEditorInstance, css: string): void {
+  try {
+    (editor as unknown as { setStyle?: (css: string) => unknown }).setStyle?.(css);
+  } catch {
+    // ignore
+  }
 }
 
 function applyCanvasFrameSize(
@@ -1876,7 +2002,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       const editor = editorRef.current;
       const parsed = parsedRef.current;
       if (!editor || !parsed) return;
-      const full = buildEditorDocument(editor, parsed, baseHrefRef.current);
+      const full = buildEditorDocument(editor, parsed, baseHrefRef.current, currentCanvasStylesRef.current);
       if (areDocumentsEqual(full, lastEmittedRef.current)) return;
       lastEmittedRef.current = full;
       // CRITICAL loop-break: sync the emitted value to lastExternalHtmlRef so
@@ -1913,7 +2039,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             // CSS survive round-trips. The full document is reassembled
             // in emitChange().
             components: canvasComponentHtml(parsed, baseHrefRef.current),
-            style: '',
+            style: extractSavedEditorCss(parsed.head),
             height: '100%',
             width: '100%',
             storageManager: false,
@@ -2204,9 +2330,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               }
               .od-radius-handle {
                 position: absolute;
-                width: 10px;
-                height: 10px;
-                margin: -5px 0 0 -5px;
+                width: 16px;
+                height: 16px;
+                margin: -8px 0 0 -8px;
                 border: 0;
                 border-radius: 50%;
                 background: transparent;
@@ -2222,13 +2348,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 position: absolute;
                 left: 50%;
                 top: 50%;
-                width: 3px;
-                height: 3px;
-                border: 1.5px solid #1595ff;
+                width: 7px;
+                height: 7px;
+                border: 2px solid #1595ff;
                 border-radius: 50%;
                 background: #fff;
                 box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 1px 3px rgba(15,23,42,.22);
-                opacity: .48;
+                opacity: .86;
                 transform: translate(-50%, -50%);
                 transition: width 120ms cubic-bezier(0.23, 1, 0.32, 1), height 120ms cubic-bezier(0.23, 1, 0.32, 1), opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
               }
@@ -2236,8 +2362,8 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 cursor: default;
               }
               .od-radius-handle.is-active::after {
-                width: 6px;
-                height: 6px;
+                width: 10px;
+                height: 10px;
                 border-width: 2px;
                 opacity: 1;
               }
@@ -2408,7 +2534,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           let radiusDragRaf = 0;
           let pendingRadiusMove: { clientX: number; clientY: number } | null = null;
           let detachRadiusHandles: (() => void) | null = null;
-          const radiusHandleMinInset = 24;
+          const radiusHandleMinInset = 28;
           const radiusHandleMinTargetSize = 80;
           const radiusCssPx = (value: string | undefined): number => {
             const match = String(value ?? '').match(/-?[\d.]+/);
@@ -3037,10 +3163,6 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             requestVisibleToolsRefresh();
             syncArtboardLabelPositionRef.current?.();
           };
-          const onResizeCommit = () => {
-            requestVisibleToolsRefresh();
-            requestSelectionSnapshotRefresh({ emit: true });
-          };
           const detachCanvasViewportSync = attachGrapesjsCanvasViewportSync(
             editor,
             [rootRef.current, containerRef.current],
@@ -3074,9 +3196,38 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           editor.on('canvas:zoom', onLiveToolsGeometryChange);
           editor.on('canvas:coords', onLiveToolsGeometryChange);
           editor.on('component:drag', onLiveToolsGeometryChange);
-          editor.on('component:resize', onLiveToolsGeometryChange);
-          editor.on('component:resize:move', onLiveToolsGeometryChange);
-          editor.on('component:resize:update', onResizeCommit);
+          const addInlineCleanupCandidate = (candidates: Set<Component>, candidate: unknown) => {
+            if (!candidate || typeof candidate !== 'object') return;
+            const maybe = candidate as Component;
+            const maybeView = (candidate as { view?: unknown }).view;
+            if (
+              typeof maybe.getStyle === 'function' ||
+              typeof maybe.getEl === 'function' ||
+              typeof maybe.setStyle === 'function' ||
+              (maybeView && typeof maybeView === 'object')
+            ) {
+              candidates.add(maybe);
+            }
+          };
+          const cleanupInteractionInlineStyle = (payload?: unknown) => {
+            const candidates = new Set<Component>();
+            const record = payload && typeof payload === 'object' ? payload as Record<string, unknown> : null;
+            addInlineCleanupCandidate(candidates, payload);
+            addInlineCleanupCandidate(candidates, record?.target);
+            addInlineCleanupCandidate(candidates, record?.component);
+            addInlineCleanupCandidate(candidates, record?.model);
+            try { addInlineCleanupCandidate(candidates, editor.getSelected?.()); } catch { /* ignore */ }
+            for (const candidate of candidates) {
+              clearGrapesjsManagedInlineStyle(candidate);
+            }
+          };
+          const detachResizePersistence = attachGrapesjsResizePersistence(editor, {
+            refreshGeometry: onLiveToolsGeometryChange,
+            cleanupInlineStyle: cleanupInteractionInlineStyle,
+            commitChange: () => {
+              requestSelectionSnapshotRefresh({ emit: true });
+            },
+          });
           // A single host-doc-level editor for the spacing "click to type"
           // popup. Only one value can be edited at a time, so we keep one
           // floating <input> and re-anchor it to whichever guide handle the
@@ -4450,11 +4601,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               writeElementStyle(comp, patch);
             };
             const commitComponentStyle = (comp: Component, patch: Record<string, string>) => {
+              let mergedStyleKeys: string[] = Object.keys(patch);
               try {
                 const merged = { ...(comp.getStyle?.() ?? {}), ...patch } as Parameters<typeof comp.setStyle>[0];
+                mergedStyleKeys = Object.keys(merged as Record<string, unknown>);
                 comp.setStyle?.(merged);
               } catch { /* ignore */ }
-              writeElementStyle(comp, patch);
+              clearGrapesjsManagedInlineStyle(comp, mergedStyleKeys);
             };
             const undoManager = () => (
               editor as unknown as {
@@ -4486,28 +4639,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (!wasTracking) return;
               try { undoManager()?.start?.(); } catch { /* ignore */ }
             };
-            const parseCssPx = (value: unknown): number => {
-              const match = String(value ?? '').match(/-?[\d.]+/);
-              return match?.[0] ? Number.parseFloat(match[0]) : 0;
-            };
             const componentAttrs = (comp: Component | null | undefined): Record<string, unknown> => {
               try { return comp?.getAttributes?.() ?? {}; } catch { return {}; }
             };
-            const findCanvasToolComponent = (comp: Component | null | undefined): Component | null => {
-              let node: Component | null | undefined = comp;
-              while (node) {
-                if (componentAttrs(node)['data-od-canvas-tool']) return node;
-                const parent = node.parent?.();
-                if (!parent || parent === node) break;
-                node = parent;
-              }
-              return null;
-            };
-            const isAbsoluteCanvasToolComponent = (comp: Component | null | undefined): comp is Component => {
-              const attrs = componentAttrs(comp);
-              return Boolean(attrs['data-od-canvas-tool']) && attrs['data-od-position-mode'] === 'absolute';
-            };
-
             const insertPlacedCanvasTool = (
               tool: GrapesjsPlaceableCanvasTool,
               point: GrapesjsCanvasPoint,
@@ -4518,8 +4652,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 if (!node) return null;
                 editor.select(node);
                 try { editor.runCommand(`${odResizablePluginKey}:refresh`); } catch { /* ignore */ }
+                clearGrapesjsManagedInlineStyle(node);
                 refreshSelectionSnapshotRef.current?.();
-                scheduleEmitRef.current?.();
+                scheduleGrapesjsPlacementChange('insert', scheduleEmitRef.current);
                 return node;
               } catch {
                 return null;
@@ -4677,9 +4812,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               const component = state.component;
               placementInteraction = null;
               if (state.pendingStyle) commitComponentStyle(component, state.pendingStyle);
+              clearGrapesjsManagedInlineStyle(component);
               restoreUndoTrackingAfterDrag(state.undoWasTracking);
               refreshSelectionSnapshotRef.current?.();
-              scheduleEmitRef.current?.();
+              scheduleGrapesjsPlacementChange('finish', scheduleEmitRef.current);
               finishPlacedCanvasTool(component);
             };
 
@@ -4688,9 +4824,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (!state) return;
               placementInteraction = null;
               if (state.pendingStyle) commitComponentStyle(state.component, state.pendingStyle);
+              clearGrapesjsManagedInlineStyle(state.component);
               restoreUndoTrackingAfterDrag(state.undoWasTracking);
               refreshSelectionSnapshotRef.current?.();
-              scheduleEmitRef.current?.();
+              scheduleGrapesjsPlacementChange('cancel', scheduleEmitRef.current);
             };
 
             const startPlacementInteraction = (
@@ -4928,20 +5065,26 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               const compAtPoint = source === 'host'
                 ? componentFromHostPoint(ev.clientX, ev.clientY)
                 : getComponentFromElement(targetEl);
-              const comp = findCanvasToolComponent(compAtPoint);
-              if (!isAbsoluteCanvasToolComponent(comp)) return false;
+              const comp = findGrapesjsPositionedDragComponent(compAtPoint);
+              if (!comp) return false;
               const point = pointForSource(ev, source);
               if (!point) return false;
               const style = comp.getStyle?.() ?? {};
               const el = getElementFromComponent(comp) as HTMLElement | null;
               const readLeft = style.left ?? el?.style.getPropertyValue('left');
               const readTop = style.top ?? el?.style.getPropertyValue('top');
+              const origin = resolveGrapesjsPositionedToolDragOrigin({
+                styleLeft: readLeft,
+                styleTop: readTop,
+                elementRect: el?.getBoundingClientRect?.() ?? null,
+                rootRect: canvasDocumentRootRect(editor),
+              });
               positionedToolDrag = {
                 component: comp,
                 source,
                 start: point,
-                startLeft: parseCssPx(readLeft),
-                startTop: parseCssPx(readTop),
+                startLeft: origin.left,
+                startTop: origin.top,
                 moved: false,
                 pendingStyle: null,
               };
@@ -5653,9 +5796,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             try { editor.off('canvas:zoom', onLiveToolsGeometryChange); } catch { /* ignore */ }
             try { editor.off('canvas:coords', onLiveToolsGeometryChange); } catch { /* ignore */ }
             try { editor.off('component:drag', onLiveToolsGeometryChange); } catch { /* ignore */ }
-            try { editor.off('component:resize', onLiveToolsGeometryChange); } catch { /* ignore */ }
-            try { editor.off('component:resize:move', onLiveToolsGeometryChange); } catch { /* ignore */ }
-            try { editor.off('component:resize:update', onResizeCommit); } catch { /* ignore */ }
+            try { detachResizePersistence(); } catch { /* ignore */ }
             try { detachCanvasViewportSync(); } catch { /* ignore */ }
             try { detachToolsLayoutResize?.(); } catch { /* ignore */ }
             if (toolsRefreshRaf) window.cancelAnimationFrame(toolsRefreshRaf);
@@ -5701,7 +5842,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
             const comp = first as Component;
             const el = getElementFromComponent(comp);
-            const styles = readElementStyles(el);
+            const styles = mergeSelectionSnapshotStyles(
+              readElementStyles(el),
+              getComponentStyleRecord(comp),
+            );
             let tagName = 'div';
             try { tagName = (comp.get('tagName') as string) ?? 'div'; } catch { /* ignore */ }
             let componentType = '';
@@ -5961,6 +6105,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       // but preserve explicit data-od-id from the AI.
       try {
         editor.setComponents(canvasComponentHtml(parsed, baseHrefRef.current));
+        setEditorManagedCss(editor, extractSavedEditorCss(parsed.head));
         const doc = editor.Canvas.getDocument();
         applyCanvasHeadAssets(doc, parsed, baseHrefRef.current);
         applyCanvasBodyAttributes(doc, parsed);
@@ -6003,7 +6148,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           const editor = editorRef.current;
           const parsed = parsedRef.current;
           if (!editor || !parsed) return html;
-          return buildEditorDocument(editor, parsed, baseHrefRef.current);
+          return buildEditorDocument(editor, parsed, baseHrefRef.current, currentCanvasStylesRef.current);
         },
         setHtml: (next: string) => {
           const editor = editorRef.current;
@@ -6016,6 +6161,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           lastEmittedRef.current = '';
           try {
             editor.setComponents(canvasComponentHtml(parsed, baseHrefRef.current));
+            setEditorManagedCss(editor, extractSavedEditorCss(parsed.head));
             const doc = editor.Canvas.getDocument();
             applyCanvasHeadAssets(doc, parsed, baseHrefRef.current);
             applyCanvasBodyAttributes(doc, parsed);
@@ -6096,12 +6242,6 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             };
             const body = getCanvasBodyElFromEditor(editor);
             if (body) applyCanvasBodyStyleOverrides(editor, nextCanvasStyles);
-            // Also persist onto the wrapper component so getDocument round-trips.
-            const wrapper = editor.Components.getComponents().get(0);
-            if (wrapper) {
-              const merged = { ...(wrapper.getStyle?.() ?? {}), ...styles } as Parameters<typeof wrapper.setStyle>[0];
-              wrapper.setStyle?.(merged);
-            }
             scheduleEmitRef.current?.();
           } catch { /* ignore */ }
         },
@@ -6341,6 +6481,31 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
       win.addEventListener('pointerup', up, true);
     }, [artboardLabelEditing]);
 
+    const artboardLabelNode = (
+      <div
+        ref={artboardLabelRef}
+        className={styles.artboardLabel}
+        style={{ display: loading || loadError ? 'none' : undefined }}
+        onPointerDown={onArtboardLabelPointerDown}
+        onDoubleClick={beginArtboardLabelEdit}
+        title={artboardName}
+      >
+        {artboardLabelEditing ? (
+          <input
+            className={styles.artboardLabelInput}
+            value={artboardLabelDraft}
+            autoFocus
+            onPointerDown={(event) => event.stopPropagation()}
+            onChange={(event) => setArtboardLabelDraft(event.currentTarget.value)}
+            onBlur={commitArtboardLabel}
+            onKeyDown={onArtboardLabelKeyDown}
+          />
+        ) : (
+          <span className={styles.artboardLabelText}>{artboardName}</span>
+        )}
+      </div>
+    );
+
     return (
       <div className={rootClass} ref={rootRef}>
         {loading ? (
@@ -6360,28 +6525,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           // Inline-block so GrapesJS's internal sizing has a baseline.
           style={{ display: loading ? 'none' : 'block' }}
         />
-        <div
-          ref={artboardLabelRef}
-          className={styles.artboardLabel}
-          style={{ display: loading || loadError ? 'none' : undefined }}
-          onPointerDown={onArtboardLabelPointerDown}
-          onDoubleClick={beginArtboardLabelEdit}
-          title={artboardName}
-        >
-          {artboardLabelEditing ? (
-            <input
-              className={styles.artboardLabelInput}
-              value={artboardLabelDraft}
-              autoFocus
-              onPointerDown={(event) => event.stopPropagation()}
-              onChange={(event) => setArtboardLabelDraft(event.currentTarget.value)}
-              onBlur={commitArtboardLabel}
-              onKeyDown={onArtboardLabelKeyDown}
-            />
-          ) : (
-            <span className={styles.artboardLabelText}>{artboardName}</span>
-          )}
-        </div>
+        {artboardLabelNode}
         {ctxMenu ? (
           <CanvasContextMenu
             editor={editorRef.current}

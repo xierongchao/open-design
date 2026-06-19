@@ -6,8 +6,11 @@ import {
   applyCanvasBodyAttributes,
   applyCanvasHeadAssets,
   extractCanvasHeadAssets,
+  extractSavedEditorCss,
+  normalizeCanvasBodyHtml,
   parseHtmlDocument,
   readCanvasBodyStyleOverrides,
+  reassembleDocument,
   resolveCanvasAssetUrl,
   resolveCanvasBodyAssetUrls,
   restoreCanvasBodyAssetUrls,
@@ -34,6 +37,59 @@ describe('GrapesJS HTML document helpers', () => {
       inlineCss: '.hero { min-height: 100vh; }',
       stylesheetLinks: [{ href: '../css/admin-kit.css', media: 'screen' }],
     });
+  });
+
+  it('keeps editor-managed CSS out of ordinary canvas head assets', () => {
+    const parsed = parseHtmlDocument(`<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="../css/admin-kit.css">
+    <style>.hero { color: red; }</style>
+    <style>* { box-sizing: border-box; } body {margin: 0;}#stale{width:1px;}</style>
+    <style data-od-grapesjs-css="">#rect{width:160px;height:96px;}</style>
+  </head>
+  <body><div id="rect"></div></body>
+</html>`);
+
+    expect(extractCanvasHeadAssets(parsed.head)).toEqual({
+      inlineCss: '.hero { color: red; }',
+      stylesheetLinks: [{ href: '../css/admin-kit.css' }],
+    });
+    expect(extractSavedEditorCss(parsed.head)).toBe('#rect{width:160px;height:96px;}');
+  });
+
+  it('normalizes accidental full-document/body wrappers into body children only', () => {
+    expect(normalizeCanvasBodyHtml([
+      '<!doctype html>',
+      '<html><head><style>.stale { color: red; }</style></head>',
+      '<body data-od-id="gjs-body"><div id="rect"></div></body></html>',
+    ].join(''))).toBe('<div id="rect"></div>');
+  });
+
+  it('replaces saved GrapesJS CSS instead of accumulating stale generated style blocks', () => {
+    const parsed = parseHtmlDocument(`<!doctype html>
+<html>
+  <head>
+    <style>body { width: 1920px; min-height: 1080px; background: #fff; }</style>
+    <style>* { box-sizing: border-box; } body {margin: 0;}#old{width:10px;}</style>
+    <style>* { box-sizing: border-box; } body {margin: 0;}#rect{width:160px;height:96px;}</style>
+  </head>
+  <body><div id="rect"></div></body>
+</html>`);
+
+    const next = reassembleDocument(
+      parsed,
+      '<div id="rect"></div>',
+      '#rect{width:220px;}',
+    );
+
+    expect(next).toContain('<style>body { width: 1920px; min-height: 1080px; background: #fff; }</style>');
+    expect(next).toContain('<style data-od-grapesjs-css="">');
+    expect(next).toContain('*{box-sizing: border-box;}');
+    expect(next).toContain('body{margin: 0;}');
+    expect(next).toContain('#rect{width:220px;}');
+    expect(next).not.toContain('#old{width:10px;}');
+    expect((next.match(/data-od-grapesjs-css/g) ?? []).length).toBe(1);
   });
 
   it('resolves relative canvas assets against the project raw directory', () => {

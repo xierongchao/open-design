@@ -252,6 +252,7 @@ function DimensionControl({
   axis,
   value,
   tagName,
+  allowHug,
   modeOverride,
   onValueChange,
   onModeChange,
@@ -259,6 +260,7 @@ function DimensionControl({
   axis: '宽' | '高';
   value: string;
   tagName?: string;
+  allowHug: boolean;
   modeOverride?: DimensionMode | null;
   onValueChange: (value: string) => void;
   onModeChange: (mode: DimensionMode) => void;
@@ -266,14 +268,18 @@ function DimensionControl({
   // Prefer the explicit override (set when the user picks a mode) over the
   // computed-style derivation, which resolves hug/fill to px and would snap
   // the dropdown back to 固定.
-  const effectiveMode = modeOverride ?? dimensionMode(value, tagName);
+  const inferredMode = modeOverride ?? dimensionMode(value, tagName);
+  const effectiveMode = !allowHug && inferredMode === 'hug' ? 'fixed' : inferredMode;
+  const options = allowHug
+    ? DIMENSION_MODE_OPTIONS
+    : DIMENSION_MODE_OPTIONS.filter((option) => option.value !== 'hug');
   return (
     <div className={styles.dimensionControl}>
       <NumberScrub label={axis} prefix={axis === '宽' ? 'W' : 'H'} value={value} unit="px" min={0} onChange={onValueChange} />
       <CompactSelect
         label={`${axis}调整模式`}
         value={effectiveMode}
-        options={DIMENSION_MODE_OPTIONS}
+        options={options}
         onChange={(mode) => onModeChange(mode as DimensionMode)}
       />
     </div>
@@ -993,6 +999,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
               axis="宽"
               value={style.width ?? 'auto'}
               tagName={selection?.tagName}
+              allowHug={isTextElement}
               modeOverride={widthMode}
               onValueChange={(value) => apply({ width: value })}
               onModeChange={(mode) => { setWidthMode(mode); setDimensionMode('width', mode); }}
@@ -1001,6 +1008,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
               axis="高"
               value={style.height ?? 'auto'}
               tagName={selection?.tagName}
+              allowHug={isTextElement}
               modeOverride={heightMode}
               onValueChange={(value) => apply({ height: value })}
               onModeChange={(mode) => { setHeightMode(mode); setDimensionMode('height', mode); }}

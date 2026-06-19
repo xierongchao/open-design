@@ -1758,7 +1758,7 @@ export function FileWorkspace({
   }
 
   async function startNewArtboard() {
-    const artboardContent = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=1920, initial-scale=1.0">\n  <style>\n    * { margin: 0; padding: 0; box-sizing: border-box; }\n    body { width: 1920px; min-height: 1080px; background: #fff; }\n  </style>\n</head>\n<body>\n  <div style="width:1920px;height:1080px;border:1px solid #e5e7eb;"></div>\n</body>\n</html>\n';
+    const artboardContent = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=1920, initial-scale=1.0">\n  <style>\n    * { margin: 0; padding: 0; box-sizing: border-box; }\n    body { width: 1920px; min-height: 1080px; background: #fff; }\n  </style>\n</head>\n<body></body>\n</html>\n';
     // Find a unique base filename
     const existingNames = new Set(files.map((f) => f.name));
     let baseName = '画板';
