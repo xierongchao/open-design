@@ -92,6 +92,7 @@ import { PasteTextDialog } from './PasteTextDialog';
 import { QuestionsPanel } from './QuestionsPanel';
 import { QuickSwitcher } from './QuickSwitcher';
 import { SketchEditor } from './SketchEditor';
+import type { FileWorkspaceRefreshRequest } from './project-file-refresh';
 import {
   buildSketchDocument,
   isSketchJsonFileName,
@@ -100,12 +101,6 @@ import {
 } from './sketch-model';
 import { AnimatePresence } from 'motion/react';
 import type { ChatMessage } from '../types';
-
-type RefreshFilesRequest = {
-  source?: 'local-save';
-  fileName?: string;
-  reason?: string;
-};
 
 interface Props {
   projectId: string;
@@ -122,7 +117,7 @@ interface Props {
   files: ProjectFile[];
   liveArtifacts: LiveArtifactSummary[];
   filesRefreshKey?: number;
-  onRefreshFiles: (request?: RefreshFilesRequest) => Promise<void> | void;
+  onRefreshFiles: (request?: FileWorkspaceRefreshRequest) => Promise<void> | void;
   onDesignFilesPreviewChange?: (fileName: string | null) => void;
   isDeck: boolean;
   onExportAsPptx?: ((fileName: string) => void) | undefined;

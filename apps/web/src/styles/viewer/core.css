@@ -1448,7 +1448,7 @@ html.od-export-capture-active .od-toast {
   width: 124px;
 }
 .viewer-viewport-trigger {
-  width: 100%;
+  width: fit-content;
   min-height: 26px;
   justify-content: space-between;
   gap: 8px;

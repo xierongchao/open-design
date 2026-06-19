@@ -63,6 +63,7 @@ export function createHtmlFileSaveController({
   let drainingSaveQueue = false;
   let activeSave: SaveJob | null = null;
   let queuedSave: SaveJob | null = null;
+  let lastSuccessfulSave: { source: string; result: WriteProjectTextFileResult } | null = null;
 
   async function drainSaveQueue() {
     if (drainingSaveQueue) return;
@@ -85,6 +86,11 @@ export function createHtmlFileSaveController({
             ok: result.ok,
             status: result.ok ? 200 : result.status,
           });
+          if (result.ok) {
+            lastSuccessfulSave = { source: job.source, result };
+          } else {
+            lastSuccessfulSave = null;
+          }
           if (result.ok && job.requestId === latestRequestedSaveId && !queuedSave) {
             recordOpenDesignEditorDiagnostic('html-save:on-saved', {
               fileName,
@@ -95,6 +101,7 @@ export function createHtmlFileSaveController({
           }
           for (const waiter of job.waiters) waiter.resolve(result);
         } catch (error) {
+          lastSuccessfulSave = null;
           recordOpenDesignEditorDiagnostic('html-save:error', {
             fileName,
             reason: job.reason,
@@ -112,6 +119,38 @@ export function createHtmlFileSaveController({
   }
 
   async function save(source: string, reason: HtmlFileSaveReason): Promise<WriteProjectTextFileResult> {
+    if (!activeSave && !queuedSave && lastSuccessfulSave?.source === source) {
+      recordOpenDesignEditorDiagnostic('html-save:skip-duplicate-source', {
+        fileName,
+        reason,
+      });
+      return lastSuccessfulSave.result;
+    }
+
+    const activeDuplicate = activeSave?.source === source && !queuedSave ? activeSave : null;
+    if (activeDuplicate) {
+      recordOpenDesignEditorDiagnostic('html-save:join-active-duplicate-source', {
+        fileName,
+        reason,
+        requestId: activeDuplicate.requestId,
+      });
+      return new Promise<WriteProjectTextFileResult>((resolve, reject) => {
+        activeDuplicate.waiters.push({ resolve, reject });
+      });
+    }
+
+    const queuedDuplicate = queuedSave?.source === source ? queuedSave : null;
+    if (queuedDuplicate) {
+      recordOpenDesignEditorDiagnostic('html-save:join-queued-duplicate-source', {
+        fileName,
+        reason,
+        requestId: queuedDuplicate.requestId,
+      });
+      return new Promise<WriteProjectTextFileResult>((resolve, reject) => {
+        queuedDuplicate.waiters.push({ resolve, reject });
+      });
+    }
+
     const requestId = ++latestRequestedSaveId;
     return new Promise<WriteProjectTextFileResult>((resolve, reject) => {
       const waiter = { resolve, reject };

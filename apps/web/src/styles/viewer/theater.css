@@ -720,7 +720,7 @@
 /* ============================================================
    Composer — settings/upload icons consistent sizing + spacing
    ============================================================ */
-.composer-row .icon-btn svg { display: block; }
+.composer-row .icon-btn svg { display: flex; }
 .composer-row .icon-btn.active { background: var(--bg-subtle); color: var(--text); }
 .composer-import {
   display: inline-flex;

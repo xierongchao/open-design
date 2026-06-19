@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { detectOpenDesignHostClientType } from '@open-design/host';
 import { EditableCodeViewer } from './EditableCodeViewer';
+import { EditorDiagnosticsRecorderButton } from './EditorDiagnosticsRecorderButton';
 import {
   emptyManualEditSourceRoundTrip,
   enterManualEditSourceRoundTrip,
@@ -1113,6 +1114,7 @@ export function LiveArtifactViewer({
               tabIndex={mode === 'preview' ? 0 : -1}
             />
             <span className="viewer-divider" aria-hidden />
+            <EditorDiagnosticsRecorderButton fileName={liveArtifact.title || liveArtifact.artifactId} />
             <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>
               <button
                 type="button"
@@ -10081,49 +10083,52 @@ function HtmlViewer({
                 </>
               ) : null}
               {source !== null && mode === 'preview' ? (
-                <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>
-                  <button
-                    type="button"
-                    className="viewer-action zoom-trigger od-tooltip"
-                    aria-haspopup="menu"
-                    aria-expanded={zoomMenuOpen}
-                    title={t('fileViewer.resetZoom')}
-                    data-tooltip={t('fileViewer.resetZoom')}
-                    data-tooltip-placement="bottom"
-                    onClick={() => {
-                      fireArtifactToolbarClick('zoom_level_dropdown');
-                      setZoomMenuOpen((v) => !v);
-                    }}
-                  >
-                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(displayedCanvasZoom)}%</span>
-                  </button>
-                  {zoomMenuOpen ? (
-                    <div className="zoom-menu-popover" role="menu">
-                      {[50, 75, 100, 125, 150, 200, 300, 400, 500, 750, 1000].map((level) => (
-                        <button
-                          key={level}
-                          type="button"
-                          className={`zoom-menu-item${Math.round(displayedCanvasZoom) === level ? ' active' : ''}`}
-                          role="menuitem"
-                          onClick={() => {
-                            if (useGrapesjsCanvasZoom) {
-                              grapesjsEditorRef.current?.getEditor()?.Canvas?.setZoom?.(level);
-                              setGrapesjsCanvasZoom(level);
-                            } else {
-                              setZoom(level);
-                            }
-                            setZoomMenuOpen(false);
-                          }}
-                        >
-                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{level}%</span>
-                          {Math.round(displayedCanvasZoom) === level ? (
-                            <Icon name="check" size={13} />
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
+                <>
+                  <EditorDiagnosticsRecorderButton fileName={file.name} />
+                  <div className="zoom-menu viewer-toolbar-zoom" ref={zoomMenuRef}>
+                    <button
+                      type="button"
+                      className="viewer-action zoom-trigger od-tooltip"
+                      aria-haspopup="menu"
+                      aria-expanded={zoomMenuOpen}
+                      title={t('fileViewer.resetZoom')}
+                      data-tooltip={t('fileViewer.resetZoom')}
+                      data-tooltip-placement="bottom"
+                      onClick={() => {
+                        fireArtifactToolbarClick('zoom_level_dropdown');
+                        setZoomMenuOpen((v) => !v);
+                      }}
+                    >
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(displayedCanvasZoom)}%</span>
+                    </button>
+                    {zoomMenuOpen ? (
+                      <div className="zoom-menu-popover" role="menu">
+                        {[50, 75, 100, 125, 150, 200, 300, 400, 500, 750, 1000].map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            className={`zoom-menu-item${Math.round(displayedCanvasZoom) === level ? ' active' : ''}`}
+                            role="menuitem"
+                            onClick={() => {
+                              if (useGrapesjsCanvasZoom) {
+                                grapesjsEditorRef.current?.getEditor()?.Canvas?.setZoom?.(level);
+                                setGrapesjsCanvasZoom(level);
+                              } else {
+                                setZoom(level);
+                              }
+                              setZoomMenuOpen(false);
+                            }}
+                          >
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{level}%</span>
+                            {Math.round(displayedCanvasZoom) === level ? (
+                              <Icon name="check" size={13} />
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </>
               ) : null}
             </>
           ) : null}

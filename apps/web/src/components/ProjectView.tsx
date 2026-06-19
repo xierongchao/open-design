@@ -53,6 +53,12 @@ import {
 } from '../providers/registry';
 import { recordOpenDesignEditorDiagnostic } from '../diagnostics/editor-diagnostics';
 import { useProjectFileEvents, type ProjectEvent, type ProjectFileChangeEvent } from '../providers/project-events';
+import {
+  shouldRefreshWorkspaceAfterFileWorkspaceRequest,
+  shouldSuppressFileRefreshAfterLocalSave,
+  type FileWorkspaceRefreshRequest,
+  type LocalFileSaveMarker,
+} from './project-file-refresh';
 import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
 import {
   composeSystemPrompt,
@@ -307,7 +313,6 @@ const DESIGN_SYSTEM_AUDIT_AUTO_REPAIR_ATTEMPTS = 2;
 // Embedded-browser navigation bursts settle well within this; the local cache
 // is written immediately so nothing is lost if the daemon write is coalesced.
 const TAB_PERSIST_DEBOUNCE_MS = 400;
-const LOCAL_FILE_REFRESH_SUPPRESSION_MS = 750;
 type DesignSystemReviewEntry = NonNullable<ProjectMetadata['designSystemReview']>[string];
 type DesignSystemReviewAgentTask = NonNullable<DesignSystemReviewEntry['agentTask']>;
 interface DesignSystemReviewDetails {
@@ -877,7 +882,7 @@ export function ProjectView({
   const [workingDirReplacing, setWorkingDirReplacing] = useState(false);
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
   const projectFilesRef = useRef<ProjectFile[]>([]);
-  const lastLocalFileRefreshRef = useRef<{ at: number; fileName?: string; reason?: string } | null>(null);
+  const lastLocalFileRefreshRef = useRef<LocalFileSaveMarker | null>(null);
   const pendingFileChangeEventsRef = useRef<ProjectFileChangeEvent[]>([]);
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
@@ -1683,14 +1688,20 @@ export function ProjectView({
   }, [refreshLiveArtifacts, refreshProjectFiles]);
 
   const refreshWorkspaceItemsFromFileWorkspace = useCallback(
-    async (request?: { source?: 'local-save'; fileName?: string; reason?: string }): Promise<void> => {
+    async (request?: FileWorkspaceRefreshRequest): Promise<void> => {
       if (request?.source === 'local-save') {
         lastLocalFileRefreshRef.current = {
           at: Date.now(),
           fileName: request.fileName,
           reason: request.reason,
         };
-        recordOpenDesignEditorDiagnostic('project-files:local-save-refresh', request);
+        recordOpenDesignEditorDiagnostic('project-files:local-save-recorded', {
+          ...request,
+          skippedWorkspaceRefresh: !shouldRefreshWorkspaceAfterFileWorkspaceRequest(request),
+        });
+      }
+      if (!shouldRefreshWorkspaceAfterFileWorkspaceRequest(request)) {
+        return;
       }
       await refreshWorkspaceItems();
     },
@@ -1899,35 +1910,35 @@ export function ProjectView({
     const pendingEvents = pendingFileChangeEventsRef.current;
     pendingFileChangeEventsRef.current = [];
     const lastLocalRefresh = lastLocalFileRefreshRef.current;
-    const suppressAfterLocalSave = Boolean(
-      lastLocalRefresh &&
-      Date.now() - lastLocalRefresh.at < LOCAL_FILE_REFRESH_SUPPRESSION_MS &&
-      (
-        pendingEvents.length === 0 ||
-        pendingEvents.every((event) => !lastLocalRefresh.fileName || event.path === lastLocalRefresh.fileName)
-      ),
-    );
+    const suppressAfterLocalSave = shouldSuppressFileRefreshAfterLocalSave({
+      local: lastLocalRefresh,
+      events: pendingEvents,
+      now: Date.now(),
+    });
     if (suppressAfterLocalSave) {
       recordOpenDesignEditorDiagnostic('project-files:file-event-suppressed-after-local-save', {
         local: lastLocalRefresh,
         events: pendingEvents,
       });
-      setDesignMdRefreshKey((n) => n + 1);
       return;
     }
+    recordOpenDesignEditorDiagnostic('project-files:file-event-refresh', {
+      events: pendingEvents,
+    });
+    iframeKeepAlivePool.evictProject(project.id);
     setFilesRefresh((n) => n + 1);
     // Round 7 (mrcfps): file mutations are the dominant staleness signal
     // post-finalize — bump the refresh key so DESIGN.md staleness
     // recomputes against the new mtimes.
     setDesignMdRefreshKey((n) => n + 1);
-  }, []);
+  }, [iframeKeepAlivePool, project.id]);
   const coalescedFileChangedRefresh = useCoalescedCallback(
     refreshFilesAndDesignMd,
     { wait: 80, maxWait: 250 },
   );
   const handleProjectEvent = useCallback((evt: ProjectEvent) => {
     if (evt.type === 'file-changed') {
-      iframeKeepAlivePool.evictProject(project.id);
+      recordOpenDesignEditorDiagnostic('project-files:file-event', evt);
       pendingFileChangeEventsRef.current = [...pendingFileChangeEventsRef.current, evt];
       coalescedFileChangedRefresh();
       return;
@@ -1977,7 +1988,7 @@ export function ProjectView({
     // Live artifact events come from chat-turn-emitted artifacts; they
     // also imply the conversation transcript changed.
     setDesignMdRefreshKey((n) => n + 1);
-  }, [coalescedFileChangedRefresh, iframeKeepAlivePool, onProjectsRefresh, refreshLiveArtifacts, project.id]);
+  }, [coalescedFileChangedRefresh, onProjectsRefresh, refreshLiveArtifacts, project.id]);
   useProjectFileEvents(project.id, daemonLive, handleProjectEvent);
 
   const activePromptContextSignature = useMemo(() => {

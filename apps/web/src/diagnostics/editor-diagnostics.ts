@@ -18,6 +18,35 @@ type DiagnosticEventEntry = {
   detail?: unknown;
 };
 
+type DiagnosticOperationTarget = {
+  tag: string;
+  id?: string;
+  className?: string;
+  role?: string;
+  testId?: string;
+  ariaLabel?: string;
+  title?: string;
+  canvasTool?: string;
+  gjsType?: string;
+};
+
+type DiagnosticOperationEntry = {
+  type: 'operation';
+  name: 'change' | 'click' | 'input' | 'keydown' | 'pointerdown' | 'pointerup' | 'wheel';
+  at: number;
+  target?: DiagnosticOperationTarget;
+  x?: number;
+  y?: number;
+  button?: number;
+  pointerType?: string;
+  key?: string;
+  code?: string;
+  modifiers?: string[];
+  repeat?: boolean;
+  deltaX?: number;
+  deltaY?: number;
+};
+
 type DiagnosticLongTaskEntry = {
   type: 'longtask';
   startedAt: number;
@@ -47,11 +76,12 @@ export type OpenDesignEditorDiagnosticsReport = {
   frames: DiagnosticFrameSummary;
   fetches: DiagnosticFetchEntry[];
   events: DiagnosticEventEntry[];
+  operations: DiagnosticOperationEntry[];
   longTasks: DiagnosticLongTaskEntry[];
 };
 
 type DiagnosticsController = {
-  start: (options?: { includeStacks?: boolean; reset?: boolean }) => void;
+  start: (options?: { captureOperations?: boolean; includeStacks?: boolean; reset?: boolean }) => void;
   stop: () => OpenDesignEditorDiagnosticsReport;
   reset: () => void;
   report: () => OpenDesignEditorDiagnosticsReport;
@@ -70,6 +100,7 @@ const LONG_FRAME_MS = 50;
 
 let installed = false;
 let active = false;
+let captureOperations = true;
 let includeStacks = false;
 let startedAt: number | null = null;
 let endedAt: number | null = null;
@@ -77,9 +108,11 @@ let originalFetch: typeof window.fetch | null = null;
 let frameRequest = 0;
 let lastFrameAt = 0;
 let longTaskObserver: PerformanceObserver | null = null;
+const operationDocuments = new WeakSet<Document>();
 const frameDeltas: number[] = [];
 const fetches: DiagnosticFetchEntry[] = [];
 const events: DiagnosticEventEntry[] = [];
+const operations: DiagnosticOperationEntry[] = [];
 const longTasks: DiagnosticLongTaskEntry[] = [];
 
 function now(): number {
@@ -166,6 +199,30 @@ function stopLongTaskObserver() {
   longTaskObserver = null;
 }
 
+function addOperationListeners(targetWindow: Window) {
+  let doc: Document;
+  try {
+    doc = targetWindow.document;
+  } catch {
+    return;
+  }
+  if (!doc || operationDocuments.has(doc)) return;
+  operationDocuments.add(doc);
+  const add = (
+    name: DiagnosticOperationEntry['name'],
+    listener: (event: Event) => void = (event) => recordOperation(name, event),
+  ) => {
+    doc.addEventListener(name, listener, true);
+  };
+  add('click');
+  add('pointerdown');
+  add('pointerup');
+  add('keydown');
+  add('wheel');
+  add('input');
+  add('change');
+}
+
 function patchFetch() {
   if (originalFetch || typeof window === 'undefined') return;
   originalFetch = window.fetch.bind(window);
@@ -212,6 +269,7 @@ function patchFetch() {
 function resetDiagnostics() {
   fetches.length = 0;
   events.length = 0;
+  operations.length = 0;
   longTasks.length = 0;
   frameDeltas.length = 0;
   startedAt = active ? now() : null;
@@ -266,6 +324,7 @@ function buildReport(): OpenDesignEditorDiagnosticsReport {
     frames: frameSummary(),
     fetches: [...fetches],
     events: [...events],
+    operations: [...operations],
     longTasks: [...longTasks],
   };
 }
@@ -292,6 +351,96 @@ export function recordOpenDesignEditorDiagnostic(name: string, detail?: unknown)
   });
 }
 
+function recordOperation(name: DiagnosticOperationEntry['name'], event: Event): void {
+  if (!active || !captureOperations || typeof window === 'undefined') return;
+  const entry: DiagnosticOperationEntry = {
+    type: 'operation',
+    name,
+    at: now(),
+    target: summarizeOperationTarget(event.target),
+  };
+  const maybeMouse = event as MouseEvent;
+  if (typeof maybeMouse.clientX === 'number') {
+    entry.x = Math.round(maybeMouse.clientX);
+    entry.y = Math.round(maybeMouse.clientY);
+  }
+  if (typeof maybeMouse.button === 'number') {
+    entry.button = maybeMouse.button;
+  }
+  const maybePointer = event as PointerEvent;
+  if (typeof maybePointer.pointerType === 'string' && maybePointer.pointerType) {
+    entry.pointerType = maybePointer.pointerType;
+  }
+  const maybeKeyboard = event as KeyboardEvent;
+  if (typeof maybeKeyboard.key === 'string') {
+    entry.key = maybeKeyboard.key;
+    entry.code = maybeKeyboard.code;
+    entry.repeat = maybeKeyboard.repeat;
+    entry.modifiers = keyboardModifiers(maybeKeyboard);
+  }
+  const maybeWheel = event as WheelEvent;
+  if (typeof maybeWheel.deltaY === 'number') {
+    entry.deltaX = Math.round(maybeWheel.deltaX);
+    entry.deltaY = Math.round(maybeWheel.deltaY);
+  }
+  operations.push(entry);
+}
+
+function summarizeOperationTarget(target: EventTarget | null): DiagnosticOperationTarget | undefined {
+  if (!isElementLike(target)) return undefined;
+  const className = (target.getAttribute('class') ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(' ');
+  return compactTarget({
+    tag: target.tagName.toLowerCase(),
+    id: target.id,
+    className,
+    role: target.getAttribute('role') ?? undefined,
+    testId: target.getAttribute('data-testid') ?? undefined,
+    ariaLabel: target.getAttribute('aria-label') ?? undefined,
+    title: target.getAttribute('title') ?? target.getAttribute('data-tooltip') ?? undefined,
+    canvasTool: target.getAttribute('data-od-canvas-tool') ?? undefined,
+    gjsType: target.getAttribute('data-gjs-type') ?? undefined,
+  });
+}
+
+function isElementLike(target: EventTarget | null): target is Element {
+  return Boolean(
+    target &&
+    typeof (target as Element).tagName === 'string' &&
+    typeof (target as Element).getAttribute === 'function',
+  );
+}
+
+function compactTarget(target: DiagnosticOperationTarget): DiagnosticOperationTarget {
+  const next: DiagnosticOperationTarget = { tag: target.tag };
+  for (const key of [
+    'id',
+    'className',
+    'role',
+    'testId',
+    'ariaLabel',
+    'title',
+    'canvasTool',
+    'gjsType',
+  ] as const) {
+    const value = target[key];
+    if (value) next[key] = value.slice(0, 80);
+  }
+  return next;
+}
+
+function keyboardModifiers(event: KeyboardEvent): string[] {
+  const modifiers: string[] = [];
+  if (event.metaKey) modifiers.push('meta');
+  if (event.ctrlKey) modifiers.push('ctrl');
+  if (event.altKey) modifiers.push('alt');
+  if (event.shiftKey) modifiers.push('shift');
+  return modifiers;
+}
+
 export function exposeOpenDesignEditorDiagnosticsToWindow(targetWindow: Window | null | undefined): void {
   if (typeof window === 'undefined' || !targetWindow) return;
   const controller = window.__OD_EDITOR_DIAGNOSTICS__;
@@ -299,6 +448,7 @@ export function exposeOpenDesignEditorDiagnosticsToWindow(targetWindow: Window |
   try {
     targetWindow.__OD_EDITOR_DIAGNOSTICS__ = controller;
     targetWindow.odDiagnostics = controller;
+    addOperationListeners(targetWindow);
   } catch {
     // Cross-origin or torn-down iframe.
   }
@@ -308,8 +458,10 @@ export function installOpenDesignEditorDiagnostics(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
   patchFetch();
+  addOperationListeners(window);
   const controller: DiagnosticsController = {
     start(options = {}) {
+      captureOperations = options.captureOperations !== false;
       includeStacks = Boolean(options.includeStacks);
       active = true;
       endedAt = null;
