@@ -1574,6 +1574,32 @@
   color: var(--text);
   font-weight: 600;
 }
+.ws-current-file-title,
+.ws-current-file-title.active,
+.ws-current-file-title.has-preview,
+.ws-current-file-title.has-preview.active {
+  max-width: min(44vw, 420px);
+  padding-inline: 8px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-strong);
+  cursor: default;
+}
+.ws-current-file-title:hover,
+.ws-current-file-title.has-preview:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-strong);
+}
+.ws-current-file-title .ws-tab-label {
+  max-width: none;
+  font-size: 13px;
+  font-weight: 650;
+}
+.ws-current-file-title .tab-icon {
+  color: var(--text-muted);
+}
 .ws-tab .tab-icon {
   flex: 0 0 auto;
   font-size: 13px;
@@ -1628,6 +1654,10 @@
 }
 .ws-tab.design-files-tab.has-preview .tab-icon {
   color: var(--text-muted);
+}
+.ws-current-file-title.design-files-tab.has-preview:hover {
+  background: transparent;
+  border-color: transparent;
 }
 .ws-tab.has-meta {
   max-width: 320px;

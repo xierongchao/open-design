@@ -5637,7 +5637,6 @@ export function ProjectView({
                     type="button"
                     className={`chat-project-back chat-project-expand od-tooltip${sidePanelFocused ? ' is-active' : ''}`}
                     onClick={handleToggleChatFocus}
-                    title={sidePanelExpandLabel}
                     data-tooltip={sidePanelExpandLabel}
                     data-tooltip-placement="bottom"
                     aria-label={sidePanelExpandLabel}
@@ -5649,7 +5648,6 @@ export function ProjectView({
                     type="button"
                     className="chat-project-back chat-project-collapse od-tooltip"
                     onClick={handleCollapseChat}
-                    title="收起对话面板"
                     data-tooltip="收起对话面板"
                     data-tooltip-placement="bottom"
                     aria-label="收起对话面板"

@@ -653,6 +653,7 @@
 
 .df-browser {
   position: relative;
+  isolation: isolate;
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
@@ -714,7 +715,7 @@
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
-  min-height: 48px;
+  height: 44px;
   padding: 0 10px 0 12px;
   color: var(--text-muted);
   font-size: 12px;
@@ -853,9 +854,7 @@
   width: 12px;
   background: transparent;
 }
-.df-browser--tree-collapsed:has(.df-tree-hover-trigger:hover) .df-tree-pane,
-.df-browser--tree-collapsed:has(.df-content-tree-toggle:hover) .df-tree-pane,
-.df-browser--tree-collapsed:has(.df-content-tree-toggle:focus-visible) .df-tree-pane,
+.df-browser--tree-collapsed:not(.df-browser--reveal-suppressed):has(.df-tree-hover-trigger:hover) .df-tree-pane,
 .df-browser--tree-collapsed .df-tree-pane:hover {
   opacity: 1;
   pointer-events: auto;
@@ -1513,10 +1512,10 @@
   box-shadow: none;
 }
 .df-content-tree-toggle {
-  position: absolute;
-  top: 8px;
+  position: absolute !important;
+  top: 10px;
   left: 10px;
-  z-index: 9;
+  z-index: 7;
   width: 28px;
   height: 28px;
   padding: 0;
@@ -1540,6 +1539,9 @@
 .df-content-tree-toggle:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
+}
+.df-content-tree-toggle svg {
+  pointer-events: none;
 }
 .df-browser--tree-collapsed .df-content-pane > .ws-tabs-shell {
   height: 44px;

@@ -1784,13 +1784,10 @@ export function ChatPane({
         >
           <button
             type="button"
-            className="chat-session-trigger icon-only"
+            className="chat-session-trigger icon-only od-tooltip"
             data-testid="conversation-history-trigger"
-            title={
-              activeConversation?.title
-                ? `${t('chat.conversationsTitle')} · ${activeConversation.title}`
-                : t('chat.conversationsTitle')
-            }
+            data-tooltip={t('chat.conversationsTitle')}
+            data-tooltip-placement="bottom"
             aria-label={t('chat.conversationsAria')}
             aria-haspopup="menu"
             aria-expanded={showConvList}
@@ -1808,7 +1805,7 @@ export function ChatPane({
               });
             }}
           >
-            <Icon name="comment" size={16} />
+            <Icon name="clock" size={16} />
           </button>
           {showConvList ? (
             <div 
@@ -1911,7 +1908,6 @@ export function ChatPane({
                 type="button"
                 className={`chat-project-back chat-project-expand od-tooltip${chatPanelFocused ? ' is-active' : ''}`}
                 onClick={onToggleChatFocus}
-                title={toggleChatFocusLabel}
                 data-tooltip={toggleChatFocusLabel}
                 data-tooltip-placement="bottom"
                 aria-label={toggleChatFocusLabel}
@@ -1925,7 +1921,6 @@ export function ChatPane({
                 type="button"
                 className="chat-project-back chat-project-collapse od-tooltip"
                 onClick={onCollapseChat}
-                title={collapseChatLabel}
                 data-tooltip={collapseChatLabel}
                 data-tooltip-placement="bottom"
                 aria-label={collapseChatLabel}

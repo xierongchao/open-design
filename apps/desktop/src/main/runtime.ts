@@ -703,18 +703,22 @@ const MAC_WINDOW_CHROME_CSS = `
   }
   .workspace-shell[data-client-type="desktop"] .df-browser--tree-collapsed .df-content-tree-toggle {
     left: 96px !important;
+    top: 11px !important;
+    z-index: 10001 !important;
   }
   .workspace-shell[data-client-type="desktop"] .df-browser--tree-collapsed .df-content-pane > .ws-tabs-shell {
     padding-left: 134px !important;
   }
   .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .df-browser--tree-collapsed .df-content-tree-toggle {
     left: 10px !important;
+    top: 8px !important;
   }
   .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .df-browser--tree-collapsed .df-content-pane > .ws-tabs-shell {
     padding-left: 48px !important;
   }
   .workspace-shell[data-client-type="desktop"] .df-tree-head button,
   .workspace-shell[data-client-type="desktop"] .df-content-tree-toggle,
+  .workspace-shell[data-client-type="desktop"] .df-content-tree-toggle *,
   .workspace-shell[data-client-type="desktop"] .df-tree-toolbar button,
   .workspace-shell[data-client-type="desktop"] .df-tree-scroll,
   .workspace-shell[data-client-type="desktop"] .df-tree-footer,

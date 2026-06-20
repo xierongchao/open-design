@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode } from 'react';
 import { useAnalytics } from '../analytics/provider';
 import { trackFileManagerClick } from '../analytics/events';
 import { useT } from '../i18n';
@@ -259,12 +259,64 @@ export function DesignFilesPanel({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [rootExpanded, setRootExpanded] = useState(true);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
+  const [treeRevealSuppressed, setTreeRevealSuppressed] = useState(false);
   const [treePaneWidth, setTreePaneWidth] = useState(() => readTreePaneWidth(projectId));
   const [resizingTreePane, setResizingTreePane] = useState(false);
   const treePaneResizeRef = useRef<{
     startX: number;
     startWidth: number;
   } | null>(null);
+
+  function revealTreePane() {
+    setTreeRevealSuppressed(false);
+    setTreeCollapsed(false);
+  }
+
+  function renderCollapsedTreeToggle() {
+    if (!treeCollapsed) return null;
+    return (
+      <button
+        type="button"
+        className="df-content-tree-toggle od-tooltip"
+        data-tooltip="显示文件树"
+        data-tooltip-placement="bottom"
+        aria-label="显示文件树"
+        aria-pressed="true"
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          revealTreePane();
+        }}
+        onMouseLeave={() => setTreeRevealSuppressed(false)}
+        onClick={(event) => {
+          event.currentTarget.blur();
+          revealTreePane();
+        }}
+      >
+        <Icon name="panel-left" size={15} />
+      </button>
+    );
+  }
+
+  function renderHeaderWithTreeToggle() {
+    const treeToggle = renderCollapsedTreeToggle();
+    if (!headerContent) return treeToggle;
+    if (!treeToggle) return headerContent;
+    if (isValidElement(headerContent)) {
+      const element = headerContent as ReactElement<{ className?: unknown; children?: ReactNode }>;
+      const className = typeof element.props.className === 'string' ? element.props.className : '';
+      if (className.split(/\s+/).includes('ws-tabs-shell')) {
+        return cloneElement(element, undefined, treeToggle, element.props.children);
+      }
+    }
+    return (
+      <>
+        {treeToggle}
+        {headerContent}
+      </>
+    );
+  }
 
   useEffect(() => {
     setFolderOrder(readFolderOrder(projectId));
@@ -1744,6 +1796,7 @@ export function DesignFilesPanel({
             className={[
               'df-browser',
               treeCollapsed ? 'df-browser--tree-collapsed' : '',
+              treeCollapsed && treeRevealSuppressed ? 'df-browser--reveal-suppressed' : '',
               sideTreeOnly ? 'df-browser--tree-only' : '',
             ].filter(Boolean).join(' ')}
             style={{
@@ -1767,7 +1820,8 @@ export function DesignFilesPanel({
                       aria-pressed={treeCollapsed}
                       onClick={(event) => {
                         event.currentTarget.blur();
-                        setTreeCollapsed((value) => !value);
+                        setTreeRevealSuppressed(!treeCollapsed);
+                        setTreeCollapsed(!treeCollapsed);
                       }}
                     >
                       <Icon name="panel-left" size={15} />
@@ -1953,7 +2007,11 @@ export function DesignFilesPanel({
               ) : null}
             </aside>
             {treeCollapsed ? (
-              <div className="df-tree-hover-trigger" aria-hidden />
+              <div
+                className="df-tree-hover-trigger"
+                aria-hidden
+                onMouseEnter={() => setTreeRevealSuppressed(false)}
+              />
             ) : null}
             {!treeCollapsed && !sideTreeOnly ? (
             <div
@@ -1995,24 +2053,7 @@ export function DesignFilesPanel({
               }}
               onDrop={handleDrop}
             >
-              {treeCollapsed ? (
-                <button
-                  type="button"
-                  className="df-content-tree-toggle od-tooltip"
-                  data-tooltip="显示文件树"
-                  data-tooltip-placement="bottom"
-                  aria-label="显示文件树"
-                  aria-pressed="true"
-                  title="显示文件树"
-                  onClick={(event) => {
-                    event.currentTarget.blur();
-                    setTreeCollapsed(false);
-                  }}
-                >
-                  <Icon name="panel-left" size={15} />
-                </button>
-              ) : null}
-              {headerContent ? headerContent : null}
+              {renderHeaderWithTreeToggle()}
               {folderNotice ? (
                 <div className="df-inline-notice" role="status">
                   <ActionNoticeView notice={folderNotice} />

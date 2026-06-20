@@ -107,6 +107,7 @@ export function EntrySettingsMenu({
   const activeTheme = config.theme ?? 'system';
   const activeMode = config.mode;
   const activeAccent = resolveAccentColor(config.accentColor ?? DEFAULT_ACCENT_COLOR);
+  const directOpenSettings = variant === 'project';
   const discordOnlineLabel = discordPresence
     ? t('entry.discordOnlineLabel', {
         count: formatDiscordPresenceCount(discordPresence.onlineCount),
@@ -202,14 +203,18 @@ export function EntrySettingsMenu({
         className={`settings-icon-btn${variant === 'project' ? ' settings-icon-btn--project' : ' od-tooltip'}`}
         onClick={() => {
           onTrackTriggerClick?.();
+          if (directOpenSettings) {
+            onOpenSettings();
+            return;
+          }
           setOpen((value) => !value);
         }}
         title={variant === 'project' ? undefined : t('entry.openSettingsTitle')}
         data-tooltip={variant === 'project' ? undefined : t('entry.openSettingsTitle')}
         data-tooltip-placement={variant === 'project' ? undefined : 'bottom'}
         aria-label={t('entry.openSettingsAria')}
-        aria-haspopup="menu"
-        aria-expanded={open}
+        aria-haspopup={directOpenSettings ? undefined : 'menu'}
+        aria-expanded={directOpenSettings ? undefined : open}
         data-testid="entry-settings-menu-trigger"
       >
         <Icon name="settings" size={17} />
@@ -217,7 +222,7 @@ export function EntrySettingsMenu({
           <span className="settings-icon-btn-label">{t('entry.openSettingsTitle')}</span>
         ) : null}
       </button>
-      {open ? (
+      {!directOpenSettings && open ? (
         <div
           className="entry-settings-menu__popover"
           role="menu"

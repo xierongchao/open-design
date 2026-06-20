@@ -158,6 +158,12 @@ export function TabLauncherMenu({
   }
 
   function chooseTab(item: WorkspaceContextItem) {
+    if (item.kind === 'file') {
+      onTrack?.({ element: 'open_file' });
+      onOpenFile(item.path ?? item.label);
+      onClose();
+      return;
+    }
     onTrack?.({ element: 'open_tab', tab_kind: item.kind });
     if (item.tabId) onOpenTab?.(item.tabId);
     onClose();

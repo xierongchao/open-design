@@ -945,6 +945,7 @@ export function FileWorkspace({
 
   function openDesignFilesPreview(name: string) {
     setDesignFilesPreview({ projectId, name });
+    setActiveTab(DESIGN_FILES_TAB);
   }
 
   function focusWorkspaceTab(tabId: string) {
@@ -2303,19 +2304,17 @@ export function FileWorkspace({
               <span className="ws-tab-label">Design System</span>
             </button>
           ) : null}
-          <button
-            type="button"
+          <div
             className={[
               'ws-tab',
               'design-files-tab',
+              'ws-current-file-title',
               designFilesPreviewName ? 'has-preview' : '',
               activeTab === DESIGN_FILES_TAB ? 'active' : '',
             ].filter(Boolean).join(' ')}
-            role="tab"
             aria-selected={activeTab === DESIGN_FILES_TAB}
-            tabIndex={0}
+            aria-current={activeTab === DESIGN_FILES_TAB ? 'page' : undefined}
             data-testid="design-files-tab"
-            onClick={() => setPersistedActive(DESIGN_FILES_TAB)}
             onContextMenu={(e) => { e.preventDefault(); setTabContextMenu({ tabId: DESIGN_FILES_TAB, x: e.clientX, y: e.clientY }); }}
             title={designFilesTabTitle}
           >
@@ -2323,7 +2322,7 @@ export function FileWorkspace({
               <Icon name={designFilesTabIconName} size={13} />
             </span>
             <span className="ws-tab-label">{designFilesTabLabel}</span>
-          </button>
+          </div>
           {showQuestionsTab ? (
             <button
               type="button"
@@ -2490,7 +2489,6 @@ export function FileWorkspace({
             className="icon-only ws-focus-expand od-tooltip"
             data-testid="workspace-focus-toggle"
             aria-pressed={focusMode}
-            title={t('workspace.showChat')}
             data-tooltip={t('workspace.showChat')}
             data-tooltip-placement="bottom"
             aria-label={t('workspace.showChat')}
@@ -2520,7 +2518,7 @@ export function FileWorkspace({
           openTabNames={tabNames}
           actions={launcherActions}
           launcherContext={launcherContext}
-          onOpenFile={openFile}
+          onOpenFile={openDesignFilesPreview}
           onOpenTab={focusWorkspaceTab}
           onClose={() => setLauncherOpen(false)}
         />
