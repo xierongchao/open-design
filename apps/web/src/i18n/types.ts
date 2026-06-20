@@ -2681,6 +2681,14 @@ export interface Dict {
   'manualEdit.autoLayout.vertical': string;
   'manualEdit.autoLayout.horizontal': string;
   'manualEdit.autoLayout.grid': string;
+  'manualEdit.autoLayout.add': string;
+  'manualEdit.autoLayout.remove': string;
+  'manualEdit.autoLayout.horizontalGap': string;
+  'manualEdit.autoLayout.verticalGap': string;
+  'manualEdit.autoLayout.horizontalPadding': string;
+  'manualEdit.autoLayout.verticalPadding': string;
+  'manualEdit.autoLayout.horizontalDistribution': string;
+  'manualEdit.autoLayout.verticalDistribution': string;
   'manualEdit.label.opacity': string;
   'manualEdit.label.radius': string;
   'manualEdit.label.strokeWidth': string;

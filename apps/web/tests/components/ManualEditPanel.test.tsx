@@ -671,6 +671,9 @@ describe('ManualEditPanel', () => {
 
     const layoutSection = sectionByTitle('Auto Layout');
     expect(layoutSection.querySelector('button[data-tooltip="Grid"]')).toBeNull();
+    expect(layoutSection.querySelector('button[data-tooltip="None"]')).toBeNull();
+    expect(layoutSection.querySelector('button[data-tooltip="Horizontal"]')).not.toBeNull();
+    expect(layoutSection.querySelector('button[data-tooltip="Vertical"]')).not.toBeNull();
     expect(layoutSection.querySelector('img[src$="/manual-edit-icons/vertical.svg"]')).not.toBeNull();
     expect(layoutSection.querySelector('img[src$="/manual-edit-icons/horizontal.svg"]')).not.toBeNull();
     expect(layoutSection.querySelector('img[src$="/manual-edit-icons/wrap.svg"]')).not.toBeNull();
@@ -678,6 +681,9 @@ describe('ManualEditPanel', () => {
     expect(mainGapInputs).toHaveLength(1);
     const flowRow = layoutSection.querySelector('.pp-flow-row');
     expect(flowRow?.querySelector('button[data-tooltip="Wrap"]')).not.toBeNull();
+    expect(layoutSection.querySelector('[data-tooltip="Vertical gap"]')).not.toBeNull();
+    expect(layoutSection.querySelector('button[data-tooltip="Vertical distribution"]')).not.toBeNull();
+    expect(layoutSection.querySelector('button[data-tooltip="Horizontal distribution"]')).not.toBeNull();
 
     const mainGap = mainGapInputs[0] as HTMLInputElement;
     act(() => {
@@ -687,6 +693,51 @@ describe('ManualEditPanel', () => {
 
     expect(onStyleChange).toHaveBeenCalledWith('hero-title', { rowGap: '10px' }, 'Style: Hero Title');
     expect(onStyleChange).not.toHaveBeenCalledWith('hero-title', { columnGap: '10px' }, 'Style: Hero Title');
+  });
+
+  it('places appearance above auto layout and keeps inactive auto layout behind add', () => {
+    const onStyleChange = vi.fn();
+    renderPanel({
+      onStyleChange,
+      selectedTarget: { ...target, kind: 'container', isLayoutContainer: true },
+      styles: {
+        ...emptyManualEditStyles(),
+        display: '',
+        flexDirection: '',
+        borderRadius: '0px',
+        opacity: '1',
+      },
+    });
+
+    const sectionTitles = Array.from(host.querySelectorAll('.pp-section'))
+      .map((section) => section.querySelector('.pp-section-head')?.textContent?.replace('▾', '').trim())
+      .filter(Boolean);
+    expect(sectionTitles.indexOf('Appearance')).toBeLessThan(sectionTitles.indexOf('Auto Layout'));
+
+    const appearanceSection = sectionByTitle('Appearance');
+    expect(appearanceSection.textContent).toContain('Opacity');
+    expect(appearanceSection.textContent).toContain('Radius');
+
+    const layoutSection = sectionByTitle('Auto Layout');
+    expect(layoutSection.querySelector('.pp-auto-layout-body')).toBeNull();
+    expect(layoutSection.querySelector('.pp-flow-row')).toBeNull();
+    const addButton = sectionActionButton('Auto Layout');
+    expect(addButton.getAttribute('data-tooltip')).toBe('Add auto layout');
+
+    act(() => {
+      addButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onStyleChange).toHaveBeenCalledWith(
+      'hero-title',
+      {
+        display: 'flex',
+        flexDirection: 'row',
+        justifyContent: 'flex-start',
+        alignItems: 'flex-start',
+      },
+      'Style: Hero Title',
+    );
   });
 
   it('marks outer margin controls by physical side for directional spacing icons', () => {

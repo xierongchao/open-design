@@ -36,12 +36,16 @@ function renderPanel(
 ) {
   const applyStyle = vi.fn();
   const alignPositionedSelection = vi.fn(() => false);
+  const arrangeSelectionAsFlex = vi.fn(() => false);
+  const dissolveSelectedFlex = vi.fn(() => false);
   const setSelectedSrc = vi.fn();
   const getSelectedSrc = vi.fn(() => options.selectedSrc ?? '');
   const editorRef = {
     current: {
       applyStyle,
       alignPositionedSelection,
+      arrangeSelectionAsFlex,
+      dissolveSelectedFlex,
       replaceColors: vi.fn(),
       reselectCurrent: vi.fn(),
       setCropMode: vi.fn(),
@@ -70,7 +74,7 @@ function renderPanel(
   };
 
   render(<StylePanel editorRef={editorRef} selection={selection} />);
-  return { alignPositionedSelection, applyStyle, getSelectedSrc, setSelectedSrc };
+  return { alignPositionedSelection, applyStyle, arrangeSelectionAsFlex, dissolveSelectedFlex, getSelectedSrc, setSelectedSrc };
 }
 
 function renderCanvasPanel(styles: Record<string, string> = { backgroundColor: 'rgb(246, 246, 246)', fontSize: '16px' }) {
@@ -106,18 +110,136 @@ describe('StylePanel', () => {
     }
   });
 
-  it('adds Chinese tooltips to icon controls and applies horizontal flow', () => {
+  it('shows auto layout as a plus-only section before it is enabled', () => {
     const { applyStyle } = renderPanel();
-    const horizontalFlow = screen.getByRole('button', { name: '水平流' });
+    const enableAutoLayout = screen.getByRole('button', { name: '开启自动布局' });
 
-    expect(horizontalFlow.getAttribute('data-tooltip')).toBe('水平流');
-    fireEvent.click(horizontalFlow);
+    expect(screen.queryByRole('button', { name: '水平' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '自由布局' })).toBeNull();
+    expect(enableAutoLayout.getAttribute('data-tooltip')).toBe('开启自动布局');
+    fireEvent.click(enableAutoLayout);
 
     expect(applyStyle).toHaveBeenCalledWith({
       display: 'flex',
       'flex-direction': 'row',
       'flex-wrap': 'nowrap',
     });
+  });
+
+  it('adds reference Chinese tooltips to enabled auto layout controls', () => {
+    const { applyStyle } = renderPanel({
+      display: 'flex',
+      flexDirection: 'row',
+      flexWrap: 'nowrap',
+      gap: '12px',
+    });
+    const horizontalFlow = screen.getByRole('button', { name: '水平' });
+    const verticalFlow = screen.getByRole('button', { name: '垂直' });
+    const wrapFlow = screen.getByRole('button', { name: '换行' });
+    const distribution = screen.getByRole('button', { name: '水平分布式' });
+    const gap = screen.getByRole('spinbutton', { name: '水平间距' });
+
+    expect(horizontalFlow.getAttribute('data-tooltip')).toBe('水平');
+    expect(verticalFlow.getAttribute('data-tooltip')).toBe('垂直');
+    expect(wrapFlow.getAttribute('data-tooltip')).toBe('换行');
+    expect(distribution.getAttribute('data-tooltip')).toBe('水平分布式');
+    expect(gap.getAttribute('aria-label')).toBe('水平间距');
+    fireEvent.click(verticalFlow);
+
+    expect(applyStyle).toHaveBeenCalledWith({
+      display: 'flex',
+      'flex-direction': 'column',
+      'flex-wrap': 'nowrap',
+    });
+  });
+
+  it('uses vertical spacing and distribution labels for vertical auto layout', () => {
+    renderPanel({
+      display: 'flex',
+      flexDirection: 'column',
+      flexWrap: 'nowrap',
+      gap: '12px',
+    });
+
+    expect(screen.getByRole('spinbutton', { name: '垂直间距' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '垂直分布式' }).getAttribute('data-tooltip')).toBe('垂直分布式');
+  });
+
+  it('moves size controls into the position section and uses an absolute-position toggle', () => {
+    const { applyStyle } = renderPanel({ position: 'static', display: 'flex' });
+    const positionSection = screen.getByRole('heading', { name: '位置' }).closest('section');
+    const autoLayoutSection = screen.getByRole('heading', { name: '自动布局' }).closest('section');
+
+    expect(positionSection).toBeTruthy();
+    expect(autoLayoutSection).toBeTruthy();
+    expect(within(positionSection as HTMLElement).getByTestId('dimension-stack-grid')).toBeTruthy();
+    expect(within(positionSection as HTMLElement).getByRole('combobox', { name: '宽调整模式' })).toBeTruthy();
+    expect(within(positionSection as HTMLElement).getByRole('combobox', { name: '高调整模式' })).toBeTruthy();
+    expect(within(positionSection as HTMLElement).getByRole('button', { name: '裁剪内容' })).toBeTruthy();
+    expect(within(autoLayoutSection as HTMLElement).queryByText('调整大小')).toBeNull();
+    expect(within(autoLayoutSection as HTMLElement).queryByRole('button', { name: '裁剪内容' })).toBeNull();
+
+    const absoluteToggle = within(positionSection as HTMLElement).getByRole('button', { name: '绝对定位' });
+    expect(absoluteToggle.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(absoluteToggle);
+
+    expect(applyStyle).toHaveBeenCalledWith({ position: 'absolute' });
+  });
+
+  it('deactivates absolute positioning back to relative positioning', () => {
+    const { applyStyle } = renderPanel({ position: 'absolute' });
+    const positionSection = screen.getByRole('heading', { name: '位置' }).closest('section') as HTMLElement;
+    const absoluteToggle = within(positionSection).getByRole('button', { name: '绝对定位' });
+
+    expect(absoluteToggle.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(absoluteToggle);
+
+    expect(applyStyle).toHaveBeenCalledWith({ position: 'relative' });
+  });
+
+  it('renders enabled auto layout as a compact reference-style grid', () => {
+    renderPanel({
+      display: 'flex',
+      flexDirection: 'row',
+      flexWrap: 'nowrap',
+    });
+    const autoLayoutSection = screen.getByRole('heading', { name: '自动布局' }).closest('section') as HTMLElement;
+
+    expect(within(autoLayoutSection).getByRole('button', { name: '取消自动布局' }).getAttribute('aria-pressed')).toBe('false');
+    expect(within(autoLayoutSection).getByTestId('auto-layout-compact')).toBeTruthy();
+    expect(within(autoLayoutSection).getByTestId('auto-layout-actions')).toBeTruthy();
+    expect(within(autoLayoutSection).getByTestId('auto-layout-padding-pair')).toBeTruthy();
+    expect(within(autoLayoutSection).getByTestId('auto-layout-padding-y')).toBeTruthy();
+    expect(within(autoLayoutSection).getByTestId('auto-layout-padding-x')).toBeTruthy();
+    expect(within(autoLayoutSection).getByRole('button', { name: '左上对齐' }).querySelector('svg')).toBeTruthy();
+    expect(within(autoLayoutSection).queryByText('流向')).toBeNull();
+    expect(within(autoLayoutSection).queryByText('对齐')).toBeNull();
+  });
+
+  it('keeps expanded padding controls in the auto-layout padding row', () => {
+    renderPanel({
+      display: 'flex',
+      flexDirection: 'row',
+      flexWrap: 'nowrap',
+    });
+    const autoLayoutSection = screen.getByRole('heading', { name: '自动布局' }).closest('section') as HTMLElement;
+
+    fireEvent.click(within(autoLayoutSection).getByRole('button', { name: '分别设置四边距' }));
+
+    expect(within(autoLayoutSection).getByTestId('auto-layout-padding-expanded')).toBeTruthy();
+    expect(within(autoLayoutSection).queryByTestId('auto-layout-padding-pair')).toBeNull();
+    expect(within(autoLayoutSection).queryByTestId('auto-layout-padding-y')).toBeNull();
+    expect(within(autoLayoutSection).queryByTestId('auto-layout-padding-x')).toBeNull();
+    expect(within(autoLayoutSection).getByRole('spinbutton', { name: '左边距' })).toBeTruthy();
+    expect(within(autoLayoutSection).getByRole('spinbutton', { name: '下边距' })).toBeTruthy();
+  });
+
+  it('places appearance controls above auto layout', () => {
+    renderPanel();
+    const headings = screen.getAllByRole('heading').map((heading) => heading.textContent);
+
+    expect(headings.indexOf('外观')).toBeGreaterThan(-1);
+    expect(headings.indexOf('外观')).toBeLessThan(headings.indexOf('自动布局'));
   });
 
   it('uses positioned geometry alignment before falling back to self alignment styles', () => {
@@ -177,9 +299,10 @@ describe('StylePanel', () => {
   });
 
   it('maps the clip content control to overflow', () => {
-    const { applyStyle } = renderPanel({ overflow: 'visible' });
+    const { applyStyle } = renderPanel({ display: 'flex', overflow: 'visible' });
+    const positionSection = screen.getByRole('heading', { name: '位置' }).closest('section') as HTMLElement;
 
-    fireEvent.click(screen.getByRole('checkbox', { name: '裁剪内容' }));
+    fireEvent.click(within(positionSection).getByRole('button', { name: '裁剪内容' }));
 
     expect(applyStyle).toHaveBeenCalledWith({ overflow: 'hidden' });
   });
@@ -232,7 +355,7 @@ describe('StylePanel', () => {
       borderStyle: 'solid',
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '分别设置四个圆角' }));
+    fireEvent.click(screen.getByRole('button', { name: '展开圆角' }));
     expect(screen.getByRole('spinbutton', { name: '左上圆角' })).toBeTruthy();
     expect(screen.getByRole('spinbutton', { name: '右下圆角' })).toBeTruthy();
 

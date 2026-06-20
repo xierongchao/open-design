@@ -301,7 +301,7 @@ interface QueuedChatSendUpdate {
 
 let liveArtifactEventSequence = 0;
 const CHAT_PANEL_WIDTH_STORAGE_KEY = 'open-design.project.chatPanelWidth.v2';
-const DEFAULT_CHAT_PANEL_WIDTH = 500;
+const DEFAULT_CHAT_PANEL_WIDTH = 300;
 const UNBOUNDED_PANEL_WIDTH = Number.MAX_SAFE_INTEGER;
 const MIN_CHAT_PANEL_WIDTH = 0;
 const COMMENT_INSPECTOR_PANEL_WIDTH = 320;
@@ -657,10 +657,12 @@ export function projectSplitStyle(
   workspacePanelTrack: string,
 ): ProjectSplitStyle | undefined {
   if (workspaceFocused) return undefined;
+  // 第三列用 minmax(0, <width>) 而非固定 <width>px，否则子元素（编辑面板内容）
+  // 的 min-content 会把列撑到超出指定宽度，导致编辑面板不是预期的固定宽度。
   return {
     '--project-chat-panel-width': `${chatPanelWidth}px`,
     '--project-workspace-panel-track': workspacePanelTrack,
-    gridTemplateColumns: `${workspacePanelTrack} ${SPLIT_RESIZE_HANDLE_WIDTH}px ${chatPanelWidth}px`,
+    gridTemplateColumns: `${workspacePanelTrack} ${SPLIT_RESIZE_HANDLE_WIDTH}px minmax(0, ${chatPanelWidth}px)`,
   };
 }
 
@@ -672,7 +674,7 @@ function applySplitChatPanelWidth(
   if (!split) return;
   split.style.setProperty('--project-chat-panel-width', `${width}px`);
   split.style.gridTemplateColumns =
-    `${workspacePanelTrack} ${SPLIT_RESIZE_HANDLE_WIDTH}px ${width}px`;
+    `${workspacePanelTrack} ${SPLIT_RESIZE_HANDLE_WIDTH}px minmax(0, ${width}px)`;
 }
 
 function shouldFetchElevenLabsVoiceOptions(project: Project): boolean {
@@ -4927,9 +4929,20 @@ export function ProjectView({
     workspacePanelMinWidth === 0
       ? 'minmax(0, 1fr)'
       : `minmax(${workspacePanelMinWidth}px, 1fr)`;
+  // 编辑 Tab 固定宽度，不允许拖动；对话 Tab 沿用可调宽度。
+  const EDIT_PANEL_FIXED_WIDTH = 300;
+  const editPanelFixed = workspaceSideTab === 'edit';
+  // Ref mirror so layout callbacks (ResizeObserver / mount) read the latest
+  // value without being re-created on every tab switch — otherwise the saved
+  // drag width wins on the next observer tick and clobbers the fixed 500.
+  const editPanelFixedRef = useRef(editPanelFixed);
+  editPanelFixedRef.current = editPanelFixed;
+  const effectiveChatPanelWidth = editPanelFixed
+    ? EDIT_PANEL_FIXED_WIDTH
+    : chatPanelWidthRef.current;
   const splitLeftPanelWidth = leftInspectorActive
     ? COMMENT_INSPECTOR_PANEL_WIDTH
-    : chatPanelWidthRef.current;
+    : effectiveChatPanelWidth;
   const chatPanelAriaMinWidth = Math.min(MIN_CHAT_PANEL_WIDTH, chatPanelMaxWidth);
 
   const renderPreferredChatPanelWidth = useCallback((
@@ -4937,10 +4950,15 @@ export function ProjectView({
     maxWidth = chatPanelMaxWidthRef.current,
     options: { commitState?: boolean } = {},
   ): number => {
-    const next = clampChatPanelWidth(preferredWidth, maxWidth);
+    // 编辑 Tab 固定宽度：忽略传入的拖动宽度，始终用固定值，避免布局
+    // 观察器（ResizeObserver/挂载）把保存的拖动宽度写回 DOM。
+    const effectivePreferred = editPanelFixedRef.current
+      ? EDIT_PANEL_FIXED_WIDTH
+      : preferredWidth;
+    const next = clampChatPanelWidth(effectivePreferred, maxWidth);
     chatPanelWidthRef.current = next;
     applySplitChatPanelWidth(splitRef.current, next, workspacePanelTrack);
-    if (options.commitState !== false) setChatPanelWidth(next);
+    if (options.commitState !== false && !editPanelFixedRef.current) setChatPanelWidth(next);
     return next;
   }, [workspacePanelTrack]);
 
@@ -4974,8 +4992,8 @@ export function ProjectView({
 
   useEffect(() => {
     chatPanelWidthRef.current = chatPanelWidth;
-    applySplitChatPanelWidth(splitRef.current, chatPanelWidth, workspacePanelTrack);
-  }, [chatPanelWidth, workspacePanelTrack]);
+    applySplitChatPanelWidth(splitRef.current, splitLeftPanelWidth, workspacePanelTrack);
+  }, [chatPanelWidth, workspacePanelTrack, splitLeftPanelWidth]);
 
   useEffect(() => {
     chatPanelMaxWidthRef.current = chatPanelMaxWidth;
@@ -5734,7 +5752,7 @@ export function ProjectView({
             </div>
           )}
         </div>
-        {!workspaceFocused ? (
+        {!workspaceFocused && !editPanelFixed ? (
           leftInspectorActive ? (
             <div className="split-edit-divider" aria-hidden />
           ) : (

@@ -1988,11 +1988,11 @@ export function DesignFilesPanel({
                       type="button"
                       className="df-empty-cta"
                       data-testid="design-files-empty-new-sketch"
-                      onClick={onNewSketch}
-                      title={t('designFiles.newSketch')}
+                      onClick={onNewArtboard ?? onNewSketch}
+                      title={t('designFiles.newArtboard')}
                     >
                       <Icon name="pencil" size={13} />
-                      <span>{t('designFiles.newSketch')}</span>
+                      <span>{t('designFiles.newArtboard')}</span>
                     </button>
                   </div>
                 </div>

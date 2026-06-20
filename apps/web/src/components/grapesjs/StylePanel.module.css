@@ -127,6 +127,10 @@
   gap: 6px;
 }
 
+.sectionBody:empty {
+  display: none;
+}
+
 .labeledControl {
   display: flex;
   flex-direction: column;
@@ -352,7 +356,11 @@
   text-overflow: ellipsis;
 }
 
-.emptyControl {
+.positionGeometryGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -362,16 +370,18 @@
   gap: 3px;
 }
 
-.controlWithAction {
+.dimensionStackGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 0;
 }
 
 .dimensionControl {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(51px, 0.74fr);
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -380,19 +390,89 @@
   padding-right: 15px;
 }
 
-.alignmentLayout {
+.autoLayoutCompact {
   display: grid;
-  grid-template-columns: 127px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
+  grid-template-areas:
+    "flow align ."
+    "actions align ."
+    "gap align ."
+    "pad-row pad-row pad-link";
   align-items: start;
-  gap: 10px;
+  gap: 5px;
+  min-width: 0;
+}
+
+.autoLayoutFlow {
+  grid-area: flow;
+  min-width: 0;
+}
+
+.autoLayoutGap {
+  grid-area: gap;
+  min-width: 0;
+}
+
+.autoLayoutAlignment {
+  grid-area: align;
+  min-width: 0;
+}
+
+.autoLayoutActions {
+  grid-area: actions;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+.autoLayoutActions .iconButton {
+  width: 100%;
+  min-width: 0;
+  background: var(--panel-control);
+}
+
+.autoLayoutActions .iconButtonActive {
+  background: color-mix(in srgb, var(--panel-accent) 13%, var(--panel-bg));
+  color: var(--panel-accent);
+}
+
+.autoLayoutPaddingPair {
+  grid-area: pad-row;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.autoLayoutPaddingY,
+.autoLayoutPaddingX {
+  min-width: 0;
+}
+
+.autoLayoutPaddingExpanded {
+  grid-area: pad-row;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
+}
+
+.autoLayoutPaddingLink {
+  grid-area: pad-link;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
 }
 
 .alignmentGrid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(3, 1fr);
-  width: 127px;
-  height: 127px;
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 90px;
   padding: 8px;
   border-radius: 4px;
   background: var(--panel-control);
@@ -409,7 +489,7 @@
   cursor: pointer;
 }
 
-.alignmentCell span {
+.alignmentDot {
   width: 3px;
   height: 3px;
   border-radius: 50%;
@@ -420,34 +500,20 @@
     background 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.alignmentCell:hover span {
+.alignmentCell:hover .alignmentDot {
   width: 5px;
   height: 5px;
   background: var(--panel-text);
 }
 
-.alignmentCellActive span {
-  width: 4px;
-  height: 18px;
-  border-radius: 2px;
-  background: var(--panel-accent);
-}
-
-.spacingStack {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  min-width: 0;
+.alignmentCellActive .alignmentActiveIcon {
+  color: var(--panel-accent);
 }
 
 .paddingRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 30px;
   gap: 4px;
-}
-
-.spacingStack .fourColumn {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .fourColumn .numberField {
@@ -1021,10 +1087,6 @@
 
   .dimensionControl {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .alignmentLayout {
-    grid-template-columns: 96px minmax(0, 1fr);
   }
 
   .alignmentGrid {

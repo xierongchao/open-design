@@ -18,7 +18,13 @@ import {
   AlignCenterVertical,
   AlignEndHorizontal,
   AlignHorizontalSpaceBetween,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignHorizontalJustifyStart,
   AlignVerticalSpaceBetween,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart,
   AlignEndVertical,
   AlignJustify,
   AlignLeft,
@@ -29,13 +35,14 @@ import {
   Droplet,
   Eye,
   EyeOff,
+  Expand,
   FlipHorizontal2,
   FlipVertical2,
   Frame,
   Grid2X2,
   Link2,
   Minus,
-  Move,
+  Plus,
   RotateCw,
   Rows2,
   Scan,
@@ -47,6 +54,7 @@ import {
   Undo2,
   Unlink2,
   WandSparkles,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   GradientEditor,
@@ -162,10 +170,9 @@ interface ColorEditorState {
 }
 
 const FLOW_OPTIONS: IconOption[] = [
-  { value: 'free', label: '自由布局', icon: Move },
-  { value: 'column', label: '垂直流', icon: Rows2 },
-  { value: 'row', label: '水平流', icon: Columns2 },
-  { value: 'wrap', label: '自动换行', icon: Grid2X2 },
+  { value: 'row', label: '水平', icon: Columns2 },
+  { value: 'column', label: '垂直', icon: Rows2 },
+  { value: 'wrap', label: '换行', icon: Grid2X2 },
 ];
 
 type PositionAlignAction = {
@@ -195,6 +202,18 @@ const TEXT_ALIGN_OPTIONS: IconOption[] = [
   { value: 'justify', label: '两端对齐', icon: AlignJustify },
 ];
 
+const ROW_ALIGNMENT_ICONS: Record<0 | 1 | 2, LucideIcon> = {
+  0: AlignVerticalJustifyStart,
+  1: AlignVerticalJustifyCenter,
+  2: AlignVerticalJustifyEnd,
+};
+
+const COLUMN_ALIGNMENT_ICONS: Record<0 | 1 | 2, LucideIcon> = {
+  0: AlignHorizontalJustifyStart,
+  1: AlignHorizontalJustifyCenter,
+  2: AlignHorizontalJustifyEnd,
+};
+
 const FONT_FAMILY_OPTIONS = [
   { value: '', label: '继承' },
   { value: 'system-ui, sans-serif', label: '系统默认' },
@@ -214,14 +233,6 @@ const FONT_WEIGHT_OPTIONS = [
   { value: '600', label: '半粗' },
   { value: '700', label: '粗体' },
   { value: '900', label: '特粗' },
-];
-
-const POSITION_OPTIONS = [
-  { value: 'static', label: '静态' },
-  { value: 'relative', label: '相对' },
-  { value: 'absolute', label: '绝对' },
-  { value: 'fixed', label: '固定' },
-  { value: 'sticky', label: '粘性' },
 ];
 
 const EMPTY_SELECTED_COLORS: string[] = [];
@@ -318,6 +329,11 @@ function AlignmentGrid({
         [0, 1, 2].map((column) => {
           const label = `${['左', '中', '右'][column]}${['上', '中', '下'][row]}对齐`;
           const active = activeColumn === column && activeRow === row;
+          const rowIndex = row as 0 | 1 | 2;
+          const columnIndex = column as 0 | 1 | 2;
+          const ActiveIcon = verticalFlow
+            ? ROW_ALIGNMENT_ICONS[rowIndex]
+            : COLUMN_ALIGNMENT_ICONS[columnIndex];
           return (
             <button
               key={`${column}-${row}`}
@@ -327,9 +343,18 @@ function AlignmentGrid({
               aria-pressed={active}
               title={label}
               data-tooltip={label}
-              onClick={() => onChange(column as 0 | 1 | 2, row as 0 | 1 | 2)}
+              onClick={() => onChange(columnIndex, rowIndex)}
             >
-              <span />
+              {active ? (
+                <ActiveIcon
+                  className={styles.alignmentActiveIcon}
+                  size={17}
+                  strokeWidth={2.1}
+                  aria-hidden="true"
+                />
+              ) : (
+                <span className={styles.alignmentDot} />
+              )}
             </button>
           );
         }),
@@ -790,6 +815,13 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
   }
 
   const flow = flowFromStyles(style);
+  const autoLayoutActive = flow !== 'free';
+  const autoLayoutIsVertical = flow === 'column';
+  const gapLabel = autoLayoutIsVertical ? '垂直间距' : '水平间距';
+  const gapPrefix = autoLayoutIsVertical ? '↕' : '↔';
+  const distributionLabel = autoLayoutIsVertical ? '垂直分布式' : '水平分布式';
+  const DistributionIcon = autoLayoutIsVertical ? AlignVerticalSpaceBetween : AlignHorizontalSpaceBetween;
+  const absolutePositionActive = style.position === 'absolute';
   const reverseFlow = (style.flexDirection ?? '').endsWith('reverse');
   // A fill counts as "has content" when there's a background color, a
   // gradient, OR a background image (url). The url case matters for pasted
@@ -857,6 +889,190 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     if (action.fallback) apply(action.fallback);
   };
 
+  const appearanceSection = (
+    <PropertySection
+      title="外观"
+      actions={(
+        <IconButton
+          label="恢复完全不透明"
+          icon={Droplet}
+          placement="left"
+          onClick={() => apply({ opacity: '1' })}
+        />
+      )}
+    >
+      <div className={styles.appearanceGrid}>
+        <LabeledControl label="不透明度">
+          <NumberScrub
+            label="不透明度"
+            prefix="◫"
+            value={`${Math.round(Number(style.opacity ?? 1) * 100)}%`}
+            unit="%"
+            min={0}
+            max={100}
+            onChange={(value) => apply({ opacity: String(pxToNum(value) / 100) })}
+          />
+        </LabeledControl>
+        <LabeledControl label="圆角半径">
+          <div className={styles.radiusControlRow}>
+            <NumberScrub
+              label="圆角半径"
+              prefix="⌜"
+              value={style.borderRadius ?? '0px'}
+              unit="px"
+              min={0}
+              onChange={(value) => apply({ borderRadius: value })}
+            />
+            <IconButton
+              label={cornersExpanded ? '收起圆角' : '展开圆角'}
+              icon={cornersExpanded ? Link2 : Unlink2}
+              active={cornersExpanded}
+              placement="left"
+              onClick={() => setCornersExpanded((expanded) => !expanded)}
+            />
+          </div>
+        </LabeledControl>
+      </div>
+      {cornersExpanded ? (
+        <div className={styles.cornerGrid}>
+          <NumberScrub label="左上圆角" prefix="⌜" value={style.borderTopLeftRadius ?? style.borderRadius ?? '0px'} unit="px" min={0} onChange={(value) => apply({ borderTopLeftRadius: value })} />
+          <NumberScrub label="右上圆角" prefix="⌝" value={style.borderTopRightRadius ?? style.borderRadius ?? '0px'} unit="px" min={0} onChange={(value) => apply({ borderTopRightRadius: value })} />
+          <NumberScrub label="左下圆角" prefix="⌞" value={style.borderBottomLeftRadius ?? style.borderRadius ?? '0px'} unit="px" min={0} onChange={(value) => apply({ borderBottomLeftRadius: value })} />
+          <NumberScrub label="右下圆角" prefix="⌟" value={style.borderBottomRightRadius ?? style.borderRadius ?? '0px'} unit="px" min={0} onChange={(value) => apply({ borderBottomRightRadius: value })} />
+        </div>
+      ) : null}
+    </PropertySection>
+  );
+
+  const horizontalPaddingControl = (() => {
+    const left = style.paddingLeft ?? '0px';
+    const right = style.paddingRight ?? '0px';
+    const equal = fieldDisplay(left) === fieldDisplay(right);
+    return equal ? (
+      <NumberScrub
+        label="左右边距"
+        prefix="↔"
+        value={left}
+        unit="px"
+        min={0}
+        onChange={(value) => apply({ paddingLeft: value, paddingRight: value })}
+      />
+    ) : (
+      <button
+        type="button"
+        className={styles.paddingCompoundField}
+        title="左右边距不同，点击展开分别设置"
+        data-tooltip="左右边距不同，点击展开分别设置"
+        onClick={() => setPaddingLinked(false)}
+      >
+        <span aria-hidden="true">↔</span>
+        <span>{fieldDisplay(left)}, {fieldDisplay(right)}</span>
+      </button>
+    );
+  })();
+
+  const verticalPaddingControl = (() => {
+    const top = style.paddingTop ?? '0px';
+    const bottom = style.paddingBottom ?? '0px';
+    const equal = fieldDisplay(top) === fieldDisplay(bottom);
+    return equal ? (
+      <NumberScrub
+        label="上下边距"
+        prefix="↕"
+        value={top}
+        unit="px"
+        min={0}
+        onChange={(value) => apply({ paddingTop: value, paddingBottom: value })}
+      />
+    ) : (
+      <button
+        type="button"
+        className={styles.paddingCompoundField}
+        title="上下边距不同，点击展开分别设置"
+        data-tooltip="上下边距不同，点击展开分别设置"
+        onClick={() => setPaddingLinked(false)}
+      >
+        <span aria-hidden="true">↕</span>
+        <span>{fieldDisplay(top)}, {fieldDisplay(bottom)}</span>
+      </button>
+    );
+  })();
+
+  const autoLayoutBody = autoLayoutActive ? (
+    <div className={styles.autoLayoutCompact} data-testid="auto-layout-compact">
+      <div className={styles.autoLayoutFlow}>
+        <IconGroup options={FLOW_OPTIONS} value={flow} onChange={(value) => setFlow(value as FlowValue)} />
+      </div>
+      <div className={styles.autoLayoutGap}>
+        <NumberScrub
+          label={gapLabel}
+          prefix={gapPrefix}
+          value={style.gap ?? '0px'}
+          unit="px"
+          min={0}
+          onChange={(value) => apply({ gap: value })}
+        />
+      </div>
+      <div className={styles.autoLayoutAlignment}>
+        <AlignmentGrid
+          flow={flow}
+          justifyContent={style.justifyContent ?? 'flex-start'}
+          alignItems={style.alignItems ?? 'stretch'}
+          onChange={setAlignment}
+        />
+      </div>
+      <div className={styles.autoLayoutActions} data-testid="auto-layout-actions">
+        <IconButton
+          label={reverseFlow ? '恢复正向排列' : '反向排列'}
+          icon={Undo2}
+          active={reverseFlow}
+          disabled={flow === 'wrap'}
+          placement="left"
+          onClick={() => {
+            if (flow === 'row') apply({ flexDirection: reverseFlow ? 'row' : 'row-reverse' });
+            if (flow === 'column') apply({ flexDirection: reverseFlow ? 'column' : 'column-reverse' });
+          }}
+        />
+        <IconButton
+          label={distributionLabel}
+          icon={DistributionIcon}
+          active={(style.justifyContent ?? '') === 'space-between'}
+          placement="left"
+          onClick={() => {
+            const next = (style.justifyContent ?? '') === 'space-between' ? 'flex-start' : 'space-between';
+            apply({ justifyContent: next });
+          }}
+        />
+      </div>
+      {paddingLinked ? (
+        <div className={styles.autoLayoutPaddingPair} data-testid="auto-layout-padding-pair">
+          <div className={styles.autoLayoutPaddingY} data-testid="auto-layout-padding-y">
+            {verticalPaddingControl}
+          </div>
+          <div className={styles.autoLayoutPaddingX} data-testid="auto-layout-padding-x">
+            {horizontalPaddingControl}
+          </div>
+        </div>
+      ) : (
+          <div className={styles.autoLayoutPaddingExpanded} data-testid="auto-layout-padding-expanded">
+            <NumberScrub label="左边距" prefix="左" value={style.paddingLeft ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingLeft: value })} />
+            <NumberScrub label="上边距" prefix="上" value={style.paddingTop ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingTop: value })} />
+            <NumberScrub label="右边距" prefix="右" value={style.paddingRight ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingRight: value })} />
+            <NumberScrub label="下边距" prefix="下" value={style.paddingBottom ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingBottom: value })} />
+          </div>
+      )}
+      <div className={styles.autoLayoutPaddingLink}>
+        <IconButton
+          label={paddingLinked ? '分别设置四边距' : '联动左右和上下边距'}
+          icon={paddingLinked ? Expand : Link2}
+          active={!paddingLinked}
+          placement="left"
+          onClick={() => setPaddingLinked((linked) => !linked)}
+        />
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div ref={panelRootRef} className={styles.root} data-testid="grapesjs-style-panel">
       <div className={styles.elementHeader}>
@@ -869,14 +1085,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
           <PositionAlignControls onAction={applyPositionAlignAction} />
         </LabeledControl>
         <LabeledControl label="定位">
-          <div className={styles.twoColumn}>
-            <CompactSelect
-              label="定位方式"
-              value={style.position ?? 'static'}
-              options={POSITION_OPTIONS}
-              onChange={(value) => apply({ position: value })}
-            />
-            <div className={styles.emptyControl} aria-hidden="true" />
+          <div className={styles.positionGeometryGrid}>
             <NumberScrub
               label="X 坐标"
               prefix="X"
@@ -896,6 +1105,42 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
                 position: style.position === 'static' ? 'relative' : style.position ?? 'relative',
                 top: value,
               })}
+            />
+            <IconButton
+              label="绝对定位"
+              icon={Scan}
+              active={absolutePositionActive}
+              placement="left"
+              onClick={() => apply({ position: absolutePositionActive ? 'relative' : 'absolute' })}
+            />
+          </div>
+        </LabeledControl>
+        <LabeledControl label="尺寸">
+          <div className={styles.dimensionStackGrid} data-testid="dimension-stack-grid">
+            <DimensionControl
+              axis="宽"
+              value={style.width ?? 'auto'}
+              tagName={selection?.tagName}
+              allowHug={isTextElement}
+              modeOverride={widthMode}
+              onValueChange={(value) => apply({ width: value })}
+              onModeChange={(mode) => { setWidthMode(mode); setDimensionMode('width', mode); }}
+            />
+            <DimensionControl
+              axis="高"
+              value={style.height ?? 'auto'}
+              tagName={selection?.tagName}
+              allowHug={isTextElement}
+              modeOverride={heightMode}
+              onValueChange={(value) => apply({ height: value })}
+              onModeChange={(mode) => { setHeightMode(mode); setDimensionMode('height', mode); }}
+            />
+            <IconButton
+              label="裁剪内容"
+              icon={SquareDashed}
+              active={(style.overflow ?? 'visible') === 'hidden'}
+              placement="left"
+              onClick={() => apply({ overflow: (style.overflow ?? 'visible') === 'hidden' ? 'visible' : 'hidden' })}
             />
           </div>
         </LabeledControl>
@@ -996,176 +1241,20 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
         </LabeledControl>
       </PropertySection>
 
+      {appearanceSection}
+
       <PropertySection
         title="自动布局"
         actions={(
           <IconButton
-            label="自动布局设置"
-            icon={SlidersHorizontal}
+            label={autoLayoutActive ? '取消自动布局' : '开启自动布局'}
+            icon={autoLayoutActive ? Minus : Plus}
             placement="left"
-            onClick={() => setPaddingLinked((linked) => !linked)}
+            onClick={() => setFlow(autoLayoutActive ? 'free' : 'row')}
           />
         )}
       >
-        <LabeledControl label="流向">
-          <div className={styles.controlWithAction}>
-            <IconGroup options={FLOW_OPTIONS} value={flow} onChange={(value) => setFlow(value as FlowValue)} />
-            <IconButton
-              label={reverseFlow ? '恢复正向排列' : '反向排列'}
-              icon={Undo2}
-              active={reverseFlow}
-              disabled={flow === 'free' || flow === 'wrap'}
-              placement="left"
-              onClick={() => {
-                if (flow === 'row') apply({ flexDirection: reverseFlow ? 'row' : 'row-reverse' });
-                if (flow === 'column') apply({ flexDirection: reverseFlow ? 'column' : 'column-reverse' });
-              }}
-            />
-            <IconButton
-              label="两端对齐"
-              icon={flow === 'column' ? AlignVerticalSpaceBetween : AlignHorizontalSpaceBetween}
-              active={(style.justifyContent ?? '') === 'space-between'}
-              disabled={flow === 'free' || flow === 'wrap'}
-              placement="left"
-              onClick={() => {
-                const next = (style.justifyContent ?? '') === 'space-between' ? 'flex-start' : 'space-between';
-                apply({ justifyContent: next });
-              }}
-            />
-          </div>
-        </LabeledControl>
-
-        <LabeledControl label="调整大小">
-          <div className={styles.twoColumn}>
-            <DimensionControl
-              axis="宽"
-              value={style.width ?? 'auto'}
-              tagName={selection?.tagName}
-              allowHug={isTextElement}
-              modeOverride={widthMode}
-              onValueChange={(value) => apply({ width: value })}
-              onModeChange={(mode) => { setWidthMode(mode); setDimensionMode('width', mode); }}
-            />
-            <DimensionControl
-              axis="高"
-              value={style.height ?? 'auto'}
-              tagName={selection?.tagName}
-              allowHug={isTextElement}
-              modeOverride={heightMode}
-              onValueChange={(value) => apply({ height: value })}
-              onModeChange={(mode) => { setHeightMode(mode); setDimensionMode('height', mode); }}
-            />
-          </div>
-        </LabeledControl>
-
-        <div className={styles.alignmentLayout}>
-          <LabeledControl label="对齐">
-            <AlignmentGrid
-              flow={flow}
-              justifyContent={style.justifyContent ?? 'flex-start'}
-              alignItems={style.alignItems ?? 'stretch'}
-              onChange={setAlignment}
-            />
-          </LabeledControl>
-          <div className={styles.spacingStack}>
-            <LabeledControl label="间距">
-              <NumberScrub
-                label="项目间距"
-                prefix="↔"
-                value={style.gap ?? '0px'}
-                unit="px"
-                min={0}
-                onChange={(value) => apply({ gap: value })}
-              />
-            </LabeledControl>
-            <LabeledControl label="边距">
-              <div className={styles.paddingRow}>
-                {paddingLinked ? (
-                  <div className={styles.twoColumn}>
-                    {(() => {
-                      // Collapsed horizontal: show a single editable value when
-                      // left == right; otherwise show "left,right" as a
-                      // read-only hint the user must expand to edit.
-                      const left = style.paddingLeft ?? '0px';
-                      const right = style.paddingRight ?? '0px';
-                      const equal = fieldDisplay(left) === fieldDisplay(right);
-                      return equal ? (
-                        <NumberScrub
-                          label="水平内边距"
-                          prefix="↔"
-                          value={left}
-                          unit="px"
-                          min={0}
-                          onChange={(value) => apply({ paddingLeft: value, paddingRight: value })}
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          className={styles.paddingCompoundField}
-                          title="左右内边距不同，点击展开分别设置"
-                          data-tooltip="左右内边距不同，点击展开分别设置"
-                          onClick={() => setPaddingLinked(false)}
-                        >
-                          <span aria-hidden="true">↔</span>
-                          <span>{fieldDisplay(left)}, {fieldDisplay(right)}</span>
-                        </button>
-                      );
-                    })()}
-                    {(() => {
-                      const top = style.paddingTop ?? '0px';
-                      const bottom = style.paddingBottom ?? '0px';
-                      const equal = fieldDisplay(top) === fieldDisplay(bottom);
-                      return equal ? (
-                        <NumberScrub
-                          label="垂直内边距"
-                          prefix="↕"
-                          value={top}
-                          unit="px"
-                          min={0}
-                          onChange={(value) => apply({ paddingTop: value, paddingBottom: value })}
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          className={styles.paddingCompoundField}
-                          title="上下内边距不同，点击展开分别设置"
-                          data-tooltip="上下内边距不同，点击展开分别设置"
-                          onClick={() => setPaddingLinked(false)}
-                        >
-                          <span aria-hidden="true">↕</span>
-                          <span>{fieldDisplay(top)}, {fieldDisplay(bottom)}</span>
-                        </button>
-                      );
-                    })()}
-                  </div>
-                ) : (
-                  <div className={styles.fourColumn}>
-                    <NumberScrub label="左内边距" prefix="左" value={style.paddingLeft ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingLeft: value })} />
-                    <NumberScrub label="上内边距" prefix="上" value={style.paddingTop ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingTop: value })} />
-                    <NumberScrub label="右内边距" prefix="右" value={style.paddingRight ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingRight: value })} />
-                    <NumberScrub label="下内边距" prefix="下" value={style.paddingBottom ?? '0px'} unit="px" min={0} onChange={(value) => apply({ paddingBottom: value })} />
-                  </div>
-                )}
-                <IconButton
-                  label={paddingLinked ? '分别设置四边内边距' : '联动水平和垂直内边距'}
-                  icon={paddingLinked ? Unlink2 : Link2}
-                  active={!paddingLinked}
-                  placement="left"
-                  onClick={() => setPaddingLinked((linked) => !linked)}
-                />
-              </div>
-            </LabeledControl>
-          </div>
-        </div>
-
-        <label className={styles.checkboxRow}>
-          <input
-            type="checkbox"
-            checked={(style.overflow ?? 'visible') === 'hidden'}
-            onChange={(event) => apply({ overflow: event.target.checked ? 'hidden' : 'visible' })}
-          />
-          <span>裁剪内容</span>
-        </label>
+        {autoLayoutBody}
       </PropertySection>
 
       {isTextElement ? (
@@ -1202,59 +1291,6 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
           </div>
         </PropertySection>
       ) : null}
-
-      <PropertySection
-        title="外观"
-        actions={(
-          <IconButton
-            label="恢复完全不透明"
-            icon={Droplet}
-            placement="left"
-            onClick={() => apply({ opacity: '1' })}
-          />
-        )}
-      >
-        <div className={styles.appearanceGrid}>
-          <LabeledControl label="不透明度">
-            <NumberScrub
-              label="不透明度"
-              prefix="◫"
-              value={`${Math.round(Number(style.opacity ?? 1) * 100)}%`}
-              unit="%"
-              min={0}
-              max={100}
-              onChange={(value) => apply({ opacity: String(pxToNum(value) / 100) })}
-            />
-          </LabeledControl>
-          <LabeledControl label="圆角半径">
-            <div className={styles.radiusControlRow}>
-              <NumberScrub
-                label="圆角半径"
-                prefix="⌜"
-                value={style.borderRadius ?? '0px'}
-                unit="px"
-                min={0}
-                onChange={(value) => apply({ borderRadius: value })}
-              />
-              <IconButton
-                label={cornersExpanded ? '收起四角设置' : '分别设置四个圆角'}
-                icon={cornersExpanded ? Link2 : Unlink2}
-                active={cornersExpanded}
-                placement="left"
-                onClick={() => setCornersExpanded((expanded) => !expanded)}
-              />
-            </div>
-          </LabeledControl>
-        </div>
-        {cornersExpanded ? (
-          <div className={styles.cornerGrid}>
-            <NumberScrub label="左上圆角" prefix="⌜" value={style.borderTopLeftRadius ?? style.borderRadius ?? '0px'} unit="px" min={0} onChange={(value) => apply({ borderTopLeftRadius: value })} />
-            <NumberScrub label="右上圆角" prefix="⌝" value={style.borderTopRightRadius ?? style.borderRadius ?? '0px'} unit="px" min={0} onChange={(value) => apply({ borderTopRightRadius: value })} />
-            <NumberScrub label="左下圆角" prefix="⌞" value={style.borderBottomLeftRadius ?? style.borderRadius ?? '0px'} unit="px" min={0} onChange={(value) => apply({ borderBottomLeftRadius: value })} />
-            <NumberScrub label="右下圆角" prefix="⌟" value={style.borderBottomRightRadius ?? style.borderRadius ?? '0px'} unit="px" min={0} onChange={(value) => apply({ borderBottomRightRadius: value })} />
-          </div>
-        ) : null}
-      </PropertySection>
 
       <PropertySection
         title="填充"

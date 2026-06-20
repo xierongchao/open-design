@@ -367,8 +367,28 @@ function PropertiesInspector({
   const mainAxisGapProp: keyof ManualEditStyles = styles.flexDirection.startsWith('column') ? 'rowGap' : 'columnGap';
   const mainAxisGap = mainAxisGapProp === 'rowGap' ? styles.rowGap : styles.columnGap;
   const mainAxisGapLabel = mainAxisGapProp === 'rowGap' ? '↕' : '↔';
+  const mainAxisGapSide = mainAxisGapProp === 'rowGap' ? 'main-vertical' : 'main-horizontal';
+  const mainAxisGapTooltip = mainAxisGapProp === 'rowGap'
+    ? t('manualEdit.autoLayout.verticalGap')
+    : t('manualEdit.autoLayout.horizontalGap');
   const singleTextTarget = selectedTargets.length === 1 && isText ? target : null;
   const showAlignmentToolbar = canAlignSelectedTargets(selectedTargets);
+  const enableAutoLayout = () => onChangeStyles({
+    display: 'flex',
+    flexDirection: styles.flexDirection || 'row',
+    justifyContent: styles.justifyContent || 'flex-start',
+    alignItems: styles.alignItems || 'flex-start',
+  });
+  const removeAutoLayout = () => onChangeStyles({
+    display: '',
+    flexDirection: '',
+    flexWrap: '',
+    justifyContent: '',
+    alignItems: '',
+    gap: '',
+    columnGap: '',
+    rowGap: '',
+  });
 
   return (
     <>
@@ -442,79 +462,81 @@ function PropertiesInspector({
         />
       </Section>
 
-      {/* ── 3. Auto Layout ── */}
-      {layoutEnabled ? (
-        <Section title={t('manualEdit.section.autoLayout')} id="autolayout" collapsed={collapsedSections} onToggle={onToggleSection}>
-          <div className="pp-auto-layout-body">
-            <div className="pp-auto-layout-left">
-              <div className="pp-flow-row">
-                <button
-                  type="button"
-                  className={`pp-icon-btn${!layoutModeActive ? ' pp-icon-btn-active' : ''}`}
-                  data-tooltip={t('manualEdit.autoLayout.none')}
-                  onClick={() => onChangeStyles({
-                    display: '',
-                    flexDirection: '',
-                    flexWrap: '',
-                    justifyContent: '',
-                    alignItems: '',
-                    gap: '',
-                    columnGap: '',
-                    rowGap: '',
-                  })}
-                >
-                  <SvgLayoutNone />
-                </button>
-                <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && styles.flexDirection === 'column' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.vertical')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'column' })}>
-                  <ManualEditIcon name="vertical" />
-                </button>
-                <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && (styles.flexDirection === 'row' || !styles.flexDirection.trim()) ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.horizontal')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'row' })}>
-                  <ManualEditIcon name="horizontal" />
-                </button>
-                {!!styles.flexDirection && (
-                  <button type="button" className={`pp-icon-btn${styles.flexWrap === 'wrap' ? ' pp-icon-btn-active' : ''}`} data-tooltip={styles.flexWrap === 'wrap' ? t('manualEdit.label.flexNoWrap') : t('manualEdit.label.flexWrap')} onClick={() => u('flexWrap', styles.flexWrap === 'wrap' ? '' : 'wrap')}>
-                    <ManualEditIcon name="wrap" />
-                  </button>
-                )}
-              </div>
-              <GapPanel
-                mainAxisGap={mainAxisGap}
-                mainAxisGapLabel={mainAxisGapLabel}
-                onMainAxisGapChange={(v) => u(mainAxisGapProp, v)}
-                paddingTop={styles.paddingTop}
-                paddingRight={styles.paddingRight}
-                paddingBottom={styles.paddingBottom}
-                paddingLeft={styles.paddingLeft}
-                onPaddingChange={(side, value) => u(sideToProp('padding', side), value)}
-                onArrangementChange={(axis) => onChangeStyles({
-                  display: 'flex',
-                  flexDirection: axis === 'vertical' ? 'column' : 'row',
-                  justifyContent: 'space-between',
-                })}
-              />
-            </div>
-            <div className="pp-auto-layout-right">
-              <AlignGrid
-                flexDirection={styles.flexDirection || 'row'}
-                justifyValue={styles.justifyContent}
-                alignValue={styles.alignItems}
-                onJustifyChange={(v) => u('justifyContent', v)}
-                onAlignChange={(v) => u('alignItems', v)}
-              />
-            </div>
-          </div>
-          <div className="pp-toggle-row">
-            <input type="checkbox" id="pp-clip" checked={styles.overflow === 'hidden'} onChange={(e) => u('overflow', e.currentTarget.checked ? 'hidden' : '')} />
-            <label htmlFor="pp-clip">{t('manualEdit.label.clipContent')}</label>
-          </div>
-        </Section>
-      ) : null}
-
-      {/* ── 4. Appearance ── */}
+      {/* ── 3. Appearance ── */}
       <Section title={t('manualEdit.section.appearance')} id="appearance" collapsed={collapsedSections} onToggle={onToggleSection}>
         <UnitRow label={t('manualEdit.label.opacity')} value={opacityDisplay} onChange={handleOpacityChange} unit="%" min={0} max={100} />
         <UnitRow label={t('manualEdit.label.radius')} value={styles.borderRadius} onChange={(v) => u('borderRadius', v)} unit="px" autoUnit min={0} />
       </Section>
+
+      {/* ── 3. Auto Layout ── */}
+      {layoutEnabled ? (
+        <Section
+          title={t('manualEdit.section.autoLayout')}
+          id="autolayout"
+          collapsed={collapsedSections}
+          onToggle={onToggleSection}
+          actions={
+            <button
+              type="button"
+              className={`pp-section-add pp-auto-layout-toggle${layoutModeActive ? ' pp-auto-layout-toggle-active' : ''}`}
+              data-tooltip={layoutModeActive ? t('manualEdit.autoLayout.remove') : t('manualEdit.autoLayout.add')}
+              onClick={layoutModeActive ? removeAutoLayout : enableAutoLayout}
+            >
+              <Icon name={layoutModeActive ? 'minus' : 'plus'} size={12} />
+            </button>
+          }
+        >
+          {layoutModeActive ? (
+            <>
+              <div className="pp-auto-layout-body">
+                <div className="pp-auto-layout-left">
+                  <div className="pp-flow-row">
+                    <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && (styles.flexDirection === 'row' || !styles.flexDirection.trim()) ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.horizontal')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'row' })}>
+                      <ManualEditIcon name="horizontal" />
+                    </button>
+                    <button type="button" className={`pp-icon-btn${(displayMode === 'flex' || displayMode === 'inline-flex') && styles.flexDirection === 'column' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.autoLayout.vertical')} onClick={() => onChangeStyles({ display: 'flex', flexDirection: 'column' })}>
+                      <ManualEditIcon name="vertical" />
+                    </button>
+                    <button type="button" className={`pp-icon-btn${styles.flexWrap === 'wrap' ? ' pp-icon-btn-active' : ''}`} data-tooltip={t('manualEdit.label.flexWrap')} onClick={() => u('flexWrap', styles.flexWrap === 'wrap' ? '' : 'wrap')}>
+                      <ManualEditIcon name="wrap" />
+                    </button>
+                  </div>
+                  <GapPanel
+                    mainAxisGap={mainAxisGap}
+                    mainAxisGapLabel={mainAxisGapLabel}
+                    mainAxisGapSide={mainAxisGapSide}
+                    mainAxisGapTooltip={mainAxisGapTooltip}
+                    onMainAxisGapChange={(v) => u(mainAxisGapProp, v)}
+                    paddingTop={styles.paddingTop}
+                    paddingRight={styles.paddingRight}
+                    paddingBottom={styles.paddingBottom}
+                    paddingLeft={styles.paddingLeft}
+                    onPaddingChange={(side, value) => u(sideToProp('padding', side), value)}
+                    onArrangementChange={(axis) => onChangeStyles({
+                      display: 'flex',
+                      flexDirection: axis === 'vertical' ? 'column' : 'row',
+                      justifyContent: 'space-between',
+                    })}
+                  />
+                </div>
+                <div className="pp-auto-layout-right">
+                  <AlignGrid
+                    flexDirection={styles.flexDirection || 'row'}
+                    justifyValue={styles.justifyContent}
+                    alignValue={styles.alignItems}
+                    onJustifyChange={(v) => u('justifyContent', v)}
+                    onAlignChange={(v) => u('alignItems', v)}
+                  />
+                </div>
+              </div>
+              <div className="pp-toggle-row">
+                <input type="checkbox" id="pp-clip" checked={styles.overflow === 'hidden'} onChange={(e) => u('overflow', e.currentTarget.checked ? 'hidden' : '')} />
+                <label htmlFor="pp-clip">{t('manualEdit.label.clipContent')}</label>
+              </div>
+            </>
+          ) : null}
+        </Section>
+      ) : null}
 
       {/* ── 5. Fill ── */}
       <Section title={t('manualEdit.section.fill')} id="fill" collapsed={collapsedSections} onToggle={onToggleSection}
@@ -767,6 +789,7 @@ function Section({ title, id, children, collapsed, onToggle, actions }: {
   actions?: React.ReactNode;
 }) {
   const isCollapsed = collapsed.has(id);
+  const hasBody = children !== null && children !== undefined && children !== false;
   return (
     <div className="pp-section">
       <div className="pp-section-head-row">
@@ -780,7 +803,7 @@ function Section({ title, id, children, collapsed, onToggle, actions }: {
         </button>
         {actions ? <div className="pp-section-actions">{actions}</div> : null}
       </div>
-      {!isCollapsed ? <div className="pp-section-body">{children}</div> : null}
+      {!isCollapsed && hasBody ? <div className="pp-section-body">{children}</div> : null}
     </div>
   );
 }
@@ -1295,11 +1318,14 @@ function SvgSizeAxis({ axis }: { axis: 'width' | 'height' }) {
    on every parent render (which would reset the input and break dragging).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-function ScrubInput({ value, onChange, placeholder, spacingSide }: {
+type SpacingSide = 'top' | 'right' | 'bottom' | 'left' | 'horizontal' | 'vertical' | 'main-horizontal' | 'main-vertical';
+
+function ScrubInput({ value, onChange, placeholder, spacingSide, tooltip }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
-  spacingSide?: 'top' | 'right' | 'bottom' | 'left' | 'horizontal' | 'vertical' | 'main';
+  spacingSide?: SpacingSide;
+  tooltip?: string;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const display = stripPxUnit(value);
@@ -1350,6 +1376,7 @@ function ScrubInput({ value, onChange, placeholder, spacingSide }: {
       <span
         className={`pp-gap-field-label${numeric ? ' pp-gap-drag' : ''}`}
         onPointerDown={onDown}
+        data-tooltip={tooltip}
       >
         <SpacingIcon side={spacingSide} fallback={placeholder} />
       </span>
@@ -1369,17 +1396,23 @@ function ScrubInput({ value, onChange, placeholder, spacingSide }: {
 }
 
 function SpacingIcon({ side, fallback }: {
-  side?: 'top' | 'right' | 'bottom' | 'left' | 'horizontal' | 'vertical' | 'main';
+  side?: SpacingSide;
   fallback?: string;
 }) {
   if (!side) return <>{fallback}</>;
-  const iconName = side === 'main' ? 'spacing-gap' : `spacing-${side}`;
-  if (side === 'horizontal' || side === 'vertical' || side === 'main') {
+  const iconName = side === 'main-horizontal'
+    ? 'horizontal-gap'
+    : side === 'main-vertical'
+      ? 'vertical-gap'
+      : `spacing-${side}`;
+  if (side === 'horizontal' || side === 'vertical' || side === 'main-horizontal' || side === 'main-vertical') {
     const asset = side === 'horizontal'
       ? 'horizontal-margin'
       : side === 'vertical'
         ? 'vertical-margin'
-        : 'horizontal-gap';
+        : side === 'main-vertical'
+          ? 'vertical-gap'
+          : 'horizontal-gap';
     return (
       <img
         src={`/manual-edit-icons/${asset}.svg`}
@@ -1417,6 +1450,8 @@ function SpacingIcon({ side, fallback }: {
 function GapPanel({
   mainAxisGap,
   mainAxisGapLabel,
+  mainAxisGapSide,
+  mainAxisGapTooltip,
   onMainAxisGapChange,
   paddingTop,
   paddingRight,
@@ -1427,6 +1462,8 @@ function GapPanel({
 }: {
   mainAxisGap: string;
   mainAxisGapLabel: string;
+  mainAxisGapSide: SpacingSide;
+  mainAxisGapTooltip: string;
   onMainAxisGapChange: (v: string) => void;
   paddingTop: string;
   paddingRight: string;
@@ -1459,7 +1496,7 @@ function GapPanel({
             type="button"
             className="pp-gap-toggle"
             data-padding-arrangement="vertical"
-            data-tooltip="Vertical space between"
+            data-tooltip={t('manualEdit.autoLayout.verticalDistribution')}
             onClick={() => onArrangementChange('vertical')}
           >
             <ManualEditIcon name="vertical-margin" />
@@ -1468,7 +1505,7 @@ function GapPanel({
             type="button"
             className="pp-gap-toggle"
             data-padding-arrangement="horizontal"
-            data-tooltip="Horizontal space between"
+            data-tooltip={t('manualEdit.autoLayout.horizontalDistribution')}
             onClick={() => onArrangementChange('horizontal')}
           >
             <ManualEditIcon name="horizontal-margin" />
@@ -1488,12 +1525,12 @@ function GapPanel({
         </div>
       ) : (
         <div className="pp-gap-fields">
-          <ScrubInput placeholder="↔" spacingSide="horizontal" value={paddingH} onChange={(v) => { onPaddingChange('l', v); onPaddingChange('r', v); }} />
-          <ScrubInput placeholder="↕" spacingSide="vertical" value={paddingV} onChange={(v) => { onPaddingChange('t', v); onPaddingChange('b', v); }} />
+          <ScrubInput placeholder="↔" spacingSide="horizontal" tooltip={t('manualEdit.autoLayout.horizontalPadding')} value={paddingH} onChange={(v) => { onPaddingChange('l', v); onPaddingChange('r', v); }} />
+          <ScrubInput placeholder="↕" spacingSide="vertical" tooltip={t('manualEdit.autoLayout.verticalPadding')} value={paddingV} onChange={(v) => { onPaddingChange('t', v); onPaddingChange('b', v); }} />
         </div>
       )}
       <div className="pp-gap-fields pp-main-axis-gap" style={{ marginTop: 2 }}>
-        <ScrubInput placeholder={mainAxisGapLabel} spacingSide="main" value={mainAxisGap} onChange={onMainAxisGapChange} />
+        <ScrubInput placeholder={mainAxisGapLabel} spacingSide={mainAxisGapSide} tooltip={mainAxisGapTooltip} value={mainAxisGap} onChange={onMainAxisGapChange} />
       </div>
     </div>
   );

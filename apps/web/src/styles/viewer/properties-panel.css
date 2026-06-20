@@ -217,8 +217,8 @@
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
-  background: #1a1a1a;
-  color: #fff;
+  background: var(--manual-edit-tooltip-bg, color-mix(in srgb, var(--text) 92%, var(--bg-panel) 8%));
+  color: var(--manual-edit-tooltip-text, var(--bg-panel));
   font-size: 11px;
   font-weight: 400;
   line-height: 1.4;
@@ -288,6 +288,20 @@
   height: 15px;
   object-fit: contain;
   pointer-events: none;
+  filter: var(--manual-edit-asset-icon-filter, none);
+  opacity: 0.78;
+}
+
+[data-theme="dark"] .pp-asset-icon {
+  --manual-edit-asset-icon-filter: invert(1) brightness(1.15);
+  opacity: 0.84;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .pp-asset-icon {
+    --manual-edit-asset-icon-filter: invert(1) brightness(1.15);
+    opacity: 0.84;
+  }
 }
 
 .pp-textarea {
@@ -325,7 +339,8 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  background: var(--bg-subtle);
+  width: fit-content;
+  background: color-mix(in srgb, var(--bg-subtle) 86%, var(--bg-panel) 14%);
   border-radius: 6px;
   padding: 2px;
 }
@@ -334,8 +349,16 @@
 }
 .pp-flow-row .pp-icon-btn.pp-icon-btn-active {
   background: var(--bg-panel);
-  border-color: var(--border);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  border-color: color-mix(in srgb, var(--selected) 22%, var(--border) 78%);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.pp-auto-layout-toggle {
+  color: var(--text-muted);
+}
+
+.pp-auto-layout-toggle-active {
+  color: var(--text-muted);
 }
 
 /* ── Alignment grid ────────────────────────────────────────────────────── */
