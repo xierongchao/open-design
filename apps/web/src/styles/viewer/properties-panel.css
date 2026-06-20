@@ -211,25 +211,7 @@
 [data-tooltip] {
   position: relative;
 }
-[data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--manual-edit-tooltip-bg, color-mix(in srgb, var(--text) 92%, var(--bg-panel) 8%));
-  color: var(--manual-edit-tooltip-text, var(--bg-panel));
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.4;
-  padding: 4px 8px;
-  border-radius: 4px;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
-  z-index: 100;
-}
+
 [data-tooltip]:hover::after {
   opacity: 1;
 }

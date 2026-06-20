@@ -1359,26 +1359,36 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background: var(--bg);
+  background: var(--bg-panel);
   flex: 1;
   overflow: hidden;
+}
+.workspace--design-files-active .ws-body {
+  flex: 1 1 auto;
 }
 .ws-tabs-shell {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 0 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-  height: 38px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 96%, var(--bg-subtle));
+  height: 42px;
   position: sticky;
   top: 0;
   z-index: 4;
 }
+.df-content-pane > .ws-tabs-shell {
+  position: relative;
+  top: auto;
+  flex: 0 0 auto;
+  z-index: 6;
+  background: var(--bg-panel);
+}
 .ws-tabs-bar {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   overflow-x: auto;
   overflow-y: hidden;
   flex-wrap: nowrap;
@@ -1401,7 +1411,7 @@
 .ws-tabs-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
   /* Pin to the right edge and reserve space: the tab bar may grow but the
      auto margin keeps a gap, and flex-shrink:0 guarantees this cluster is
@@ -1446,20 +1456,63 @@
   min-height: 28px;
   padding: 0;
   justify-content: center;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
 }
-.app .ws-tabs-actions .chrome-action-icon.is-active{
-    background: var(--accent-tint);
-    color: var(--accent-strong);
+.app .ws-tabs-actions .settings-icon-btn,
+.app .ws-tabs-actions .handoff-caret {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+.app .ws-tabs-actions .chrome-action-icon:hover:not(:disabled),
+.app .ws-tabs-actions .chrome-action-icon:focus-visible,
+.app .ws-tabs-actions .settings-icon-btn:hover:not(:disabled),
+.app .ws-tabs-actions .settings-icon-btn:focus-visible,
+.app .ws-tabs-actions .handoff-trigger:hover:not(:disabled),
+.app .ws-tabs-actions .handoff-trigger:focus-visible,
+.app .ws-tabs-actions .handoff-caret:hover:not(:disabled),
+.app .ws-tabs-actions .handoff-caret:focus-visible,
+.app .ws-tabs-actions .avatar-agent-trigger:hover:not(:disabled),
+.app .ws-tabs-actions .avatar-agent-trigger:focus-visible,
+.app .ws-focus-expand:hover,
+.app .ws-focus-expand:focus-visible {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  border-color: transparent;
+  color: var(--text);
+  box-shadow: none;
+}
+.app .ws-tabs-actions .chrome-action-icon.is-active,
+.app .ws-focus-expand[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
 }
 .app .ws-tabs-actions .handoff-trigger {
   height: 28px;
   min-height: 28px;
   align-items: center;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
 }
 .app .ws-tabs-actions .avatar-agent-trigger {
   height: 28px;
   min-height: 28px;
   align-items: center;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
 }
 /* Cancel the global 1px optical nudge inside this row so icons sit dead
    center rather than slightly low. */
@@ -1471,17 +1524,18 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 8px;
+  height: 30px;
+  padding: 0 9px;
   background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
   font-size: 12.5px;
   cursor: pointer;
   flex-shrink: 0;
-  max-width: 110px;
+  max-width: 140px;
   min-width: 0;
   color: var(--text-muted);
-  transition: background 120ms var(--ease-out), color 120ms var(--ease-out);
+  transition: background 140ms var(--ease-out), border-color 140ms var(--ease-out), color 140ms var(--ease-out);
 }
 .ws-tab.live-artifact-tab {
   /* Wide enough to hold the icon, a truncated title, the status badges
@@ -1490,7 +1544,11 @@
      (see .ws-tab-text override below), so the badges stay fully legible. */
   max-width: 260px;
 }
-.ws-tab:hover { background: var(--bg-subtle); color: var(--text); }
+.ws-tab:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--text);
+}
 .ws-tab.draggable { cursor: grab; }
 .ws-tab.dragging {
   cursor: grabbing;
@@ -1511,9 +1569,10 @@
   outline-offset: 2px;
 }
 .ws-tab.active {
-  background: var(--bg-subtle);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 52%, transparent);
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
 }
 .ws-tab .tab-icon {
   flex: 0 0 auto;
@@ -1547,7 +1606,28 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 96px;
+  max-width: 128px;
+}
+.ws-tab.design-files-tab.has-preview {
+  max-width: min(44vw, 420px);
+  color: var(--text-strong);
+}
+.ws-tab.design-files-tab.has-preview.active {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.ws-tab.design-files-tab.has-preview:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-color: color-mix(in srgb, var(--border) 58%, transparent);
+}
+.ws-tab.design-files-tab.has-preview .ws-tab-label {
+  max-width: none;
+  font-size: 13px;
+  font-weight: 650;
+}
+.ws-tab.design-files-tab.has-preview .tab-icon {
+  color: var(--text-muted);
 }
 .ws-tab.has-meta {
   max-width: 320px;
@@ -1662,7 +1742,7 @@
   z-index: 1;
   /* Solid panel surface so other tabs that scroll past underneath the
      sticky element do not visibly bleed through. */
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--bg-panel) 96%, var(--bg-subtle));
   /* Subtle right-edge shadow signals the visual separation when other
      tabs are scrolled beneath it. */
   box-shadow: 4px 0 6px -4px rgba(0, 0, 0, 0.12);
@@ -1670,7 +1750,7 @@
 .ws-tab.design-files-tab.active {
   /* Active state should still read as selected; layer the active tint
      over the sticky panel surface. */
-  background: var(--bg-subtle);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
 .ws-add-tab {
@@ -1687,11 +1767,11 @@
   box-shadow: -8px 0 10px -9px color-mix(in srgb, var(--text) 30%, transparent);
 }
 .ws-tab-add {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-muted);
   display: inline-flex;
@@ -1703,8 +1783,12 @@
 .ws-tab-add:hover,
 .ws-tab-add.active,
 .ws-tab-add[aria-expanded='true'] {
-  background: var(--bg-subtle);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-color: color-mix(in srgb, var(--border) 72%, transparent);
   color: var(--text);
+}
+.ws-tab-more {
+  color: var(--text-soft);
 }
 .ws-tab-add:focus-visible {
   outline: 2px solid var(--accent);

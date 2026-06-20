@@ -94,12 +94,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   left: 0;
   z-index: 4000;
   max-width: min(260px, calc(100vw - 16px));
-  padding: 5px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-sm);
-  color: var(--text-strong);
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, #000 88%, var(--bg-panel));
+  box-shadow: 0 8px 20px color-mix(in srgb, #000 16%, transparent);
+  color: #fff;
   font-size: 11px;
   font-weight: 500;
   line-height: 1.2;

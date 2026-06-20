@@ -51,7 +51,9 @@ export type IconName =
   | 'more-horizontal'
   | 'orbit'
   | 'paint-bucket'
+  | 'panel-expand'
   | 'panel-left'
+  | 'panel-right'
   | 'palette'
   | 'palette-filled'
   | 'pencil'
@@ -401,6 +403,22 @@ export function Icon({ name, size = 14, strokeWidth = 1.6, ...rest }: Props) {
         <svg {...common}>
           <rect x="3" y="3" width="18" height="18" rx="2" />
           <line x1="9" y1="3" x2="9" y2="21" />
+        </svg>
+      );
+    case 'panel-right':
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="15" y1="3" x2="15" y2="21" />
+        </svg>
+      );
+    case 'panel-expand':
+      return (
+        <svg {...common}>
+          <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+          <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+          <path d="M21 16v3a2 2 0 0 1-2 2h-3" />
+          <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
         </svg>
       );
     case 'import':

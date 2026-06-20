@@ -1223,7 +1223,7 @@ a.avatar-item:visited {
   display: grid;
   grid-template-columns:
     var(--project-workspace-panel-track)
-    8px
+    1px
     var(--project-chat-panel-width);
   min-height: 0;
   min-width: 0;
@@ -1251,31 +1251,87 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
 .split.is-resizing-chat .workspace,
 .split.is-resizing-chat .viewer,
 .split.split-focus .workspace,
-.split.split-focus .viewer {
+.split.split-focus .viewer,
+.split.split-chat-focus .workspace,
+.split.split-chat-focus .viewer,
+.split.split-edit-focus .workspace,
+.split.split-edit-focus .viewer {
   contain: layout paint;
 }
 .split.is-resizing-chat .html-viewer:has(.deck-nav) .preview-frame-clip,
-.split.split-focus .html-viewer:has(.deck-nav) .preview-frame-clip {
+.split.split-focus .html-viewer:has(.deck-nav) .preview-frame-clip,
+.split.split-chat-focus .html-viewer:has(.deck-nav) .preview-frame-clip,
+.split.split-edit-focus .html-viewer:has(.deck-nav) .preview-frame-clip {
   background: var(--text-strong);
 }
 .split.split-focus {
   grid-template-columns: minmax(0, 1fr);
 }
-.split:not(.split-focus) > .workspace {
+.split.split-chat-focus {
+  --project-chat-focus-tree-width: 292px;
+  grid-template-columns: var(--project-chat-focus-tree-width) 1px minmax(0, 1fr);
+  background: color-mix(in srgb, var(--border) 92%, transparent);
+}
+.split.split-edit-focus {
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 300px);
+  background: color-mix(in srgb, var(--border) 92%, transparent);
+}
+.split:not(.split-focus):not(.split-chat-focus):not(.split-edit-focus) > .workspace {
   grid-column: 1;
   grid-row: 1;
 }
-.split:not(.split-focus) > .split-resize-handle,
-.split:not(.split-focus) > .split-edit-divider {
+.split:not(.split-focus):not(.split-chat-focus):not(.split-edit-focus) > .split-resize-handle,
+.split:not(.split-focus):not(.split-chat-focus):not(.split-edit-focus) > .split-edit-divider {
   grid-column: 2;
   grid-row: 1;
 }
-.split:not(.split-focus) > .split-chat-slot {
+.split:not(.split-focus):not(.split-chat-focus):not(.split-edit-focus) > .split-chat-slot {
   grid-column: 3;
   grid-row: 1;
 }
 .split.split-focus > .workspace {
   grid-column: 1;
+}
+.split.split-chat-focus > .split-chat-slot {
+  grid-column: 3;
+  grid-row: 1;
+}
+.split.split-edit-focus > .split-chat-slot {
+  grid-column: 3;
+  grid-row: 1;
+}
+.split.split-chat-focus > .split-resize-handle,
+.split.split-chat-focus > .split-edit-divider,
+.split.split-edit-focus > .split-resize-handle,
+.split.split-edit-focus > .split-edit-divider {
+  display: none;
+}
+.split.split-chat-focus > .workspace {
+  grid-column: 1;
+  grid-row: 1;
+}
+.split.split-edit-focus > .workspace {
+  grid-column: 1;
+  grid-row: 1;
+}
+.split.split-edit-focus .df-browser {
+  --df-tree-pane-width: 0px !important;
+  grid-template-columns: minmax(0, 1fr);
+}
+.split.split-edit-focus .df-tree-pane,
+.split.split-edit-focus .df-tree-hover-trigger,
+.split.split-edit-focus .df-tree-resize-handle,
+.split.split-edit-focus .df-content-tree-toggle {
+  display: none;
+}
+.split.split-edit-focus .df-content-pane {
+  grid-column: 1;
+  border-left: 0;
+  border-top-left-radius: 0;
+  box-shadow: none;
+}
+.split.split-edit-focus .df-content-pane > .ws-tabs-shell {
+  display: none;
 }
 .split-chat-slot {
   position: relative;
@@ -1305,6 +1361,9 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
   min-width: 0;
   min-height: 0;
 }
+.workspace-side-tab-rail[data-active='edit']{
+  border-left:1px solid var(--border);
+}
 .workspace-side-panel-view {
   position: absolute;
   inset: 0;
@@ -1322,6 +1381,7 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
 }
 .workspace-side-edit-view {
   background: var(--bg-panel);
+  border-left:1px solid var(--border);
 }
 .workspace-edit-panel-host {
   display: flex;
@@ -1356,6 +1416,34 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
   flex: 0 0 auto;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.workspace-side-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.workspace-side-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.workspace-side-panel-actions .chat-project-back {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+}
+.workspace-side-panel-actions .chat-project-back:hover,
+.workspace-side-panel-actions .chat-project-back:focus-visible,
+.workspace-side-panel-actions .chat-project-back.is-active {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
 }
 .workspace-side-tab {
   display: inline-flex;
@@ -1388,11 +1476,10 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
   outline-offset: 1px;
 }
 .split-edit-divider {
-  width: 8px;
-  min-width: 8px;
+  width: 1px;
+  min-width: 1px;
   height: 100%;
-  border-right: 1px solid var(--border);
-  background: var(--bg-panel);
+  background: color-mix(in srgb, var(--border) 88%, transparent);
 }
 .comment-left-host {
   position: absolute;
@@ -1455,11 +1542,11 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
 .split-resize-handle {
   position: relative;
   z-index: 45;
-  width: 8px;
-  min-width: 8px;
+  width: 1px;
+  min-width: 1px;
   height: 100%;
   cursor: col-resize;
-  background: transparent;
+  background: color-mix(in srgb, var(--border) 92%, transparent);
   touch-action: none;
 }
 .split-resize-handle::before {
@@ -1467,8 +1554,8 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -10px;
-  right: -10px;
+  left: -7px;
+  right: -7px;
   cursor: col-resize;
 }
 .split-resize-handle::after {
@@ -1476,7 +1563,7 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(50% - 0.5px);
+  left: 0;
   width: 1px;
   pointer-events: none;
   background: color-mix(in srgb, var(--border) 92%, transparent);
@@ -1489,7 +1576,7 @@ body.od-pane-resizing .gjs-cv-canvas__frames {
 .split-resize-handle:hover,
 .split-resize-handle:focus-visible,
 .split.is-resizing-chat .split-resize-handle {
-  background: transparent;
+  background: color-mix(in srgb, var(--accent) 70%, var(--border));
 }
 .split-resize-handle:hover::after,
 .split-resize-handle:focus-visible::after,

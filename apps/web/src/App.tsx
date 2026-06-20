@@ -1207,6 +1207,16 @@ function AppInner() {
     [config],
   );
 
+  const handleAccentColorChange = useCallback(
+    (accentColor: string) => {
+      const next = { ...config, accentColor };
+      saveConfig(next);
+      void syncConfigToDaemon(next);
+      setConfig(next);
+    },
+    [config],
+  );
+
   const handleAgentChange = useCallback(
     (agentId: string) => {
       const next = { ...config, agentId };
@@ -2160,6 +2170,7 @@ function AppInner() {
         onApiModelChange={handleApiModelChange}
         onRefreshAgents={refreshAgents}
         onThemeChange={handleThemeChange}
+        onAccentColorChange={handleAccentColorChange}
         onOpenSettings={openSettings}
         onOpenAmrSettings={openAmrSettings}
         onOpenMcpSettings={openMcpSettings}

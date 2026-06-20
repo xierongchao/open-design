@@ -32,9 +32,20 @@
 .chat-project-collapse {
   margin-inline-start: 2px;
 }
+.chat-project-expand.is-active {
+  color: var(--text);
+  background: var(--bg-subtle);
+}
 .chat-project-back:hover {
   background: var(--bg-subtle);
   color: var(--text);
+}
+.chat-project-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-inline-start: auto;
 }
 .chat-project-design-system {
   display: inline-flex;
@@ -1076,7 +1087,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  border: 1px solid transparent;
+  border: none;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg-panel) 94%, var(--bg-subtle));
   transition:
@@ -1084,8 +1095,7 @@
     border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .composer-input-wrap:focus-within {
-  background: var(--bg-panel);
-  border-color: color-mix(in srgb, var(--selected) 28%, var(--border));
+  border: none;
 }
 /* The wrapper that owns scroll + max-height (Lexical's ContentEditable is
    the inner [contenteditable] element). */
@@ -1615,6 +1625,12 @@
   border-color: var(--accent-hover);
   box-shadow: var(--shadow-sm);
 }
+.composer-send:not(.stop) {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 999px;
+}
 .composer-send:active:not(:disabled) { transform: translateY(1px); box-shadow: var(--shadow-xs); }
 .composer-send:focus-visible {
   outline: none;
@@ -1969,7 +1985,7 @@
   padding: 0 7px;
   gap: 5px;
   border-radius: var(--radius);
-  font-size: 11px;
+  font-size: 12px;
   box-shadow: none;
 }
 .staged-context {
@@ -1979,7 +1995,7 @@
   max-width: min(190px, 100%);
   padding: 2px 5px 2px 3px;
   border-radius: var(--radius-sm);
-  font-size: 10.5px;
+  font-size: 12px;
   background: color-mix(in srgb, var(--accent-tint) 30%, var(--bg-panel));
   border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
 }

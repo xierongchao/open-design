@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   useEffect,
   useMemo,
   useRef,
@@ -24,6 +25,11 @@ import {
 } from '../analytics/events';
 import { createSocialSharePayload } from '../providers/registry';
 import type { AppConfig, AppTheme } from '../types';
+import {
+  ACCENT_SWATCHES,
+  DEFAULT_ACCENT_COLOR,
+  resolveAccentColor,
+} from '../state/appearance';
 import { formatDiscordPresenceCount, useDiscordPresence } from './useDiscordPresence';
 import { Icon } from './Icon';
 import { SocialShareGrid } from './SocialShareGrid';
@@ -61,6 +67,8 @@ const ENTRY_THEME_OPTIONS: Array<{
 interface Props {
   config: AppConfig;
   onThemeChange: (theme: AppTheme) => void;
+  onModeChange?: (mode: AppConfig['mode']) => void;
+  onAccentColorChange?: (color: string) => void;
   onOpenSettings: (section?: EntrySettingsSection) => void;
   // Fired when the gear trigger is clicked. Used by the in-project header to
   // emit the `artifact_header` / `settings` ui_click; the home/entry shell
@@ -69,16 +77,23 @@ interface Props {
   // The popover is mounted both on the home header and the in-project
   // artifact header; defaults to 'home' so existing call sites stay correct.
   trackingPageName?: 'home' | 'artifact';
+  showButtonLabel?: boolean;
+  variant?: 'home' | 'project';
 }
 
 export function EntrySettingsMenu({
   config,
   onThemeChange,
+  onModeChange,
+  onAccentColorChange,
   onOpenSettings,
   onTrackTriggerClick,
   trackingPageName,
+  showButtonLabel = false,
+  variant = 'home',
 }: Props) {
   const pageName = trackingPageName ?? 'home';
+  const showCommunityLinks = variant !== 'project';
   const analytics = useAnalytics();
   const t = useT();
   const { locale, setLocale } = useI18n();
@@ -90,6 +105,8 @@ export function EntrySettingsMenu({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const langListRef = useRef<HTMLDivElement | null>(null);
   const activeTheme = config.theme ?? 'system';
+  const activeMode = config.mode;
+  const activeAccent = resolveAccentColor(config.accentColor ?? DEFAULT_ACCENT_COLOR);
   const discordOnlineLabel = discordPresence
     ? t('entry.discordOnlineLabel', {
         count: formatDiscordPresenceCount(discordPresence.onlineCount),
@@ -159,6 +176,10 @@ export function EntrySettingsMenu({
 
   useEffect(() => {
     if (!open) return;
+    if (!showCommunityLinks) {
+      setOpenDesignShare(null);
+      return;
+    }
     let cancelled = false;
     setOpenDesignShare(null);
     void createSocialSharePayload(openDesignShareRequest)
@@ -171,27 +192,30 @@ export function EntrySettingsMenu({
     return () => {
       cancelled = true;
     };
-  }, [open, openDesignShareRequest]);
+  }, [open, openDesignShareRequest, showCommunityLinks]);
 
   return (
     <div className="entry-settings-menu" ref={wrapRef}>
       <button
         ref={triggerRef}
         type="button"
-        className="settings-icon-btn od-tooltip"
+        className={`settings-icon-btn${variant === 'project' ? ' settings-icon-btn--project' : ' od-tooltip'}`}
         onClick={() => {
           onTrackTriggerClick?.();
           setOpen((value) => !value);
         }}
-        title={t('entry.openSettingsTitle')}
-        data-tooltip={t('entry.openSettingsTitle')}
-        data-tooltip-placement="bottom"
+        title={variant === 'project' ? undefined : t('entry.openSettingsTitle')}
+        data-tooltip={variant === 'project' ? undefined : t('entry.openSettingsTitle')}
+        data-tooltip-placement={variant === 'project' ? undefined : 'bottom'}
         aria-label={t('entry.openSettingsAria')}
         aria-haspopup="menu"
         aria-expanded={open}
         data-testid="entry-settings-menu-trigger"
       >
         <Icon name="settings" size={17} />
+        {showButtonLabel ? (
+          <span className="settings-icon-btn-label">{t('entry.openSettingsTitle')}</span>
+        ) : null}
       </button>
       {open ? (
         <div
@@ -312,8 +336,73 @@ export function EntrySettingsMenu({
                 );
               })}
             </div>
+            {onAccentColorChange ? (
+              <div
+                className="entry-settings-menu__accent-row"
+                role="radiogroup"
+                aria-label={t('pet.fieldAccent')}
+              >
+                {ACCENT_SWATCHES.map((color) => {
+                  const active = activeAccent === color;
+                  return (
+                    <button
+                      key={color}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      aria-label={color === DEFAULT_ACCENT_COLOR ? t('pet.fieldAccentDefault') : color}
+                      className={`entry-settings-menu__accent${active ? ' is-active' : ''}`}
+                      style={{ '--entry-accent-color': color } as CSSProperties}
+                      onClick={() => {
+                        trackSettingsPopoverClick(analytics.track, {
+                          page_name: pageName,
+                          area: 'settings_popover',
+                          element: 'appearance',
+                          value: color,
+                        });
+                        onAccentColorChange(color);
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            ) : null}
           </section>
 
+          {onModeChange ? (
+            <section className="entry-settings-menu__section">
+              <div className="entry-settings-menu__section-title">
+                <Icon name="terminal" size={13} />
+                <span>CLI</span>
+              </div>
+              <div className="entry-settings-menu__mode-row">
+                {([
+                  { value: 'daemon' as const, icon: 'terminal' as const, label: 'CLI' },
+                  { value: 'api' as const, icon: 'globe' as const, label: 'API' },
+                ]).map((option) => {
+                  const active = activeMode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={active}
+                      className={`entry-settings-menu__mode${active ? ' is-active' : ''}`}
+                      onClick={() => {
+                        onModeChange(option.value);
+                        setOpen(false);
+                      }}
+                    >
+                      <Icon name={option.icon} size={13} />
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
+          {showCommunityLinks ? (
           <section className="entry-settings-menu__section">
             <div className="entry-settings-menu__section-title">
               <Icon name="external-link" size={13} />
@@ -333,9 +422,12 @@ export function EntrySettingsMenu({
               onAfterShare={() => setOpen(false)}
             />
           </section>
+          ) : null}
 
-          <div className="entry-settings-menu__divider" aria-hidden />
+          {showCommunityLinks ? <div className="entry-settings-menu__divider" aria-hidden /> : null}
 
+          {showCommunityLinks ? (
+          <>
           <a
             className="entry-settings-menu__item"
             href={DISCORD_URL}
@@ -386,6 +478,8 @@ export function EntrySettingsMenu({
             <span>{t('entry.followXLabel')}</span>
             <Icon name="external-link" size={12} className="entry-settings-menu__item-end" />
           </a>
+          </>
+          ) : null}
 
           <div className="entry-settings-menu__divider" aria-hidden />
 

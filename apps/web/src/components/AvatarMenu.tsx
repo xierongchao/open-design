@@ -256,7 +256,7 @@ export function AvatarMenu({
       <button
         ref={triggerRef}
         type="button"
-        className="avatar-agent-trigger"
+        className="avatar-agent-trigger od-tooltip"
         onClick={toggleOpen}
         aria-haspopup="menu"
         aria-expanded={open}

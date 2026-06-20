@@ -606,6 +606,9 @@ interface Props {
   backLabel?: string;
   onCollapseChat?: () => void;
   collapseChatLabel?: string;
+  onToggleChatFocus?: () => void;
+  toggleChatFocusLabel?: string;
+  chatPanelFocused?: boolean;
   projectHeader?: ReactNode;
   designSystemPicker?: ReactNode;
   config?: AppConfig;
@@ -753,7 +756,10 @@ export function ChatPane({
   onBack,
   backLabel,
   onCollapseChat,
-  collapseChatLabel = 'Hide chat',
+  collapseChatLabel = '收起对话面板',
+  onToggleChatFocus,
+  toggleChatFocusLabel = '放大对话面板',
+  chatPanelFocused = false,
   projectHeader,
   designSystemPicker,
   config,
@@ -1771,7 +1777,7 @@ export function ChatPane({
 
   return (
     <div className="pane">
-      <div className={`chat-project-header${onCollapseChat ? ' chat-project-header-collapsible' : ''}`}>
+      <div className={`chat-project-header${onCollapseChat || onToggleChatFocus ? ' chat-project-header-collapsible' : ''}`}>
         <div
           className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
           ref={historyWrapRef}
@@ -1898,16 +1904,36 @@ export function ChatPane({
         {projectHeader ? (
           <span className="chat-project-header-title">{projectHeader}</span>
         ) : null}
-        {onCollapseChat ? (
-          <button
-            type="button"
-            className="chat-project-back chat-project-collapse"
-            onClick={onCollapseChat}
-            title={collapseChatLabel}
-            aria-label={collapseChatLabel}
-          >
-            <Icon name="chevron-right" size={16} />
-          </button>
+        {onCollapseChat || onToggleChatFocus ? (
+          <div className="chat-project-panel-actions">
+            {onToggleChatFocus ? (
+              <button
+                type="button"
+                className={`chat-project-back chat-project-expand od-tooltip${chatPanelFocused ? ' is-active' : ''}`}
+                onClick={onToggleChatFocus}
+                title={toggleChatFocusLabel}
+                data-tooltip={toggleChatFocusLabel}
+                data-tooltip-placement="bottom"
+                aria-label={toggleChatFocusLabel}
+                aria-pressed={chatPanelFocused}
+              >
+                <Icon name="panel-expand" size={16} />
+              </button>
+            ) : null}
+            {onCollapseChat ? (
+              <button
+                type="button"
+                className="chat-project-back chat-project-collapse od-tooltip"
+                onClick={onCollapseChat}
+                title={collapseChatLabel}
+                data-tooltip={collapseChatLabel}
+                data-tooltip-placement="bottom"
+                aria-label={collapseChatLabel}
+              >
+                <Icon name="panel-right" size={16} />
+              </button>
+            ) : null}
+          </div>
         ) : onBack ? (
           <button
             type="button"

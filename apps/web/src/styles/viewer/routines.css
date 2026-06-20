@@ -883,33 +883,53 @@
 .app .split {
   background: var(--bg-panel);
 }
-.app .split:not(.split-focus) {
+.app .split:not(.split-focus):not(.split-chat-focus):not(.split-edit-focus) {
   grid-template-columns:
     var(--project-workspace-panel-track, minmax(0, 1fr))
-    8px
+    1px
     var(--project-chat-panel-width, 760px);
 }
 .app .split.split-focus {
   grid-template-columns: minmax(0, 1fr);
 }
+.app .split.split-chat-focus {
+  --project-chat-focus-tree-width: 292px;
+  grid-template-columns: var(--project-chat-focus-tree-width) 1px minmax(0, 1fr);
+  background: color-mix(in srgb, var(--border) 92%, transparent);
+}
+.app .split.split-edit-focus {
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 300px);
+  background: color-mix(in srgb, var(--border) 92%, transparent);
+}
 .app .split-chat-slot {
   justify-content: stretch;
   align-items: stretch;
-  padding: 5px;
-  background: color-mix(in srgb, var(--bg-subtle) 48%, var(--bg-panel));
+  padding: 0;
+  box-sizing: border-box;
+  background: var(--bg-panel);
 }
 .app .split-chat-slot > .pane {
   width: 100%;
   max-width: none;
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  box-shadow: 0 12px 34px color-mix(in srgb, var(--text) 8%, transparent);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   background: var(--bg-panel);
 }
 .app .workspace-side-panel-shell {
   width: 100%;
   min-width: 0;
   background: var(--bg-panel);
+}
+.app .workspace-side-tab-rail {
+  height: 45px;
+  padding: 6px 10px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.app .workspace-side-panel-actions .chat-project-back {
+  position: static;
+  left: auto;
 }
 .app .workspace-side-chat-view > .pane {
   width: 100%;
@@ -919,23 +939,22 @@
   box-shadow: none;
 }
 .app .split-resize-handle {
-  width: 8px;
-  min-width: 8px;
-  background: transparent;
+  width: 1px;
+  min-width: 1px;
+  background: color-mix(in srgb, var(--border) 92%, transparent);
 }
 .app .split-resize-handle:hover,
 .app .split-resize-handle:focus-visible,
 .app .split.is-resizing-chat .split-resize-handle {
-  background: transparent;
+  background: color-mix(in srgb, var(--accent) 70%, var(--border));
 }
 
 .app .chat-project-header {
-  justify-content: center;
-  min-height: 48px;
-  height: 48px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border-soft);
-  background: color-mix(in srgb, var(--bg-panel) 97%, var(--bg-subtle));
+  justify-content: space-between;
+  height: 44px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
 }
 
 .app .chat-project-back {
@@ -975,25 +994,55 @@
 
 .app .chat-project-header-collapsible .chat-project-collapse {
   left: auto;
-  right: 10px;
+  right: auto;
   margin-inline-start: 0;
 }
+.app .chat-project-panel-actions {
+  position: absolute;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.app .chat-project-panel-actions .chat-project-back {
+  position: static;
+  left: auto;
+}
 
-.app .chat-log-wrap,
 .app .chat-composer-slot,
 .app .chat-pinned-todo,
-.app .queued-send-strip {
-  width: 100%;
-  max-width: none;
-  margin-inline: 0;
+.app .queued-send-strip,
+.app .chat-queued-send-strip {
+  width: min(calc(100% - 28px), 900px);
+  max-width: 900px;
+  margin-inline: auto;
 }
 
 .app .chat-log-wrap {
   flex: 1 1 auto;
   min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.app .workspace-side-chat-view .chat-log {
+  width: 100%;
+  margin: 0;
+  padding: 30px 5px 30px 0;
+  box-sizing: border-box;
+  scrollbar-gutter: stable;
+}
+
+.app .workspace-side-chat-view .chat-log > * {
+  width: min(calc(100% - 28px), 900px);
+  max-width: 900px;
+  margin-inline: auto;
 }
 
 .app .chat-composer-slot {
+  padding-top: 0;
   padding-bottom: 10px;
 }
 
@@ -1045,8 +1094,7 @@
   max-width: 100%;
 }
 .app .msg.user {
-  width: fit-content;
-  max-width: min(88%, 520px);
+  max-width: min(100%, 1000px);
 }
 .app .msg.user .user-text-wrap {
   max-width: 100%;
@@ -1056,7 +1104,7 @@
   max-width: 100%;
 }
 .app .msg.assistant {
-  max-width: min(100%, 620px);
+  max-width: min(100%, 1000px);
 }
 .app .msg .role {
   margin-bottom: 5px;
@@ -1567,7 +1615,7 @@
 }
 .chat-composer-fixed-layer .composer {
   gap: 5px;
-  padding: 8px 10px 10px;
+  padding: 8px 0px 10px;
   background: transparent;
 }
 .app .composer-shell {
@@ -1625,7 +1673,7 @@
 }
 .chat-composer-fixed-layer .composer-row {
   min-height: 32px;
-  padding-top: 2px;
+  padding: 5px 10px 10px;
 }
 .app .composer-row .icon-btn,
 .app .composer-import,
@@ -1650,11 +1698,16 @@
 .app .composer-send {
   height: 28px;
   min-height: 28px;
-  min-width: 58px;
   padding: 0 12px;
   font-size: 12.5px;
   font-weight: 600;
   box-shadow: none;
+}
+.app .composer-send:not(.stop) {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  border-radius: 999px;
 }
 .chat-composer-fixed-layer .composer-send {
   height: 30px;
@@ -1663,6 +1716,12 @@
   font-size: 12.5px;
   font-weight: 600;
   box-shadow: none;
+}
+.chat-composer-fixed-layer .composer-send:not(.stop) {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 999px;
 }
 .app .composer-send:disabled {
   background: var(--bg-subtle);
@@ -1720,6 +1779,12 @@
   border-radius: 10px;
   background: var(--bg-panel);
   box-shadow: var(--shadow-md, 0 12px 32px rgba(0, 0, 0, 0.12));
+}
+.app .composer-row .working-dir-pill-menu {
+  bottom: calc(100% + 6px);
+  top: auto;
+  left: 0;
+  right: auto;
 }
 .app .working-dir-pill-menu-path {
   padding: 4px 10px;
@@ -1816,9 +1881,12 @@
   padding: 6px 14px;
 }
 .app .ws-focus-expand {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 9px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
 }
 .app .ws-tabs-bar {
   gap: 6px;
@@ -2523,7 +2591,7 @@
   background: var(--bg-panel);
   color: var(--text);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
   transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1),

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEven
 import { useAnalytics } from '../analytics/provider';
 import { trackFileManagerClick } from '../analytics/events';
 import { useT } from '../i18n';
+import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { projectFileUrl } from '../providers/registry';
 import { displayNameForPath, type FileAliasMap } from '../runtime/file-aliases';
 import type { LiveArtifactWorkspaceEntry, ProjectFile, ProjectFileKind, ProjectFolder } from '../types';
@@ -42,6 +43,11 @@ interface Props {
   onOpenFile: (name: string) => void;
   onOpenLiveArtifact: (tabId: LiveArtifactWorkspaceEntry['tabId']) => void;
   activeFileName?: string | null;
+  headerContent?: ReactNode;
+  sidebarFooter?: ReactNode;
+  sideTreeOnly?: boolean;
+  onBack?: () => void;
+  backLabel?: string;
   previewContent?: ReactNode;
   onCopyFile?: (name: string) => Promise<ProjectFile | null> | ProjectFile | null;
   // Display alias map (file path -> alias) the tree renders in place of the
@@ -177,6 +183,11 @@ export function DesignFilesPanel({
   onOpenFile,
   onOpenLiveArtifact,
   activeFileName,
+  headerContent,
+  sidebarFooter,
+  sideTreeOnly = false,
+  onBack,
+  backLabel,
   previewContent,
   onCopyFile,
   fileAliases,
@@ -247,6 +258,7 @@ export function DesignFilesPanel({
   const [currentDir, setCurrentDir] = useState<string>(() => navState?.currentDir ?? '');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [rootExpanded, setRootExpanded] = useState(true);
+  const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [treePaneWidth, setTreePaneWidth] = useState(() => readTreePaneWidth(projectId));
   const [resizingTreePane, setResizingTreePane] = useState(false);
   const treePaneResizeRef = useRef<{
@@ -289,6 +301,7 @@ export function DesignFilesPanel({
     }
     return grouped;
   }, [files]);
+  const filesByName = useMemo(() => new Map(files.map((file) => [file.name, file])), [files]);
   // Flat list of every folder (persisted + derived from file paths) for the
   // "Add to folder" picker.
   const folderPaths = useMemo(() => flattenFolderPaths(folderTree), [folderTree]);
@@ -867,6 +880,21 @@ export function DesignFilesPanel({
   function openFolderPath(path: string) {
     expandFolderPath(path);
     setCurrentDir(path);
+  }
+
+  function openContainingFolder(name: string) {
+    openFolderPath(dirnameForPath(name));
+  }
+
+  async function copyImagePath(name: string) {
+    const rawPath = projectFileUrl(projectId, name);
+    const path = typeof window === 'undefined'
+      ? rawPath
+      : new URL(rawPath, window.location.origin).href;
+    const copied = await copyToClipboard(path);
+    setFolderNotice({
+      message: copied ? `${t('designFiles.copiedPath')}: ${path}` : t('designFiles.copyFailed'),
+    });
   }
 
   function toggleFolderExpansion(path: string) {
@@ -1712,10 +1740,63 @@ export function DesignFilesPanel({
               </div>
             </div>
           ) : null}
-          <div className="df-browser" style={{ '--df-tree-pane-width': `${treePaneWidth}px` } as CSSProperties}>
+          <div
+            className={[
+              'df-browser',
+              treeCollapsed ? 'df-browser--tree-collapsed' : '',
+              sideTreeOnly ? 'df-browser--tree-only' : '',
+            ].filter(Boolean).join(' ')}
+            style={{
+              '--df-tree-pane-width': treeCollapsed
+                ? '0px'
+                : sideTreeOnly
+                  ? '100%'
+                  : `${treePaneWidth}px`,
+              '--df-tree-overlay-width': `${treePaneWidth}px`,
+            } as CSSProperties}
+          >
             <aside className="df-tree-pane" aria-label={t('designFiles.sectionFolders')}>
               <div className="df-tree-head">
-                <span>{t('designFiles.sectionFolders')}</span>
+                <div className="df-tree-head-main">
+                  <div className="df-sidebar-chrome">
+                    <button
+                      type="button"
+                      className="df-sidebar-chrome-btn df-sidebar-collapse-toggle"
+                      aria-label={treeCollapsed ? '显示文件树' : '收起文件树'}
+                      title={treeCollapsed ? '显示文件树' : '收起文件树'}
+                      aria-pressed={treeCollapsed}
+                      onClick={(event) => {
+                        event.currentTarget.blur();
+                        setTreeCollapsed((value) => !value);
+                      }}
+                    >
+                      <Icon name="panel-left" size={15} />
+                    </button>
+                    {onBack ? (
+                      <button
+                        type="button"
+                        className="df-sidebar-chrome-btn df-sidebar-back"
+                        data-testid="workspace-project-back"
+                        aria-label={backLabel ?? 'Back'}
+                        title={backLabel ?? 'Back'}
+                        onClick={onBack}
+                      >
+                        <Icon name="arrow-left" size={15} />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              <div className="df-tree-toolbar">
+                <button
+                  type="button"
+                  className="df-tree-toolbar-path"
+                  title={currentDir || (rootDirName ?? t('designFiles.crumbs'))}
+                  onClick={() => openFolderPath(currentDir)}
+                >
+                  <Icon name="folder" size={14} />
+                  <span>{currentDir || (rootDirName ?? t('designFiles.crumbs'))}</span>
+                </button>
                 <div className="df-tree-create-menu-wrap">
                   {(() => {
                     // Single toggle: collapses every folder when the tree is
@@ -1746,7 +1827,7 @@ export function DesignFilesPanel({
                           }
                         }}
                       >
-                        <Icon name={allExpanded ? 'folder-filled' : 'folder'} size={13} />
+                        <Icon name={allExpanded ? 'chevron-down' : 'chevron-right'} size={13} />
                       </button>
                     );
                   })()}
@@ -1772,14 +1853,14 @@ export function DesignFilesPanel({
                     aria-haspopup="menu"
                     aria-expanded={createMenuOpen}
                     data-tooltip={t('common.create')}
-                    data-tooltip-placement="right"
+                    data-tooltip-placement="bottom"
                     onMouseDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
                       setCreateMenuOpen((open) => !open);
                     }}
                   >
-                    <Icon name="plus" size={13} />
+                    <Icon name="more-horizontal" size={14} />
                   </button>
                   {createMenuOpen ? (
                     <div
@@ -1867,7 +1948,14 @@ export function DesignFilesPanel({
                   </>
                 ) : null}
               </div>
+              {sidebarFooter ? (
+                <div className="df-tree-footer">{sidebarFooter}</div>
+              ) : null}
             </aside>
+            {treeCollapsed ? (
+              <div className="df-tree-hover-trigger" aria-hidden />
+            ) : null}
+            {!treeCollapsed && !sideTreeOnly ? (
             <div
               className={`df-tree-resize-handle${resizingTreePane ? ' is-resizing' : ''}`}
               onPointerDown={(event) => {
@@ -1881,6 +1969,8 @@ export function DesignFilesPanel({
                 setResizingTreePane(true);
               }}
             />
+            ) : null}
+            {!sideTreeOnly ? (
             <section
               className={`df-content-pane ${draggingFiles ? 'dragging' : ''}`}
               onDragEnter={(event) => {
@@ -1905,6 +1995,24 @@ export function DesignFilesPanel({
               }}
               onDrop={handleDrop}
             >
+              {treeCollapsed ? (
+                <button
+                  type="button"
+                  className="df-content-tree-toggle od-tooltip"
+                  data-tooltip="显示文件树"
+                  data-tooltip-placement="bottom"
+                  aria-label="显示文件树"
+                  aria-pressed="true"
+                  title="显示文件树"
+                  onClick={(event) => {
+                    event.currentTarget.blur();
+                    setTreeCollapsed(false);
+                  }}
+                >
+                  <Icon name="panel-left" size={15} />
+                </button>
+              ) : null}
+              {headerContent ? headerContent : null}
               {folderNotice ? (
                 <div className="df-inline-notice" role="status">
                   <ActionNoticeView notice={folderNotice} />
@@ -1998,6 +2106,7 @@ export function DesignFilesPanel({
                 </div>
               )}
             </section>
+            ) : null}
           </div>
         </div>
       </div>
@@ -2062,6 +2171,30 @@ export function DesignFilesPanel({
               {t('common.rename')}
             </button>
           ) : null}
+          {filesByName.get(menuPos.name)?.kind === 'image' ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const name = menuPos.name;
+                setMenuPos(null);
+                void copyImagePath(name);
+              }}
+            >
+              {t('designFiles.copyPath')}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const name = menuPos.name;
+              setMenuPos(null);
+              openContainingFolder(name);
+            }}
+          >
+            Open folder
+          </button>
           {onNewArtboard ? (
             <button
               type="button"

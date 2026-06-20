@@ -150,6 +150,7 @@ interface Props {
   ) => Promise<{ message?: string; url?: string } | void> | { message?: string; url?: string } | void;
   activePluginActionPaths?: Set<string>;
   hiddenPluginActionPaths?: Set<string>;
+  sideTreeOnly?: boolean;
   focusMode?: boolean;
   onFocusModeChange?: (next: boolean) => void;
   designSystemProject?: DesignSystemSummary | null;
@@ -213,6 +214,7 @@ interface Props {
   // row was removed; these moved here alongside the FileViewer present/Share
   // portal that targets the same actions container.
   headerActions?: ReactNode;
+  sidebarFooter?: ReactNode;
   // Active discovery question form, surfaced in the right-hand Questions tab
   // instead of inline in the chat. Owned by ProjectView (derived from the
   // latest assistant message).
@@ -410,6 +412,7 @@ export function FileWorkspace({
   onPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
+  sideTreeOnly = false,
   focusMode = false,
   onFocusModeChange,
   designSystemProject = null,
@@ -450,6 +453,7 @@ export function FileWorkspace({
   onBack,
   backLabel,
   headerActions,
+  sidebarFooter,
   questionForm = null,
   questionFormPreview = null,
   questionFormKey = null,
@@ -2245,30 +2249,18 @@ export function FileWorkspace({
     },
   };
   const launcherActions = buildLauncherActions(launcherContext);
+  const designFilesTabLabel = designFilesPreviewName
+    ? displayNameForPath(designFilesPreviewName, fileAliases)
+    : t('workspace.designFiles');
+  const designFilesTabTitle = designFilesPreviewName
+    ? `${t('workspace.designFiles')}: ${designFilesPreviewName}`
+    : t('workspace.designFiles');
+  const designFilesTabIconName = designFilesPreviewFile
+    ? kindIconName(designFilesPreviewFile.kind)
+    : 'grid';
 
-  return (
-    <div
-      className={[
-        'workspace',
-        designSystemProject ? 'has-design-system-tab' : '',
-      ].filter(Boolean).join(' ')}
-      data-testid="file-workspace"
-    >
+  const renderTabsHeader = () => (
       <div className="ws-tabs-shell">
-        {onBack ? (
-          <button
-            type="button"
-            className="icon-only ws-project-back od-tooltip"
-            data-testid="workspace-project-back"
-            title={backLabel ?? 'Back'}
-            data-tooltip={backLabel ?? 'Back'}
-            data-tooltip-placement="bottom"
-            aria-label={backLabel ?? 'Back'}
-            onClick={onBack}
-          >
-            <Icon name="arrow-left" size={15} />
-          </button>
-        ) : null}
         <div
           ref={tabsBarRef}
           className={`ws-tabs-bar${tabsOverflowing ? ' is-overflowing' : ''}`}
@@ -2313,19 +2305,24 @@ export function FileWorkspace({
           ) : null}
           <button
             type="button"
-            className={`ws-tab design-files-tab ${activeTab === DESIGN_FILES_TAB ? 'active' : ''}`}
+            className={[
+              'ws-tab',
+              'design-files-tab',
+              designFilesPreviewName ? 'has-preview' : '',
+              activeTab === DESIGN_FILES_TAB ? 'active' : '',
+            ].filter(Boolean).join(' ')}
             role="tab"
             aria-selected={activeTab === DESIGN_FILES_TAB}
             tabIndex={0}
             data-testid="design-files-tab"
             onClick={() => setPersistedActive(DESIGN_FILES_TAB)}
             onContextMenu={(e) => { e.preventDefault(); setTabContextMenu({ tabId: DESIGN_FILES_TAB, x: e.clientX, y: e.clientY }); }}
-            title={t('workspace.designFiles')}
+            title={designFilesTabTitle}
           >
             <span className="tab-icon" aria-hidden>
-              <Icon name="grid" size={13} />
+              <Icon name={designFilesTabIconName} size={13} />
             </span>
-            <span className="ws-tab-label">{t('workspace.designFiles')}</span>
+            <span className="ws-tab-label">{designFilesTabLabel}</span>
           </button>
           {showQuestionsTab ? (
             <button
@@ -2462,7 +2459,7 @@ export function FileWorkspace({
           <button
             ref={launcherBtnRef}
             type="button"
-            className="icon-only ws-tab-add od-tooltip"
+            className="icon-only ws-tab-add ws-tab-more od-tooltip"
             data-testid="workspace-add-tab"
             aria-haspopup="dialog"
             aria-expanded={launcherOpen}
@@ -2472,7 +2469,7 @@ export function FileWorkspace({
             aria-label={t('workspace.newTab')}
             onClick={() => setLauncherOpen((v) => !v)}
           >
-            <Icon name="plus" size={15} />
+            <Icon name="more-horizontal" size={16} />
           </button>
         </div>
         {/* Pinned to the right for project/file actions; the tab launcher sits
@@ -2499,10 +2496,22 @@ export function FileWorkspace({
             aria-label={t('workspace.showChat')}
             onClick={() => onFocusModeChange(false)}
           >
-            <Icon name="comment" size={15} />
+            <Icon name="panel-right" size={15} />
           </button>
         ) : null}
       </div>
+  );
+
+  return (
+    <div
+      className={[
+        'workspace',
+        activeTab === DESIGN_FILES_TAB ? 'workspace--design-files-active' : '',
+        designSystemProject ? 'has-design-system-tab' : '',
+      ].filter(Boolean).join(' ')}
+      data-testid="file-workspace"
+    >
+      {activeTab === DESIGN_FILES_TAB ? null : renderTabsHeader()}
       {launcherOpen ? (
         <TabLauncherMenu
           anchor={launcherBtnRef.current}
@@ -2626,6 +2635,11 @@ export function FileWorkspace({
             onOpenFile={openDesignFilesPreview}
             onOpenLiveArtifact={(tabId) => openFile(tabId)}
             activeFileName={designFilesPreviewName}
+            headerContent={renderTabsHeader()}
+            sidebarFooter={sidebarFooter}
+            sideTreeOnly={sideTreeOnly}
+            onBack={onBack}
+            backLabel={backLabel}
             previewContent={
               designFilesPreviewFile ? (
                 <FileViewer
@@ -4910,15 +4924,7 @@ function wheelDeltaToPixels(delta: number, deltaMode: number): number {
   return delta;
 }
 
-function kindIconName(
-  kind?: string,
-):
-  | 'file-code'
-  | 'globe'
-  | 'image'
-  | 'pencil'
-  | 'file'
-  | null {
+function kindIconName(kind?: string): IconName {
   if (kind === 'browser') return 'globe';
   if (kind === 'live-artifact') return 'file-code';
   if (kind === 'html') return 'file-code';

@@ -671,20 +671,57 @@ const MAC_WINDOW_CHROME =
   process.platform === "darwin"
     ? ({
         titleBarStyle: "hiddenInset" as const,
-        trafficLightPosition: { x: 12, y: 10 },
+        trafficLightPosition: { x: 12, y: 17 },
       })
     : {};
 
 const MAC_WINDOW_CHROME_CSS = `
-  /* Reserve 36px at the top for the macOS traffic-light zone. On Windows the
-   * native title bar already provides this space, so the rule only lives in
-   * this macOS-only injected stylesheet. */
+  /* Keep the project renderer flush with the top edge. The macOS traffic
+   * lights are native Electron controls; the renderer only reserves their
+   * click area and drag regions instead of drawing a replacement. */
   .workspace-shell[data-client-type="desktop"] .workspace-shell__body {
-    padding-top: 36px !important;
+    padding-top: 0 !important;
     position: relative !important;
   }
   .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .workspace-shell__body {
     padding-top: 0 !important;
+  }
+  .workspace-shell[data-client-type="desktop"] .df-tree-head {
+    min-height: 50px !important;
+    padding-left: 96px !important;
+    -webkit-app-region: drag;
+  }
+  .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .df-tree-head {
+    min-height: 44px !important;
+    padding-left: 12px !important;
+  }
+  .workspace-shell[data-client-type="desktop"] .df-browser--tree-collapsed {
+    --df-tree-pane-width: 0px !important;
+  }
+  .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .df-browser--tree-collapsed {
+    --df-tree-pane-width: 0px !important;
+  }
+  .workspace-shell[data-client-type="desktop"] .df-browser--tree-collapsed .df-content-tree-toggle {
+    left: 96px !important;
+  }
+  .workspace-shell[data-client-type="desktop"] .df-browser--tree-collapsed .df-content-pane > .ws-tabs-shell {
+    padding-left: 134px !important;
+  }
+  .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .df-browser--tree-collapsed .df-content-tree-toggle {
+    left: 10px !important;
+  }
+  .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .df-browser--tree-collapsed .df-content-pane > .ws-tabs-shell {
+    padding-left: 48px !important;
+  }
+  .workspace-shell[data-client-type="desktop"] .df-tree-head button,
+  .workspace-shell[data-client-type="desktop"] .df-content-tree-toggle,
+  .workspace-shell[data-client-type="desktop"] .df-tree-toolbar button,
+  .workspace-shell[data-client-type="desktop"] .df-tree-scroll,
+  .workspace-shell[data-client-type="desktop"] .df-tree-footer,
+  .workspace-shell[data-client-type="desktop"] .df-tree-footer *,
+  .workspace-shell[data-client-type="desktop"] .df-create-menu,
+  .workspace-shell[data-client-type="desktop"] .df-create-menu * {
+    -webkit-app-region: no-drag;
   }
   .app-chrome-header {
     --app-chrome-traffic-space: 96px !important;
@@ -711,6 +748,32 @@ const MAC_WINDOW_CHROME_CSS = `
   }
   .app-chrome-drag {
     -webkit-app-region: drag;
+  }
+  .workspace-shell[data-client-type="desktop"] .ws-tabs-shell,
+  .workspace-shell[data-client-type="desktop"] .workspace-side-tab-rail,
+  .workspace-shell[data-client-type="desktop"] .chat-project-header,
+  .workspace-shell[data-client-type="desktop"] .entry-main__topbar {
+    -webkit-app-region: drag;
+  }
+  .workspace-shell[data-client-type="desktop"] .ws-tabs-shell button,
+  .workspace-shell[data-client-type="desktop"] .ws-tabs-shell a,
+  .workspace-shell[data-client-type="desktop"] .workspace-side-tab-rail button,
+  .workspace-shell[data-client-type="desktop"] .workspace-side-tab-rail a,
+  .workspace-shell[data-client-type="desktop"] .chat-project-header button,
+  .workspace-shell[data-client-type="desktop"] .chat-project-header a,
+  .workspace-shell[data-client-type="desktop"] .entry-main__topbar button,
+  .workspace-shell[data-client-type="desktop"] .entry-main__topbar a,
+  .workspace-shell[data-client-type="desktop"] .entry-main__topbar [role="button"] {
+    -webkit-app-region: no-drag;
+  }
+  .workspace-shell[data-client-type="desktop"] .entry-main__topbar {
+    padding-left: 96px !important;
+  }
+  .workspace-shell[data-client-type="desktop"] .entry-nav-rail.is-open {
+    padding-top: 44px !important;
+  }
+  .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .entry-nav-rail.is-open {
+    padding-top: 8px !important;
   }
   .modal-backdrop,
   .modal-backdrop *,
@@ -799,12 +862,24 @@ const MAC_WINDOW_CHROME_CSS = `
   .workspace-tabs-popover * {
     -webkit-app-region: no-drag;
   }
-  /* Dedicated drag bar for macOS: covers the 36px traffic-light zone so the
-   * empty area to the right of the red/yellow/green buttons is draggable.
+  .workspace-shell[data-client-type="desktop"] .split.split-edit-focus .viewer-toolbar {
+    padding-left: 104px !important;
+    -webkit-app-region: drag;
+  }
+  .workspace-shell[data-client-type="desktop"][data-od-fullscreen="1"] .split.split-edit-focus .viewer-toolbar {
+    padding-left: 14px !important;
+  }
+  .workspace-shell[data-client-type="desktop"] .split.split-edit-focus .viewer-toolbar > * {
+    -webkit-app-region: no-drag;
+  }
+  /* Dedicated drag bar for macOS: covers only the traffic-light cluster so
+   * the rest of the renderer can start at y=0 without losing click targets.
    * Implemented as a real DOM element because -webkit-app-region: drag does
    * not work reliably on pseudo-elements. Hidden in fullscreen. */
   .macos-drag-bar {
     -webkit-app-region: drag;
+    right: auto !important;
+    width: 96px !important;
   }
 `;
 

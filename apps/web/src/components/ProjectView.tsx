@@ -263,6 +263,7 @@ interface Props {
   ) => void;
   onRefreshAgents: () => void;
   onThemeChange?: (theme: AppConfig['theme']) => void;
+  onAccentColorChange?: (color: string) => void;
   onOpenSettings: (section?: SettingsSection) => void;
   onOpenAmrSettings?: () => void;
   onOpenMcpSettings?: () => void;
@@ -306,7 +307,7 @@ const UNBOUNDED_PANEL_WIDTH = Number.MAX_SAFE_INTEGER;
 const MIN_CHAT_PANEL_WIDTH = 0;
 const COMMENT_INSPECTOR_PANEL_WIDTH = 320;
 const MIN_WORKSPACE_PANEL_WIDTH = 0;
-const SPLIT_RESIZE_HANDLE_WIDTH = 8;
+const SPLIT_RESIZE_HANDLE_WIDTH = 1;
 const CHAT_PANEL_KEYBOARD_STEP = 16;
 const DESIGN_SYSTEM_AUDIT_AUTO_REPAIR_ATTEMPTS = 2;
 // Trailing-debounce window for the canonical (daemon + SQLite) tab-state write.
@@ -623,7 +624,13 @@ function appendLiveArtifactEventItem(
   return next.length > 50 ? next.slice(next.length - 50) : next;
 }
 
-export function projectSplitClassName(workspaceFocused: boolean): string {
+export function projectSplitClassName(
+  workspaceFocused: boolean,
+  chatFocused = false,
+  editFocused = false,
+): string {
+  if (editFocused) return 'split split-edit-focus';
+  if (chatFocused) return 'split split-chat-focus';
   return workspaceFocused ? 'split split-focus' : 'split';
 }
 
@@ -655,8 +662,10 @@ export function projectSplitStyle(
   workspaceFocused: boolean,
   chatPanelWidth: number,
   workspacePanelTrack: string,
+  chatFocused = false,
+  editFocused = false,
 ): ProjectSplitStyle | undefined {
-  if (workspaceFocused) return undefined;
+  if (workspaceFocused || chatFocused || editFocused) return undefined;
   // 第三列用 minmax(0, <width>) 而非固定 <width>px，否则子元素（编辑面板内容）
   // 的 min-content 会把列撑到超出指定宽度，导致编辑面板不是预期的固定宽度。
   return {
@@ -776,6 +785,7 @@ export function ProjectView({
   onAgentModelChange,
   onRefreshAgents,
   onThemeChange,
+  onAccentColorChange,
   onOpenSettings,
   onOpenAmrSettings,
   onOpenMcpSettings,
@@ -889,6 +899,8 @@ export function ProjectView({
   const [liveArtifacts, setLiveArtifacts] = useState<LiveArtifactSummary[]>([]);
   const [liveArtifactEvents, setLiveArtifactEvents] = useState<LiveArtifactEventItem[]>([]);
   const [workspaceFocused, setWorkspaceFocused] = useState(false);
+  const [chatFocused, setChatFocused] = useState(false);
+  const [editFocused, setEditFocused] = useState(false);
   const [workspaceSideTab, setWorkspaceSideTab] = useState<'chat' | 'edit'>('chat');
   const [editPanelAvailable, setEditPanelAvailable] = useState(false);
   const [editSelectionActive, setEditSelectionActive] = useState(false);
@@ -897,6 +909,7 @@ export function ProjectView({
     if (!active) {
       setEditSelectionActive(false);
       setWorkspaceSideTab('chat');
+      setEditFocused(false);
     }
   }, []);
   const handleEditSelectionChange = useCallback((active: boolean) => {
@@ -908,6 +921,37 @@ export function ProjectView({
       // switched to the chat tab) should not force the tab back.
       setWorkspaceSideTab((prev) => prev === 'chat' ? 'edit' : prev);
     }
+  }, []);
+  const handleWorkspaceFocusModeChange = useCallback((focused: boolean) => {
+    setWorkspaceFocused(focused);
+    if (focused) {
+      setChatFocused(false);
+      setEditFocused(false);
+    }
+  }, []);
+  const handleToggleChatFocus = useCallback(() => {
+    if (workspaceSideTab === 'edit') {
+      setEditFocused((focused) => {
+        const next = !focused;
+        if (next) {
+          setWorkspaceFocused(false);
+          setChatFocused(false);
+        }
+        return next;
+      });
+      return;
+    }
+    setEditFocused(false);
+    setChatFocused((focused) => {
+      const next = !focused;
+      if (next) setWorkspaceFocused(false);
+      return next;
+    });
+  }, [workspaceSideTab]);
+  const handleCollapseChat = useCallback(() => {
+    setChatFocused(false);
+    setEditFocused(false);
+    setWorkspaceFocused(true);
   }, []);
   const [commentInspectorActive, setCommentInspectorActive] = useState(false);
   const handleCommentModeChange = useCallback((active: boolean) => {
@@ -5424,6 +5468,8 @@ export function ProjectView({
       placement="up"
     />
   );
+  const sidePanelFocused = chatFocused || editFocused;
+  const sidePanelExpandLabel = sidePanelFocused ? '恢复工作区' : '放大';
 
   return (
     <div className="app">
@@ -5529,11 +5575,12 @@ export function ProjectView({
       <div
         ref={splitRef}
         className={[
-          projectSplitClassName(workspaceFocused),
-          leftInspectorActive && !workspaceFocused ? 'split-manual-edit' : '',
-          resizingChatPanel && !workspaceFocused ? 'is-resizing-chat' : '',
+          projectSplitClassName(workspaceFocused, chatFocused, editFocused),
+          editFocused ? 'split-edit-immersive' : '',
+          leftInspectorActive && !workspaceFocused && !chatFocused && !editFocused ? 'split-manual-edit' : '',
+          resizingChatPanel && !workspaceFocused && !chatFocused && !editFocused ? 'is-resizing-chat' : '',
         ].filter(Boolean).join(' ')}
-        style={projectSplitStyle(workspaceFocused, splitLeftPanelWidth, workspacePanelTrack)}
+        style={projectSplitStyle(workspaceFocused, splitLeftPanelWidth, workspacePanelTrack, chatFocused, editFocused)}
       >
         <div className="split-chat-slot" hidden={workspaceFocused}>
           {commentInspectorActive ? (
@@ -5544,11 +5591,11 @@ export function ProjectView({
             />
           ) : (
             <div className="workspace-side-panel-shell">
-              {editPanelAvailable ? (
+              <div className='workspace-side-tab-rail' data-active={workspaceSideTab}>
                 <div
-                  className="workspace-side-tab-rail"
+                  className="workspace-side-tabs"
                   role="tablist"
-                  aria-label={`${t('chat.tabChat')} / ${t('fileViewer.edit')}`}
+                  aria-label={editPanelAvailable ? `${t('chat.tabChat')} / ${t('fileViewer.edit')}` : t('chat.tabChat')}
                 >
                   <button
                     type="button"
@@ -5558,29 +5605,62 @@ export function ProjectView({
                     aria-label={t('chat.tabChat')}
                     aria-selected={workspaceSideTab === 'chat'}
                     title={t('chat.tabChat')}
-                    onClick={() => setWorkspaceSideTab('chat')}
+                    onClick={() => {
+                      setWorkspaceSideTab('chat');
+                      setEditFocused(false);
+                    }}
                   >
                     <Icon name="comment" size={14} />
                     <span>{t('chat.tabChat')}</span>
                   </button>
+                  {editPanelAvailable ? (
+                    <button
+                      type="button"
+                      className="workspace-side-tab"
+                      role="tab"
+                      data-testid="workspace-side-tab-edit"
+                      aria-label={t('fileViewer.edit')}
+                      aria-selected={workspaceSideTab === 'edit'}
+                      title={t('fileViewer.edit')}
+                      onClick={() => {
+                        setWorkspaceSideTab('edit');
+                        setChatFocused(false);
+                      }}
+                    >
+                      <Icon name="edit" size={14} />
+                      <span>{t('fileViewer.edit')}</span>
+                    </button>
+                  ) : null}
+                </div>
+                <div className="workspace-side-panel-actions" aria-label="Chat panel controls">
                   <button
                     type="button"
-                    className="workspace-side-tab"
-                    role="tab"
-                    data-testid="workspace-side-tab-edit"
-                    aria-label={t('fileViewer.edit')}
-                    aria-selected={workspaceSideTab === 'edit'}
-                    title={t('fileViewer.edit')}
-                    onClick={() => setWorkspaceSideTab('edit')}
+                    className={`chat-project-back chat-project-expand od-tooltip${sidePanelFocused ? ' is-active' : ''}`}
+                    onClick={handleToggleChatFocus}
+                    title={sidePanelExpandLabel}
+                    data-tooltip={sidePanelExpandLabel}
+                    data-tooltip-placement="bottom"
+                    aria-label={sidePanelExpandLabel}
+                    aria-pressed={sidePanelFocused}
                   >
-                    <Icon name="edit" size={14} />
-                    <span>{t('fileViewer.edit')}</span>
+                    <Icon name="panel-expand" size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-project-back chat-project-collapse od-tooltip"
+                    onClick={handleCollapseChat}
+                    title="收起对话面板"
+                    data-tooltip="收起对话面板"
+                    data-tooltip-placement="bottom"
+                    aria-label="收起对话面板"
+                  >
+                    <Icon name="panel-right" size={16} />
                   </button>
                 </div>
-              ) : null}
+              </div>
               <div className="workspace-side-panel-content">
                 <div
-                  className="workspace-side-panel-view workspace-side-chat-view"
+                  className="workspace-side-panel-view workspace-side-chat-view "
                   data-testid="workspace-side-chat-view"
                   hidden={workspaceSideTab !== 'chat'}
                 >
@@ -5698,8 +5778,6 @@ export function ProjectView({
               onShowToast={(message) => {
                 setProjectActionsToast({ message, details: null });
               }}
-              onCollapseChat={() => setWorkspaceFocused(true)}
-              collapseChatLabel="Hide chat"
               composerFooterAccessory={executionControls}
               projectHeader={(
                 <span className="chat-project-title-line">
@@ -5752,7 +5830,7 @@ export function ProjectView({
             </div>
           )}
         </div>
-        {!workspaceFocused && !editPanelFixed ? (
+        {!workspaceFocused && !chatFocused && !editFocused && !editPanelFixed ? (
           leftInspectorActive ? (
             <div className="split-edit-divider" aria-hidden />
           ) : (
@@ -5809,8 +5887,9 @@ export function ProjectView({
           onRequestBrowserUsePrompt={handleBrowserUsePrompt}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
           activePluginActionPaths={activePluginActionPaths}
+          sideTreeOnly={chatFocused}
           focusMode={workspaceFocused}
-          onFocusModeChange={setWorkspaceFocused}
+          onFocusModeChange={handleWorkspaceFocusModeChange}
           designSystemProject={designSystemProject}
           defaultDesignSystemId={config.designSystemId}
           onSetDefaultDesignSystem={onChangeDefaultDesignSystem}
@@ -5854,11 +5933,6 @@ export function ProjectView({
                 fileName={downloadTargetFile?.name}
                 fileKind={downloadTargetFile?.kind}
               />
-              <EntrySettingsMenu
-                config={config}
-                onThemeChange={handleThemeChange}
-                onOpenSettings={onOpenSettings}
-              />
               <HandoffButton
                 projectId={project.id}
                 projectName={project.name}
@@ -5866,6 +5940,17 @@ export function ProjectView({
                 agents={agents}
               />
             </>
+          )}
+          sidebarFooter={(
+            <EntrySettingsMenu
+              config={config}
+              onThemeChange={handleThemeChange}
+              onModeChange={onModeChange}
+              onAccentColorChange={onAccentColorChange}
+              onOpenSettings={onOpenSettings}
+              showButtonLabel
+              variant="project"
+            />
           )}
           questionForm={displayedQuestionForm}
           questionFormPreview={displayedQuestionFormPreview}

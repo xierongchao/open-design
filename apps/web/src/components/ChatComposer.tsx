@@ -2499,8 +2499,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 title={t('chat.send')}
                 data-tooltip={t('chat.send')}
               >
-                <Icon name="send" size={13} />
-                <span>{t('chat.send')}</span>
+                <Icon name="arrow-up" size={15} />
               </button>
             ) : null}
           </div>

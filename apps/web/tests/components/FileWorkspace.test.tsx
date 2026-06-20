@@ -415,7 +415,9 @@ describe('FileWorkspace upload input', () => {
       expect(screen.getByTestId('design-files-inline-preview')).toBeTruthy();
       expect(screen.getByTestId('mock-grapesjs-editor')).toBeTruthy();
     });
-    expect(screen.getByRole('tab', { name: 'Design Files' }).getAttribute('aria-selected')).toBe('true');
+    const designFilesTab = screen.getByTestId('design-files-tab');
+    expect(designFilesTab.getAttribute('aria-selected')).toBe('true');
+    expect(designFilesTab.textContent).toContain('index.html');
     expect(screen.getByTestId('design-file-row-index.html')).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Edit mode' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Code' })).toBeTruthy();
@@ -962,6 +964,30 @@ describe('FileWorkspace upload input', () => {
       );
     });
     expect(onUploadFiles).not.toHaveBeenCalled();
+  });
+
+  it('adds image path copy and open-folder actions to file row menus', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', {
+      ...globalThis.navigator,
+      clipboard: { writeText },
+    });
+    renderDesignFilesPanel({
+      files: [baseFile({ name: 'assets/hero.png', path: 'assets/hero.png', kind: 'image' })],
+    });
+
+    fireEvent.click(screen.getByTestId('design-folder-row-assets').querySelector('.df-tree-toggle')!);
+    fireEvent.click(screen.getByTestId('design-file-menu-assets/hero.png'));
+    fireEvent.click(screen.getByRole('button', { name: /copy path/i }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining('/api/projects/project-1/raw/assets/hero.png'),
+    ));
+
+    fireEvent.click(screen.getByTestId('design-file-menu-assets/hero.png'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open folder' }));
+
+    expect(document.querySelector('.df-tree-toolbar-path')?.textContent).toContain('assets');
   });
 
   it('hides the workspace focus control while the chat pane is open', () => {
@@ -2104,15 +2130,19 @@ describe('projectSplitClassName', () => {
   it('marks the project split as focused so the chat pane can collapse globally', () => {
     expect(projectSplitClassName(false)).toBe('split');
     expect(projectSplitClassName(true)).toBe('split split-focus');
+    expect(projectSplitClassName(false, true)).toBe('split split-chat-focus');
+    expect(projectSplitClassName(false, false, true)).toBe('split split-edit-focus');
   });
 
   it('uses CSS variables for split widths so pointer resize can update layout without rerendering workspace content', () => {
     expect(projectSplitStyle(false, 512, 'minmax(420px, 1fr)')).toEqual({
       '--project-chat-panel-width': '512px',
       '--project-workspace-panel-track': 'minmax(420px, 1fr)',
-      gridTemplateColumns: 'minmax(420px, 1fr) 8px 512px',
+      gridTemplateColumns: 'minmax(420px, 1fr) 1px minmax(0, 512px)',
     });
     expect(projectSplitStyle(true, 512, 'minmax(420px, 1fr)')).toBeUndefined();
+    expect(projectSplitStyle(false, 512, 'minmax(420px, 1fr)', true)).toBeUndefined();
+    expect(projectSplitStyle(false, 512, 'minmax(420px, 1fr)', false, true)).toBeUndefined();
   });
 });
 
@@ -2434,8 +2464,8 @@ describe('FileWorkspace add-module menu', () => {
       />,
     );
 
-    const addButton = screen.getByTestId('workspace-add-tab');
     for (let i = 0; i < 3; i += 1) {
+      const addButton = screen.getByTestId('workspace-add-tab');
       act(() => {
         fireEvent.click(addButton);
       });
