@@ -9441,7 +9441,7 @@ function HtmlViewer({
           data-tooltip-placement="top"
           onClick={activateGrapesjsCursorTool}
         >
-          <RemixIcon name="cursor-line" size={16} />
+          <span className="grapesjs-tool-cursor-icon" aria-hidden="true" />
         </button>
         <div className="grapesjs-bottom-menu-anchor">
           <button

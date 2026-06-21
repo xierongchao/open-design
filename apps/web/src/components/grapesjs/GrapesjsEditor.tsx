@@ -1573,6 +1573,37 @@ function directComponentChildren(parent: Component): Component[] {
   return out;
 }
 
+/**
+ * Resolve the direct child components of `parent` for dissolve/auto-layout
+ * teardown. `parent.components()` is the model tree, but in the real GrapesJS
+ * canvas the model tree and the rendered DOM tree can drift out of sync — a
+ * flex wrapper can render 3 modeled child `<div>`s (each carrying a `__gjsv`
+ * view marker) while `wrapper.components()` returns 0, because the children's
+ * model-parent points elsewhere. Dissolving from the empty model list then
+ * nukes the wrapper and deletes every DOM child with it ("子元素会消失掉").
+ *
+ * The DOM is the source of truth for what the user sees, so when the model
+ * tree comes back empty we fall back to the wrapper's direct DOM children and
+ * resolve each back to its component through the GrapesJS view marker. The
+ * result is deduplicated and kept in DOM order so the dissolved children land
+ * in their visual sequence.
+ */
+function dissolveChildComponents(parent: Component): Component[] {
+  const modelChildren = directComponentChildren(parent);
+  if (modelChildren.length > 0) return modelChildren;
+  const wrapperEl = getElementFromComponent(parent) as HTMLElement | null;
+  if (!wrapperEl) return [];
+  const out: Component[] = [];
+  const seen = new Set<Component>();
+  for (const node of Array.from(wrapperEl.children)) {
+    const comp = getComponentFromElement(node as Element | null);
+    if (!comp || seen.has(comp)) continue;
+    seen.add(comp);
+    out.push(comp);
+  }
+  return out;
+}
+
 export type GrapesjsComponentClipboardState = {
   components: Component[];
   cut: boolean;
@@ -1889,21 +1920,34 @@ export function dissolveGrapesjsFlexSelection(editor: GrapesjsEditorInstance): b
   const isLayout = display === 'flex' || display === 'inline-flex' || display === 'grid' || display === 'inline-grid';
   if (!isAutoLayoutWrapper || !isLayout) return false;
   const containerIndex = directComponentIndex(parent, selected);
-  const children = directComponentChildren(selected);
+  // Resolve children from the DOM when the model tree is out of sync with the
+  // rendered DOM (wrapper.components() can return 0 while the wrapper's element
+  // holds modeled child <div>s — see `dissolveChildComponents`).
+  const children = dissolveChildComponents(selected);
   const childBoxes = new Map<Component, GrapesjsComponentBox>();
   for (const child of children) {
     const box = componentBox(child, parentRect);
     if (box) childBoxes.set(child, box);
   }
   let insertAt = containerIndex >= 0 ? containerIndex : parent.components().length;
+  let movedCount = 0;
   for (const child of children.slice()) {
     try {
       child.move(parent, { at: insertAt });
       insertAt += 1;
+      movedCount += 1;
       const box = childBoxes.get(child);
       if (!box) continue;
+      // Clear flex sizing props so the explicit width/height below are the
+      // single source of truth — a leftover `flex-basis`/`flex` from the flex
+      // child can fight the absolute box and collapse the element. Mirrors
+      // `detachFlexChildToAbsolute`.
+      const nextStyle = getComponentStyleRecord(child);
+      delete nextStyle['flex-basis'];
+      delete nextStyle.flexBasis;
+      delete nextStyle.flex;
       child.setStyle?.({
-        ...getComponentStyleRecord(child),
+        ...nextStyle,
         position: 'absolute',
         left: `${Math.round(box.left)}px`,
         top: `${Math.round(box.top)}px`,
@@ -1912,6 +1956,12 @@ export function dissolveGrapesjsFlexSelection(editor: GrapesjsEditorInstance): b
       } as Parameters<typeof child.setStyle>[0]);
       setComponentAttributes(child, { 'data-od-position-mode': 'absolute' });
     } catch { /* ignore */ }
+  }
+  // Only tear down the wrapper once every child was re-parented. If moving
+  // failed (or there were no children to begin with), removing the wrapper
+  // would delete its DOM children along with it — the "子元素会消失掉" symptom.
+  if (children.length > 0 && movedCount !== children.length) {
+    return false;
   }
   try {
     selected.remove();
@@ -5362,6 +5412,23 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               } catch {
                 // ignore
               }
+            }
+            // Shift+Cmd/Ctrl+G: dissolve the selected flex/grid container.
+            // Mirrors the canvas-document handler so the shortcut works whether
+            // focus is in the host window or inside the canvas iframe — the
+            // other canvas shortcuts (clipboard/arrange) are wired into both
+            // surfaces, and dissolve must be too, otherwise Cmd+Shift+G is a
+            // no-op whenever the iframe hasn't received focus yet.
+            if (!readOnlyRef.current && ev.shiftKey && (ev.metaKey || ev.ctrlKey) && (ev.key === 'g' || ev.key === 'G')) {
+              if (isTextInputTarget(ev.target)) return;
+              try {
+                ev.preventDefault();
+                if (dissolveGrapesjsFlexSelection(editor)) {
+                  refreshSelectionSnapshotRef.current?.();
+                  scheduleEmitRef.current?.();
+                }
+              } catch { /* ignore */ }
+              return;
             }
           };
           const onKeyUpCanvas = (ev: KeyboardEvent) => {

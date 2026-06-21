@@ -726,6 +726,147 @@ describe('GrapesjsEditor flex auto-layout dissolve', () => {
     expect(parent.components().get(0)).toBe(child);
   });
 
+  it('dissolves a fit-content absolute flex wrapper and keeps each child at its screen position', () => {
+    // Mirrors the real Shift+A output: an absolute `position:absolute` flex
+    // wrapper sized `fit-content`, holding flow children. On dissolve each
+    // child must land at its current screen position (body-relative), keep
+    // its rendered size, and shed flex-basis so width/height drive the box.
+    const canvasBody = {
+      nodeType: 1,
+      getBoundingClientRect: () => fakeDomRect(0, 0, 1280, 800),
+    } as HTMLElement;
+    const parent = fakeComponent({ rect: fakeDomRect(0, 0, 1280, 800) });
+    const wrapper = fakeComponent({
+      attrs: {
+        'data-od-auto-layout-wrapper': 'true',
+        'data-od-position-mode': 'absolute',
+      },
+      style: {
+        display: 'flex',
+        'flex-direction': 'row',
+        gap: '8px',
+        width: 'fit-content',
+        height: 'fit-content',
+        position: 'absolute',
+        left: '120px',
+        top: '90px',
+      },
+      rect: fakeDomRect(120, 90, 200, 60),
+    });
+    const first = fakeComponent({
+      attrs: {
+        'data-od-canvas-tool': 'rectangle',
+        'data-od-position-mode': 'flow',
+      },
+      style: { width: '96px', height: '60px', 'flex-basis': '96px' },
+      rect: fakeDomRect(120, 90, 96, 60),
+    });
+    const second = fakeComponent({
+      attrs: {
+        'data-od-canvas-tool': 'rectangle',
+        'data-od-position-mode': 'flow',
+      },
+      style: { width: '96px', height: '60px', 'flex-basis': '96px' },
+      rect: fakeDomRect(224, 90, 96, 60),
+    });
+    wrapper.move(parent);
+    first.move(wrapper);
+    second.move(wrapper);
+
+    expect(dissolveGrapesjsFlexSelection({
+      getSelected: () => wrapper,
+      select: vi.fn(),
+      Canvas: { getDocument: () => ({ body: canvasBody, documentElement: canvasBody }) },
+    } as never)).toBe(true);
+
+    expect(first.getStyle()).toMatchObject({
+      position: 'absolute',
+      left: '120px',
+      top: '90px',
+      width: '96px',
+      height: '60px',
+    });
+    expect(first.getStyle()['flex-basis']).toBeUndefined();
+    expect(second.getStyle()).toMatchObject({
+      position: 'absolute',
+      left: '224px',
+      top: '90px',
+      width: '96px',
+      height: '60px',
+    });
+    expect(second.getStyle()['flex-basis']).toBeUndefined();
+  });
+
+  it('dissolves children resolved from the DOM when the model tree is out of sync', () => {
+    // Real GrapesJS can render modeled child <div>s inside a flex wrapper
+    // while wrapper.components() returns 0 (the children's model-parent points
+    // elsewhere). Dissolving from the empty model list used to remove the
+    // wrapper and delete every DOM child with it. The fix resolves children
+    // from the wrapper's DOM element via the __gjsv view marker.
+    const canvasBody = {
+      nodeType: 1,
+      getBoundingClientRect: () => fakeDomRect(0, 0, 1920, 0),
+    } as HTMLElement;
+    const parent = fakeComponent({ rect: fakeDomRect(0, 0, 1920, 0) });
+    // Wrapper whose components() is intentionally empty (model desync) but
+    // whose DOM element holds two modeled children.
+    const wrapperEl = {
+      nodeType: 1,
+      children: [] as HTMLElement[],
+      getBoundingClientRect: () => fakeDomRect(192, 144, 800, 255),
+    } as unknown as HTMLElement;
+    const wrapper = fakeComponent({
+      attrs: {
+        'data-od-auto-layout-wrapper': 'true',
+        'data-od-position-mode': 'absolute',
+      },
+      style: { display: 'flex', position: 'absolute', left: '192px', top: '144px' },
+      el: wrapperEl,
+      rect: fakeDomRect(192, 144, 800, 255),
+    });
+    const first = fakeComponent({
+      attrs: { 'data-od-canvas-tool': 'rectangle', 'data-od-position-mode': 'flow' },
+      style: { width: '178px', height: '255px' },
+      rect: fakeDomRect(192, 144, 178, 255),
+    });
+    const second = fakeComponent({
+      attrs: { 'data-od-canvas-tool': 'rectangle', 'data-od-position-mode': 'flow' },
+      style: { width: '195px', height: '206px' },
+      rect: fakeDomRect(450, 144, 195, 206),
+    });
+    // Attach modeled DOM children to the wrapper element. getComponentFromElement
+    // climbs the __gjsv marker; attach it directly on each child node.
+    const firstEl = { nodeType: 1, __gjsv: { model: first }, getBoundingClientRect: () => fakeDomRect(192, 144, 178, 255) } as unknown as HTMLElement;
+    const secondEl = { nodeType: 1, __gjsv: { model: second }, getBoundingClientRect: () => fakeDomRect(450, 144, 195, 206) } as unknown as HTMLElement;
+    (wrapperEl as unknown as { children: HTMLElement[] }).children = [firstEl, secondEl];
+    // Model tree: wrapper is a child of parent, but its components() is empty
+    // (the children's model-parent is `parent`, not `wrapper`) — the desync.
+    wrapper.move(parent);
+    first.move(parent);
+    second.move(parent);
+
+    expect(dissolveGrapesjsFlexSelection({
+      getSelected: () => wrapper,
+      select: vi.fn(),
+      Canvas: { getDocument: () => ({ body: canvasBody, documentElement: canvasBody }) },
+    } as never)).toBe(true);
+
+    expect(first.getStyle()).toMatchObject({
+      position: 'absolute',
+      left: '192px',
+      top: '144px',
+      width: '178px',
+      height: '255px',
+    });
+    expect(second.getStyle()).toMatchObject({
+      position: 'absolute',
+      left: '450px',
+      top: '144px',
+      width: '195px',
+      height: '206px',
+    });
+  });
+
   it('restores flow wrapper children to absolute positioning when dissolving auto-layout', () => {
     const parent = fakeComponent({ rect: fakeDomRect(0, 0, 800, 600) });
     const wrapper = fakeComponent({

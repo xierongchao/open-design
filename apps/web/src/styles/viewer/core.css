@@ -262,6 +262,24 @@ html.od-export-capture-active .od-toast {
   border-color: var(--accent);
   color: #fff;
 }
+/* Cursor tool icon — a masked silhouette of the custom pointer SVG so it
+   inherits the button's `color` (theme- and state-aware: --text-muted idle,
+   --text on hover, #fff / --accent-strong when active) instead of shipping a
+   fixed black/white glyph. `currentColor` keeps it readable in light/dark.
+   `mask-mode: alpha` is essential: the default `match-source` resolves to
+   *luminance* for SVG, where black geometry is treated as transparent and
+   only the green background bleeds through. Alpha mode keys on opacity, so
+   the solid-black path shows as the current-color silhouette. */
+.grapesjs-tool-cursor-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask: url('/cursor-default-icon.svg') no-repeat center / contain;
+  -webkit-mask-mode: alpha;
+  mask: url('/cursor-default-icon.svg') no-repeat center / contain;
+  mask-mode: alpha;
+}
 .grapesjs-bottom-tool-menu {
   gap: 1px;
 }
