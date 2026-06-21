@@ -66,7 +66,7 @@ export function reassembleDocument(
   bodyStyle?: Record<string, string>,
 ): string {
   const { head: cleanedHead, editorCssSeed } = removeSavedEditorCss(parsed.head);
-  const editorCss = mergeEditorCss(editorCssSeed, css);
+  const editorCss = pruneOrphanCssRules(mergeEditorCss(editorCssSeed, css), bodyHtml);
   const styleBlock = editorCss.trim()
     ? `<style ${EDITOR_CSS_STYLE_ATTR}="">\n${editorCss}\n</style>\n`
     : '';
@@ -251,6 +251,106 @@ function cssRules(css: string): Array<{ selector: string; declarations: string }
     rules.push({ selector: match[1]?.trim() ?? '', declarations: match[2] ?? '' });
   }
   return rules;
+}
+
+/**
+ * Collect the set of `id` attribute values and `data-od-id` attribute values
+ * that survive in the given body HTML. Used by `pruneOrphanCssRules` to decide
+ * which `#id` / `[data-od-id="..."]` rules still have a matching element.
+ *
+ * String-regex based (no DOM) so the helper stays a pure function usable in
+ * unit tests without a DOM environment.
+ */
+function collectSurvivingIds(bodyHtml: string): { ids: Set<string>; odIds: Set<string> } {
+  const ids = new Set<string>();
+  const odIds = new Set<string>();
+  if (!bodyHtml) return { ids, odIds };
+  const addAttrValues = (attr: string, target: Set<string>) => {
+    // Match both quoted (`id="x"`) and unquoted (`id=x`) attribute values.
+    const quoted = new RegExp(`\\s${attr}\\s*=\\s*(['"])([^'"]*?)\\1`, 'gi');
+    let qMatch: RegExpExecArray | null;
+    while ((qMatch = quoted.exec(bodyHtml)) !== null) {
+      const value = (qMatch[2] ?? '').trim();
+      if (value) target.add(value);
+    }
+    const unquoted = new RegExp(`\\s${attr}\\s*=\\s*([^\\s"'\\\`=<>]+)`, 'gi');
+    let uMatch: RegExpExecArray | null;
+    while ((uMatch = unquoted.exec(bodyHtml)) !== null) {
+      const value = (uMatch[1] ?? '').trim();
+      if (value) target.add(value);
+    }
+  };
+  addAttrValues('id', ids);
+  addAttrValues('data-od-id', odIds);
+  return { ids, odIds };
+}
+
+/**
+ * Drop CSS rules whose target element no longer exists in the body.
+ *
+ * GrapesJS auto-creates `#id` rules (and the inspect panel creates
+ * `[data-od-id="..."]` rules) when a component is styled. When that component
+ * is later deleted, GrapesJS leaves the rule orphaned in its CssComposer, and
+ * it round-trips into the saved file — accumulating dead selectors the user
+ * sees in code mode. This filters them out at save time.
+ *
+ * Conservative scope: only `#id` and `[data-od-id="..."]` selectors are
+ * considered for pruning. Class/tag/universal selectors are always kept
+ * (their "orphan" status can't be determined from the body string alone, and
+ * classes are frequently applied dynamically). Compound selectors (e.g.
+ * `#alive .child`) are kept only if they contain at least one surviving id /
+ * od-id fragment; otherwise kept (avoid over-pruning).
+ */
+export function pruneOrphanCssRules(css: string, bodyHtml: string): string {
+  if (!css || !css.trim()) return css;
+  const { ids, odIds } = collectSurvivingIds(bodyHtml);
+  const rules = cssRules(css);
+  const kept: Array<{ selector: string; declarations: string }> = [];
+  for (const rule of rules) {
+    if (ruleOrphaned(rule.selector, ids, odIds)) continue;
+    kept.push(rule);
+  }
+  if (kept.length === rules.length) return css;
+  return kept
+    .map(({ selector, declarations }) => `${selector}{${declarations}}`)
+    .join('\n');
+}
+
+function ruleOrphaned(selectorText: string, ids: Set<string>, odIds: Set<string>): boolean {
+  // Split comma-separated selector lists and prune per-simple-selector.
+  // A rule is orphaned only if EVERY comma branch is orphaned; if any branch
+  // survives (e.g. `#alive, #deleted`), keep the whole rule to avoid losing
+  // the surviving declaration.
+  const branches = selectorText.split(',').map((s) => s.trim()).filter(Boolean);
+  if (branches.length === 0) return false;
+  return branches.every((branch) => selectorBranchOrphaned(branch, ids, odIds));
+}
+
+function selectorBranchOrphaned(branch: string, ids: Set<string>, odIds: Set<string>): boolean {
+  let touched = false;
+  // Match every `#id` fragment in the branch.
+  const idMatches = branch.match(/#[\w-]+/g) ?? [];
+  for (const fragment of idMatches) {
+    touched = true;
+    const id = fragment.slice(1);
+    if (ids.has(id)) return false;
+  }
+  // Match every `[data-od-id="..."]` fragment, quoted or unquoted.
+  const odIdQuoted = /\[data-od-id\s*=\s*(['"])([^'"]*?)\1\]/gi;
+  let odMatch: RegExpExecArray | null;
+  while ((odMatch = odIdQuoted.exec(branch)) !== null) {
+    touched = true;
+    if (odIds.has((odMatch[2] ?? '').trim())) return false;
+  }
+  const odIdUnquoted = /\[data-od-id\s*=\s*([^\s'"\]]+)\]/gi;
+  let odUnquotedMatch: RegExpExecArray | null;
+  while ((odUnquotedMatch = odIdUnquoted.exec(branch)) !== null) {
+    touched = true;
+    if (odIds.has((odUnquotedMatch[1] ?? '').trim())) return false;
+  }
+  // Only declare orphaned when this branch actually targeted an id/od-id that
+  // is absent. Branches with no id/od-id (class/tag) are never pruned here.
+  return touched;
 }
 
 function selectorTargetsBody(selectorText: string): boolean {

@@ -21,6 +21,7 @@ import {
   extractSavedEditorCss,
   normalizeCanvasBodyHtml,
   parseHtmlDocument,
+  pruneOrphanCssRules,
   readCanvasBodyStyleOverrides,
   reassembleDocument,
   resolveCanvasBodyAssetUrls,
@@ -39,11 +40,18 @@ import {
   replaceColorsInSelection,
 } from './grapesjs-selection-colors';
 import { renderGrapesjsIconSvg, type GrapesjsIconInsertInput } from './icon-library';
-import { exposeOpenDesignEditorDiagnosticsToWindow } from '../../diagnostics/editor-diagnostics';
+import {
+  exposeOpenDesignEditorDiagnosticsToWindow,
+  recordOpenDesignEditorDiagnostic,
+} from '../../diagnostics/editor-diagnostics';
 import styles from './GrapesjsEditor.module.css';
 
 function readOdIdFromComponent(comp: unknown): string | null {
   return getOdIdFromComponent(comp as Component);
+}
+
+function recordGrapesjsEditorDiagnostic(name: string, detail?: unknown): void {
+  recordOpenDesignEditorDiagnostic(`grapesjs:${name}`, detail);
 }
 
 /**
@@ -497,6 +505,31 @@ export function getGrapesjsCanvasToolDragStyle(
   return basePlacedStyle(start, width, height, mode);
 }
 
+/**
+ * Default size (px) for a placeable canvas tool, used when the user clicks
+ * without dragging (a tap creates a default-sized element rather than the
+ * 0×0 the drag-draw insertion starts at). Mirrors the per-tool defaults in
+ * `appendGrapesjsCanvasToolComponent`.
+ */
+export function getGrapesjsCanvasToolDefaultSize(tool: GrapesjsPlaceableCanvasTool): { width: number; height: number } {
+  switch (tool) {
+    case 'circle': return { width: 112, height: 112 };
+    case 'line': return { width: 180, height: 2 };
+    case 'rectangle': return { width: 160, height: 96 };
+    default: return { width: 160, height: 96 };
+  }
+}
+
+/** Style patch giving a placeable tool its default size at `start`. */
+export function getGrapesjsCanvasToolDefaultStyle(
+  tool: GrapesjsPlaceableCanvasTool,
+  start: GrapesjsCanvasPoint,
+  mode: GrapesjsCanvasPlacementMode = 'absolute',
+): Record<string, string> {
+  const { width, height } = getGrapesjsCanvasToolDefaultSize(tool);
+  return basePlacedStyle(start, width, height, mode);
+}
+
 export type GrapesjsRadiusCorner = 'tl' | 'tr' | 'bl' | 'br';
 
 export function calculateGrapesjsCornerRadiusFromPointer(input: {
@@ -708,6 +741,32 @@ function getComponentAttributes(comp: Component | null | undefined): Record<stri
   try { return comp?.getAttributes?.() ?? {}; } catch { return {}; }
 }
 
+function componentDiagnosticId(comp: Component | null | undefined): string | null {
+  if (!comp) return null;
+  const attrs = getComponentAttributes(comp);
+  const idAttr = typeof attrs['id'] === 'string' ? attrs['id'] : null;
+  const odIdAttr = typeof attrs['data-od-id'] === 'string' ? attrs['data-od-id'] : null;
+  return getOdIdFromComponent(comp) ?? idAttr ?? odIdAttr ?? '<no-od-id>';
+}
+
+/**
+ * Resolve the canvas root wrapper component (the single component under the
+ * GrapesJS body). Used as the attachment point for cross-parent operations
+ * like wrapping scattered absolute elements into one new flex container.
+ */
+function getRootWrapperComponent(editor: GrapesjsEditorInstance): Component | null {
+  try {
+    return (
+      editor.getWrapper?.() ??
+      editor.Components?.getWrapper?.() ??
+      editor.Components?.getComponents?.().get?.(0) ??
+      null
+    ) as Component | null;
+  } catch {
+    return null;
+  }
+}
+
 function setComponentAttributes(comp: Component, patch: Record<string, string>): void {
   try {
     comp.setAttributes?.({ ...getComponentAttributes(comp), ...patch });
@@ -782,12 +841,16 @@ export function applyGrapesjsCssStyleClipboardToComponents(
   let applied = false;
   for (const comp of targets) {
     try {
+      // Merge the pasted props onto the component's existing style record so
+      // the paste persists (comp.setStyle updates the model; the live DOM
+      // element is mirrored too). Do NOT schedule clearGrapesjsManagedInlineStyle
+      // here — that helper strips the very props we just wrote, so a paste
+      // applied, then vanished on the next animation frame ("没有效果").
       comp.setStyle?.({
         ...getComponentStyleRecord(comp),
         ...clipboardStyles,
       } as Parameters<typeof comp.setStyle>[0]);
       writeGrapesjsElementStyle(comp, clipboardStyles);
-      requestEditorAnimationFrame(() => clearGrapesjsManagedInlineStyle(comp, Object.keys(clipboardStyles)));
       applied = true;
     } catch { /* ignore */ }
   }
@@ -821,8 +884,48 @@ export function findGrapesjsPositionedDragComponent(comp: Component | null | und
   return null;
 }
 
+/**
+ * True when `comp` is a direct child of a flex/inline-flex container.
+ * Uses `readParentFlexInfo` so an external-CSS flex parent (Tailwind `.flex`,
+ * artifact `<style>`, etc.) is detected, not just inline-style flex.
+ */
+export function isGrapesjsFlexChildComponent(comp: Component | null | undefined): boolean {
+  const parent = comp?.parent?.();
+  if (!parent || parent === comp) return false;
+  const { display } = readParentFlexInfo(parent);
+  return display === 'flex' || display === 'inline-flex';
+}
+
+/**
+ * Resolve the flex container that owns `comp`, or null if `comp` is not a
+ * flex child. Mirrors `findGrapesjsPositionedDragComponent` but climbs to the
+ * flex parent rather than to an absolute ancestor.
+ */
+export function findGrapesjsFlexParentComponent(comp: Component | null | undefined): Component | null {
+  let node: Component | null | undefined = comp;
+  while (node) {
+    const parent = node.parent?.();
+    if (!parent || parent === node) return null;
+    const { display } = readParentFlexInfo(parent);
+    if (display === 'flex' || display === 'inline-flex') return parent;
+    node = parent;
+  }
+  return null;
+}
+
 function isGrapesjsAutoLayoutWrapper(comp: Component | null | undefined): boolean {
   return getComponentAttributes(comp)['data-od-auto-layout-wrapper'] === 'true';
+}
+
+function findGrapesjsAutoLayoutWrapperForDissolve(comp: Component | null | undefined): Component | null {
+  let node: Component | null | undefined = comp;
+  while (node) {
+    if (isGrapesjsAutoLayoutWrapper(node)) return node;
+    const parent = node.parent?.();
+    if (!parent || parent === node) break;
+    node = parent;
+  }
+  return null;
 }
 
 type GrapesjsLayoutAxis = 'row' | 'column';
@@ -837,6 +940,170 @@ type GrapesjsComponentBox = {
   right: number;
   bottom: number;
 };
+
+type GrapesjsClientRectLike =
+  Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>
+  & Partial<Pick<DOMRect, 'width' | 'height'>>;
+
+type GrapesjsFlexInsertChildEntry = {
+  comp: Component;
+  el: HTMLElement;
+};
+
+export function isPointInsideGrapesjsClientRect(
+  clientX: number,
+  clientY: number,
+  rect: GrapesjsClientRectLike,
+  tolerance = 4,
+): boolean {
+  return (
+    clientX >= rect.left - tolerance && clientX <= rect.right + tolerance
+    && clientY >= rect.top - tolerance && clientY <= rect.bottom + tolerance
+  );
+}
+
+export function resolveGrapesjsFlexInsertTarget<T>({
+  sourceParent,
+  sourceParentRect,
+  fallbackTarget,
+  clientX,
+  clientY,
+  tolerance = 4,
+}: {
+  sourceParent: T | null;
+  sourceParentRect: GrapesjsClientRectLike | null;
+  fallbackTarget: T | null;
+  clientX: number;
+  clientY: number;
+  tolerance?: number;
+}): T | null {
+  if (sourceParent && sourceParentRect && isPointInsideGrapesjsClientRect(clientX, clientY, sourceParentRect, tolerance)) {
+    return sourceParent;
+  }
+  return fallbackTarget;
+}
+
+function grapesjsRectAxisSize(rect: GrapesjsClientRectLike, axis: GrapesjsLayoutAxis): number {
+  const explicit = axis === 'row' ? rect.width : rect.height;
+  if (typeof explicit === 'number') return explicit;
+  return axis === 'row' ? rect.right - rect.left : rect.bottom - rect.top;
+}
+
+function grapesjsRectAxisCenter(rect: GrapesjsClientRectLike, axis: GrapesjsLayoutAxis): number {
+  return axis === 'row'
+    ? rect.left + grapesjsRectAxisSize(rect, axis) / 2
+    : rect.top + grapesjsRectAxisSize(rect, axis) / 2;
+}
+
+export function resolveGrapesjsFlexInsertIndexFromRects({
+  axis,
+  clientX,
+  clientY,
+  draggedRect,
+  childRects,
+}: {
+  axis: GrapesjsLayoutAxis;
+  clientX: number;
+  clientY: number;
+  draggedRect: GrapesjsClientRectLike | null;
+  childRects: GrapesjsClientRectLike[];
+}): number {
+  const measure = draggedRect && grapesjsRectAxisSize(draggedRect, axis) > 0
+    ? grapesjsRectAxisCenter(draggedRect, axis)
+    : (axis === 'row' ? clientX : clientY);
+  for (let i = 0; i < childRects.length; i += 1) {
+    const rect = childRects[i];
+    if (!rect || grapesjsRectAxisSize(rect, axis) <= 0) continue;
+    if (measure < grapesjsRectAxisCenter(rect, axis)) return i;
+  }
+  return childRects.length;
+}
+
+export function resolveGrapesjsPreviewRectFromDragItem({
+  item,
+  fallbackRect,
+  deltaLeft,
+  deltaTop,
+}: {
+  item: {
+    startLeft: number;
+    startTop: number;
+    pendingStyle: Record<string, string> | null;
+  } | null | undefined;
+  fallbackRect: GrapesjsClientRectLike | null;
+  deltaLeft?: number;
+  deltaTop?: number;
+}): GrapesjsClientRectLike | null {
+  if (!item || !fallbackRect) return fallbackRect;
+  const width = grapesjsRectAxisSize(fallbackRect, 'row');
+  const height = grapesjsRectAxisSize(fallbackRect, 'column');
+  if (width <= 0 || height <= 0) return fallbackRect;
+  const nextLeft = Number.parseFloat(item.pendingStyle?.left ?? '');
+  const nextTop = Number.parseFloat(item.pendingStyle?.top ?? '');
+  const resolvedDeltaLeft = typeof deltaLeft === 'number' && Number.isFinite(deltaLeft)
+    ? deltaLeft
+    : (Number.isFinite(nextLeft) ? nextLeft : item.startLeft) - item.startLeft;
+  const resolvedDeltaTop = typeof deltaTop === 'number' && Number.isFinite(deltaTop)
+    ? deltaTop
+    : (Number.isFinite(nextTop) ? nextTop : item.startTop) - item.startTop;
+  const left = fallbackRect.left + resolvedDeltaLeft;
+  const top = fallbackRect.top + resolvedDeltaTop;
+  return {
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+  };
+}
+
+export function resolveGrapesjsFlexInsertChildEntries({
+  target,
+  targetEl,
+  dragged,
+}: {
+  target: Component;
+  targetEl: HTMLElement;
+  dragged: Component | null;
+}): {
+  entries: GrapesjsFlexInsertChildEntry[];
+  source: 'model' | 'dom';
+  modelChildCount: number;
+  modelElementCount: number;
+  domChildCount: number;
+} {
+  const modelChildren = directComponentChildren(target).filter((c) => c !== dragged);
+  const modelEntries = modelChildren
+    .map((comp) => ({ comp, el: getElementFromComponent(comp) as HTMLElement | null }))
+    .filter((entry): entry is GrapesjsFlexInsertChildEntry => Boolean(entry.el));
+  const targetDomChildren = Array.from(targetEl.children ?? [])
+    .filter((el): el is HTMLElement => (el as { nodeType?: number }).nodeType === 1);
+  if (modelEntries.length > 0 || targetDomChildren.length === 0) {
+    return {
+      entries: modelEntries,
+      source: 'model',
+      modelChildCount: modelChildren.length,
+      modelElementCount: modelEntries.length,
+      domChildCount: targetDomChildren.length,
+    };
+  }
+  const draggedEl = dragged ? getElementFromComponent(dragged) : null;
+  const domEntries: GrapesjsFlexInsertChildEntry[] = [];
+  for (const el of targetDomChildren) {
+    if (draggedEl && el === draggedEl) continue;
+    const comp = getComponentFromElement(el);
+    if (!comp || comp === dragged || comp.parent?.() !== target) continue;
+    domEntries.push({ comp, el });
+  }
+  return {
+    entries: domEntries,
+    source: 'dom',
+    modelChildCount: modelChildren.length,
+    modelElementCount: modelEntries.length,
+    domChildCount: targetDomChildren.length,
+  };
+}
 
 export type GrapesjsSelectionBounds = {
   left: number;
@@ -1006,6 +1273,40 @@ function resizedPositionedBoxStylePatch(
     width: box.w * scaleX,
     height: box.h * scaleY,
   });
+}
+
+/**
+ * Flex-child analogue of `resizedPositionedBoxStylePatch`: scales every
+ * selected flex child proportionally to the group's new bounds (same scaleX/
+ * scaleY math), but writes flex-appropriate properties instead of left/top.
+ *
+ *   • main axis (row → x / column → y) → `flex-basis` so the child keeps
+ *     participating in the flex layout at the new size rather than being
+ *     yanked out by an absolute `left`/`top`.
+ *   • cross axis → `width`/`height` so the child's cross dimension tracks the
+ *     proportional scale too (visual parity with the absolute path).
+ *
+ * `left`/`top` are intentionally NOT written — moving a flex child with
+ * coordinates would break its layout flow.
+ */
+function resizedFlexChildBoxStylePatch(
+  box: PositionedSelectionBox,
+  sourceBounds: GrapesjsComponentBox,
+  nextBounds: GrapesjsSelectionBounds,
+  parentAxis: GrapesjsLayoutAxis,
+): Record<string, string> {
+  const targetWidth = Math.max(1, nextBounds.width);
+  const targetHeight = Math.max(1, nextBounds.height);
+  const scaleX = targetWidth / Math.max(1, sourceBounds.w);
+  const scaleY = targetHeight / Math.max(1, sourceBounds.h);
+  const nextMain = parentAxis === 'row' ? box.w * scaleX : box.h * scaleY;
+  const nextCross = parentAxis === 'row' ? box.h * scaleY : box.w * scaleX;
+  return {
+    'flex-basis': `${Math.max(1, Math.round(nextMain))}px`,
+    ...(parentAxis === 'row'
+      ? { height: `${Math.max(1, Math.round(nextCross))}px` }
+      : { width: `${Math.max(1, Math.round(nextCross))}px` }),
+  };
 }
 
 function resizePositionedBoxesToBounds(
@@ -1407,7 +1708,14 @@ export function arrangeGrapesjsSelectionAsFlex(
   const picked = selectedComponentsForLayout(editor, selectionOrder);
   if (picked.length === 0) return false;
   const parents = new Set(picked.map((comp) => comp.parent?.() ?? null));
-  if (parents.size !== 1) return false;
+  if (parents.size !== 1) {
+    // Cross-parent wrap: the picked elements live under different parents
+    // (e.g. two scattered absolute flex containers). Group them into a NEW
+    // absolute-positioned flex container at the canvas root, positioned over
+    // the bounding box of all picked elements. Coordinates are resolved
+    // against the canvas body root so they stay comparable across parents.
+    return wrapScatteredSelectionAsFlex(editor, picked, preferredAxis);
+  }
   const parent = picked[0]?.parent?.();
   if (!parent) return false;
   const parentRect = componentCoordinateRootRect(editor, parent);
@@ -1415,7 +1723,13 @@ export function arrangeGrapesjsSelectionAsFlex(
     .map((comp) => ({ comp, box: componentBox(comp, parentRect) }))
     .filter((item): item is { comp: Component; box: GrapesjsComponentBox } => Boolean(item.box));
   if (items.length === 0) return false;
-  const absoluteItems = items.every(({ comp }) => isGrapesjsAbsoluteCanvasToolComponent(comp));
+  // Treat the selection as absolute when every picked element is itself
+  // absolute-positioned — not just canvas-tool primitives. A previously
+  // Shift+A-wrapped flex container is `position: absolute` too and must be
+  // re-wrapped into another absolute container with its own absolute
+  // placement cleared, otherwise the new parent comes out as flow and the
+  // children keep their absolute positioning and scatter.
+  const absoluteItems = items.every(({ comp }) => isGrapesjsPositionedDragComponent(comp));
   const axis = preferredAxis ?? inferLayoutAxis(items.map((item) => item.box));
   items.sort((a, b) => axis === 'row'
     ? (a.box.left - b.box.left) || (a.box.top - b.box.top)
@@ -1442,8 +1756,9 @@ export function arrangeGrapesjsSelectionAsFlex(
         display: 'flex',
         'flex-direction': axis,
         gap: `${gap}px`,
-        width: `${wrapW}px`,
-        height: `${wrapH}px`,
+        // `fit-content` so the wrapper adapts to its children (适应 mode).
+        width: 'fit-content',
+        height: 'fit-content',
         'box-sizing': 'border-box',
         ...(absoluteItems
           ? { position: 'absolute', left: `${Math.round(minX)}px`, top: `${Math.round(minY)}px` }
@@ -1467,10 +1782,98 @@ export function arrangeGrapesjsSelectionAsFlex(
   return true;
 }
 
+/**
+ * Wrap a set of picked components that live under DIFFERENT parents into one
+ * new absolute-positioned flex container at the canvas root.
+ *
+ * Unlike `arrangeGrapesjsSelectionAsFlex` (which requires a single shared
+ * parent), this path exists for the common case of selecting two or more
+ * scattered absolute elements (e.g. flex containers dropped anywhere on the
+ * canvas) and grouping them. Each element's own absolute placement is cleared
+ * because the new wrapper now owns the group's position; the children flow
+ * inside it.
+ *
+ * Coordinates are resolved against the canvas body root so boxes stay
+ * comparable regardless of which parent each element came from.
+ */
+function wrapScatteredSelectionAsFlex(
+  editor: GrapesjsEditorInstance,
+  picked: Component[],
+  preferredAxis?: GrapesjsLayoutAxis,
+): boolean {
+  const rootWrapper = getRootWrapperComponent(editor);
+  if (!rootWrapper) return false;
+  // The new wrapper is appended to `rootWrapper` and positioned absolute, so
+  // its positioning context IS the root wrapper. Resolve every picked
+  // element's box against the root wrapper's own rect (not the canvas body)
+  // so the new wrapper lands where the selection actually is, instead of
+  // jumping toward the canvas top-left.
+  const rootRect = componentCoordinateRootRect(editor, rootWrapper);
+  const items = picked
+    .map((comp) => ({ comp, box: componentBox(comp, rootRect) }))
+    .filter((item): item is { comp: Component; box: GrapesjsComponentBox } => Boolean(item.box));
+  if (items.length === 0) return false;
+  const axis = preferredAxis ?? inferLayoutAxis(items.map((item) => item.box));
+  items.sort((a, b) => axis === 'row'
+    ? (a.box.left - b.box.left) || (a.box.top - b.box.top)
+    : (a.box.top - b.box.top) || (a.box.left - b.box.left));
+  const boxes = items.map((item) => item.box);
+  const minX = Math.min(...boxes.map((box) => box.left));
+  const minY = Math.min(...boxes.map((box) => box.top));
+  const gap = averageMainAxisGap(boxes, axis);
+  // Size the wrapper to the children's natural flex layout, NOT the original
+  // scattered bounding box (measured while the children were positioned).
+  // Row: width = sum of child widths + gaps, height = max child height.
+  // Column: the inverse.
+  const gapTotal = gap * Math.max(0, boxes.length - 1);
+  const wrapW = axis === 'row'
+    ? Math.round(boxes.reduce((acc, box) => acc + box.w, 0) + gapTotal)
+    : Math.round(Math.max(0, ...boxes.map((box) => box.w)));
+  const wrapH = axis === 'row'
+    ? Math.round(Math.max(0, ...boxes.map((box) => box.h)))
+    : Math.round(boxes.reduce((acc, box) => acc + box.h, 0) + gapTotal);
+  const created = rootWrapper.append(
+    {
+      tagName: 'div',
+      attributes: {
+        'data-od-auto-layout-wrapper': 'true',
+        'data-od-position-mode': 'absolute',
+      },
+      style: {
+        display: 'flex',
+        'flex-direction': axis,
+        gap: `${gap}px`,
+        // `fit-content` so the wrapper adapts to its children's size (the
+        // "适应" mode in the dimension panel). A fixed px size would freeze
+        // the wrapper and clip children when they resize.
+        width: 'fit-content',
+        height: 'fit-content',
+        'box-sizing': 'border-box',
+        position: 'absolute',
+        left: `${Math.round(minX)}px`,
+        top: `${Math.round(minY)}px`,
+      },
+    } as never,
+    { at: rootWrapper.components().length } as never,
+  );
+  const wrapper = (Array.isArray(created) ? created[0] : created) as Component | null;
+  if (!wrapper) return false;
+  items.forEach(({ comp }, index) => {
+    try {
+      clearComponentAbsolutePlacement(comp);
+      setComponentAttributes(comp, { 'data-od-position-mode': 'flow' });
+      comp.move(wrapper, { at: index });
+    } catch { /* ignore */ }
+  });
+  try { editor.select(wrapper); } catch { /* ignore */ }
+  return true;
+}
+
 export function dissolveGrapesjsFlexSelection(editor: GrapesjsEditorInstance): boolean {
-  const selected = (() => {
+  const current = (() => {
     try { return editor.getSelected?.() as Component | undefined; } catch { return undefined; }
   })();
+  const selected = findGrapesjsAutoLayoutWrapperForDissolve(current);
   if (!selected) return false;
   const parent = selected.parent?.();
   if (!parent) return false;
@@ -1485,15 +1888,12 @@ export function dissolveGrapesjsFlexSelection(editor: GrapesjsEditorInstance): b
   const isAutoLayoutWrapper = attrs['data-od-auto-layout-wrapper'] === 'true';
   const isLayout = display === 'flex' || display === 'inline-flex' || display === 'grid' || display === 'inline-grid';
   if (!isAutoLayoutWrapper || !isLayout) return false;
-  const shouldRestoreAbsolute = attrs['data-od-position-mode'] === 'absolute';
   const containerIndex = directComponentIndex(parent, selected);
   const children = directComponentChildren(selected);
   const childBoxes = new Map<Component, GrapesjsComponentBox>();
-  if (shouldRestoreAbsolute) {
-    for (const child of children) {
-      const box = componentBox(child, parentRect);
-      if (box) childBoxes.set(child, box);
-    }
+  for (const child of children) {
+    const box = componentBox(child, parentRect);
+    if (box) childBoxes.set(child, box);
   }
   let insertAt = containerIndex >= 0 ? containerIndex : parent.components().length;
   for (const child of children.slice()) {
@@ -1501,17 +1901,16 @@ export function dissolveGrapesjsFlexSelection(editor: GrapesjsEditorInstance): b
       child.move(parent, { at: insertAt });
       insertAt += 1;
       const box = childBoxes.get(child);
-      if (box) {
-        child.setStyle?.({
-          ...getComponentStyleRecord(child),
-          position: 'absolute',
-          left: `${Math.round(box.left)}px`,
-          top: `${Math.round(box.top)}px`,
-          width: `${Math.round(box.w)}px`,
-          height: `${Math.round(box.h)}px`,
-        } as Parameters<typeof child.setStyle>[0]);
-        setComponentAttributes(child, { 'data-od-position-mode': 'absolute' });
-      }
+      if (!box) continue;
+      child.setStyle?.({
+        ...getComponentStyleRecord(child),
+        position: 'absolute',
+        left: `${Math.round(box.left)}px`,
+        top: `${Math.round(box.top)}px`,
+        width: `${Math.round(box.w)}px`,
+        height: `${Math.round(box.h)}px`,
+      } as Parameters<typeof child.setStyle>[0]);
+      setComponentAttributes(child, { 'data-od-position-mode': 'absolute' });
     } catch { /* ignore */ }
   }
   try {
@@ -1694,10 +2093,15 @@ export function buildEditorDocument(
   const bodyHtml = normalizeCanvasBodyHtml(
     stripGrapesjsCanvasSizeSentinel(restoreCanvasBodyAssetUrls(editor.getHtml(), baseHref)),
   );
+  // Drop CSS rules whose target element was deleted (GrapesJS leaves `#id`
+  // and `[data-od-id]` rules orphaned in its CssComposer). Pruning here covers
+  // every save path — getDocument (Cmd+S / source view / inspect save) and
+  // emitChange (autosave) — so dead selectors never round-trip into the file.
+  const css = pruneOrphanCssRules(editor.getCss() ?? '', bodyHtml);
   return reassembleDocument(
     parsed,
     bodyHtml,
-    editor.getCss() ?? '',
+    css,
     nonEmptyStyleRecord(canvasBodyStyle),
   );
 }
@@ -1883,9 +2287,24 @@ export function getGrapesjsIframeSelectionOutlineCss(tone: GrapesjsSelectionTone
                   .od-gjs-multi-selection-active [data-od-spacing-band] {
                     display: none !important;
                   }
+                  html body .od-multi-selection-member,
                   .od-multi-selection-member {
-                    outline: var(--od-gjs-hairline, 1px) solid var(--gjs-color-blue, #4f83ff) !important;
+                    outline: var(--od-gjs-hairline, 1px) dashed var(--gjs-color-blue, #4f83ff) !important;
                     outline-offset: calc(-1 * var(--od-gjs-hairline, 1px)) !important;
+                  }
+                  html body .od-flex-container-outline,
+                  .od-flex-container-outline {
+                    outline: var(--od-gjs-hairline, 1px) dashed var(--gjs-color-blue, #4f83ff) !important;
+                    outline-offset: calc(-1 * var(--od-gjs-hairline, 1px)) !important;
+                  }
+                  /* Default canvas cursor — custom pointer SVG. The
+                     od-canvas-cursor-clone class on html swaps in the clone
+                     cursor during an Alt+drag copy. */
+                  html.od-canvas-cursor, html.od-canvas-cursor body {
+                    cursor: url('/cursor-default.svg') 8 5, default;
+                  }
+                  html.od-canvas-cursor-clone, html.od-canvas-cursor-clone body {
+                    cursor: url('/cursor-clone.svg') 8 5, copy !important;
                   }
                   [data-od-multi-selection-box] {
                     position: absolute;
@@ -1975,6 +2394,10 @@ export function upsertGrapesjsIframeSelectionStyle(
   styleEl.setAttribute('data-od-flex-child-hover', 'true');
   styleEl.textContent = getGrapesjsIframeSelectionStyleCss(hoverClass, tone);
   head.appendChild(styleEl);
+  // Ensure the custom default-cursor class is on the iframe root so the
+  // cursor: url('/cursor-default.svg') rule applies. Refreshed alongside the
+  // selection style so HMR / stale frames pick it up too.
+  try { doc.documentElement.classList.add('od-canvas-cursor'); } catch { /* ignore */ }
   return true;
 }
 
@@ -2039,6 +2462,27 @@ function readParentFlexInfo(parent: Component | null | undefined): { display: st
     };
   } catch {
     return fallback();
+  }
+}
+
+/**
+ * Read a flex parent's current gap as a pixel number. For a row the relevant
+ * gap is `column-gap` (flex lays children out along the inline axis); for a
+ * column it is `row-gap`. Used by the flex multi-selection resize so the gap
+ * can be scaled together with the children, keeping the resized group flush
+ * with the drag box.
+ */
+function readFlexParentGapPx(parent: Component, axis: GrapesjsLayoutAxis): number {
+  const el = getElementFromComponent(parent);
+  const win = el?.ownerDocument?.defaultView ?? null;
+  if (!el || !win) return 0;
+  try {
+    const cs = win.getComputedStyle(el);
+    const raw = cs.getPropertyValue(axis === 'row' ? 'column-gap' : 'row-gap') || '';
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -3025,7 +3469,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 border-radius: 50%;
                 background: transparent;
                 box-shadow: none;
-                cursor: default;
+                cursor: url('/cursor-corner.png') 10 6, default !important;
                 pointer-events: auto;
                 touch-action: none;
                 z-index: 24;
@@ -3047,7 +3491,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 transition: width 120ms cubic-bezier(0.23, 1, 0.32, 1), height 120ms cubic-bezier(0.23, 1, 0.32, 1), opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
               }
               .od-radius-handle.is-active {
-                cursor: default;
+                cursor: inherit;
               }
               .od-radius-handle.is-active::after {
                 width: 10px;
@@ -4262,6 +4706,10 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           })();
 
           const spaceDownRef = { current: false };
+          // True while an Alt+clone drag is actively using the clone cursor,
+          // so the Alt keyup handler does NOT clear it (the drag end/cancel
+          // owns that). Set by the deferred-clone drag, cleared on finish.
+          const cloneCursorActiveRef = { current: false };
           const applyZoomStyleVars = (zoom: number) => {
             const { zoomDecimal, canvasHairline, screenHairline } = getGrapesjsZoomStyleVars(zoom);
             try {
@@ -4480,21 +4928,56 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           };
           const copySelectedCssStyleToClipboard = (): boolean => {
             const selected = selectedStyleComponents()[0];
-            if (!selected) return false;
-            const styles = buildGrapesjsCssStyleClipboard({
-              ...readElementStyles(getElementFromComponent(selected)),
-              ...getComponentStyleRecord(selected),
-            });
-            if (Object.keys(styles).length === 0) return false;
+            if (!selected) {
+              recordGrapesjsEditorDiagnostic('css-copy', { result: 'no-source' });
+              return false;
+            }
+            const odId = componentDiagnosticId(selected);
+            const computed = readElementStyles(getElementFromComponent(selected));
+            const authored = getComponentStyleRecord(selected);
+            const styles = buildGrapesjsCssStyleClipboard({ ...computed, ...authored });
+            if (Object.keys(styles).length === 0) {
+              recordGrapesjsEditorDiagnostic('css-copy', {
+                result: 'empty',
+                source: odId,
+                computedKeys: Object.keys(computed),
+                authoredKeys: Object.keys(authored),
+              });
+              return false;
+            }
             cssStyleClipboardRef.current = styles;
+            recordGrapesjsEditorDiagnostic('css-copy', {
+              result: 'stored',
+              source: odId,
+              computedKeyCount: Object.keys(computed).length,
+              authoredKeyCount: Object.keys(authored).length,
+              pickedKeys: Object.keys(styles),
+              pickedStyles: styles,
+            });
             return true;
           };
           const pasteCssStyleClipboard = (): boolean => {
             const styles = cssStyleClipboardRef.current;
-            if (!styles || Object.keys(styles).length === 0) return false;
+            if (!styles || Object.keys(styles).length === 0) {
+              recordGrapesjsEditorDiagnostic('css-paste', { result: 'empty-clipboard' });
+              return false;
+            }
             const targets = selectedStyleComponents();
-            if (targets.length === 0) return false;
-            if (!applyGrapesjsCssStyleClipboardToComponents(targets, styles)) return false;
+            const targetIds = targets.map(componentDiagnosticId);
+            if (targets.length === 0) {
+              recordGrapesjsEditorDiagnostic('css-paste', {
+                result: 'no-target',
+                pickedKeys: Object.keys(styles),
+              });
+              return false;
+            }
+            const applied = applyGrapesjsCssStyleClipboardToComponents(targets, styles);
+            recordGrapesjsEditorDiagnostic('css-paste', {
+              result: applied ? 'applied' : 'apply-failed',
+              targets: targetIds,
+              pickedKeys: Object.keys(styles),
+              pickedStyles: styles,
+            });
             selectionColorCollectorRef.current.invalidate();
             refreshSelectionSnapshotRef.current?.();
             scheduleEmitRef.current?.();
@@ -4553,13 +5036,23 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             if (readOnlyRef.current || isTextInputTarget(ev.target)) return false;
             const primary = ev.metaKey || ev.ctrlKey;
             if (!primary) return false;
-            const key = ev.key.toLowerCase();
+            const key = grapesjsShortcutLetterFromEvent(ev);
             if (ev.altKey && key === 'c') {
+              recordGrapesjsEditorDiagnostic('css-copy-shortcut', {
+                key: ev.key,
+                code: ev.code,
+                modifiers: { meta: ev.metaKey, ctrl: ev.ctrlKey, alt: ev.altKey, shift: ev.shiftKey },
+              });
               if (!copySelectedCssStyleToClipboard()) return false;
               preventCanvasShortcut(ev);
               return true;
             }
             if (ev.altKey && key === 'v') {
+              recordGrapesjsEditorDiagnostic('css-paste-shortcut', {
+                key: ev.key,
+                code: ev.code,
+                modifiers: { meta: ev.metaKey, ctrl: ev.ctrlKey, alt: ev.altKey, shift: ev.shiftKey },
+              });
               if (!pasteCssStyleClipboard()) return false;
               preventCanvasShortcut(ev);
               return true;
@@ -4582,7 +5075,193 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
             return false;
           };
+          const handleCanvasArrowKey = (ev: KeyboardEvent): boolean => {
+            if (
+              readOnlyRef.current ||
+              isTextInputTarget(ev.target) ||
+              (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown' && ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight')
+            ) return false;
+            try {
+              const sel = editor.getSelected?.() as Component | undefined;
+              if (!sel) return false;
+              ev.preventDefault();
+              const step = ev.shiftKey ? 10 : 1;
+              const parent = sel.parent?.();
+              let { display, direction } = readParentFlexInfo(parent);
+              // When the parent's display couldn't be resolved (cold iframe /
+              // not materialized), probe its live DOM element so an external-CSS
+              // flex parent is still recognised.
+              if (display === 'unknown' && parent) {
+                const pEl = getElementFromComponent(parent);
+                const pWin = pEl?.ownerDocument.defaultView ?? null;
+                if (pEl && pWin) {
+                  try {
+                    const pcs = pWin.getComputedStyle(pEl);
+                    const d = pcs.getPropertyValue('display') || '';
+                    if (d) { display = d; direction = pcs.getPropertyValue('flex-direction') || direction; }
+                  } catch { /* ignore */ }
+                }
+              }
+              const isFlexOrGrid = display === 'flex' || display === 'inline-flex' || display === 'grid' || display === 'inline-grid';
+              const reorderSibling = (container: Component, forward: boolean): boolean => {
+                // Move the SELECTED component to the slot adjacent to its
+                // current neighbour. GrapesJS Component.move() applies
+                // `sameParent && at > index ? at-1`, so we pass a pre-shift
+                // index that the adjustment maps to the real target:
+                //   forward  -> target idx+1 -> pass idx+2 (at-1 -> idx+1)
+                //   backward -> target idx-1 -> pass idx-1 (no adjustment)
+                const comps = container.components();
+                const idx = (() => {
+                  for (let i = 0; i < comps.length; i += 1) { if (comps.at(i) === sel) return i; }
+                  return -1;
+                })();
+                if (idx >= 0) {
+                  const target = forward ? idx + 1 : idx - 1;
+                  if (target < 0 || target >= comps.length) {
+                    recordGrapesjsEditorDiagnostic('flex-arrow-reorder', {
+                      result: 'boundary',
+                      selected: componentDiagnosticId(sel),
+                      container: componentDiagnosticId(container),
+                      forward,
+                      beforeIndex: idx,
+                      siblingCount: comps.length,
+                    });
+                    return false;
+                  }
+                  const passAt = forward ? idx + 2 : idx - 1;
+                  try { sel.move(container, { at: passAt }); } catch { /* ignore */ }
+                  editor.select(sel);
+                  const afterIndex = (() => {
+                    for (let i = 0; i < comps.length; i += 1) { if (comps.at(i) === sel) return i; }
+                    return -1;
+                  })();
+                  recordGrapesjsEditorDiagnostic('flex-arrow-reorder', {
+                    result: afterIndex === target ? 'moved' : 'move-mismatch',
+                    selected: componentDiagnosticId(sel),
+                    container: componentDiagnosticId(container),
+                    forward,
+                    beforeIndex: idx,
+                    targetIndex: target,
+                    afterIndex,
+                    siblingCount: comps.length,
+                  });
+                  return afterIndex === target;
+                }
+                // Fallback: resolve via the live DOM and move the selected
+                // element relative to its neighbour.
+                const selEl = getElementFromComponent(sel);
+                if (!selEl) return false;
+                const sibEl = forward ? selEl.nextElementSibling : selEl.previousElementSibling;
+                if (!sibEl) {
+                  recordGrapesjsEditorDiagnostic('flex-arrow-reorder', {
+                    result: 'dom-boundary',
+                    selected: componentDiagnosticId(sel),
+                    container: componentDiagnosticId(container),
+                    forward,
+                  });
+                  return false;
+                }
+                const sibComp = getComponentFromElement(sibEl as Element | null);
+                if (!sibComp) return false;
+                const sibParent = sibComp.parent?.() ?? container;
+                const sibComps = sibParent.components?.();
+                const sibIdx = (() => {
+                  if (!sibComps) return -1;
+                  for (let i = 0; i < sibComps.length; i += 1) { if (sibComps.at(i) === sibComp) return i; }
+                  return -1;
+                })();
+                if (!sibComps || sibIdx < 0) return false;
+                try { sel.move(sibParent, { at: forward ? sibIdx + 1 : sibIdx }); } catch { /* ignore */ }
+                editor.select(sel);
+                const afterIndex = (() => {
+                  for (let i = 0; i < sibComps.length; i += 1) { if (sibComps.at(i) === sel) return i; }
+                  return -1;
+                })();
+                recordGrapesjsEditorDiagnostic('flex-arrow-reorder', {
+                  result: afterIndex >= 0 ? 'moved-dom-fallback' : 'move-dom-fallback-mismatch',
+                  selected: componentDiagnosticId(sel),
+                  container: componentDiagnosticId(sibParent),
+                  forward,
+                  siblingIndex: sibIdx,
+                  afterIndex,
+                  siblingCount: sibComps.length,
+                });
+                return afterIndex >= 0;
+              };
+              if (isFlexOrGrid && parent) {
+                const isColumn = String(direction).startsWith('column');
+                const isMainAxis = isColumn
+                  ? (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')
+                  : (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight');
+                recordGrapesjsEditorDiagnostic('flex-arrow-key', {
+                  selected: componentDiagnosticId(sel),
+                  parent: componentDiagnosticId(parent),
+                  parentDisplay: display,
+                  direction,
+                  isMainAxis,
+                  key: ev.key,
+                  targetTag: (ev.target as HTMLElement | null)?.tagName?.toLowerCase?.() ?? null,
+                  modifiers: { alt: ev.altKey, shift: ev.shiftKey, meta: ev.metaKey, ctrl: ev.ctrlKey },
+                });
+                if (!isMainAxis) {
+                  recordGrapesjsEditorDiagnostic('flex-arrow-key-result', {
+                    result: 'ignored-cross-axis',
+                    selected: componentDiagnosticId(sel),
+                    parent: componentDiagnosticId(parent),
+                    key: ev.key,
+                    direction,
+                  });
+                  return true;
+                }
+                const moved = reorderSibling(parent, ev.key === 'ArrowDown' || ev.key === 'ArrowRight');
+                recordGrapesjsEditorDiagnostic('flex-arrow-key-result', {
+                  result: moved ? 'reordered' : 'not-reordered',
+                  selected: componentDiagnosticId(sel),
+                  parent: componentDiagnosticId(parent),
+                  key: ev.key,
+                  direction,
+                });
+                return true;
+              }
+              if (ev.altKey && parent) {
+                const moved = reorderSibling(parent, ev.key === 'ArrowDown' || ev.key === 'ArrowRight');
+                recordGrapesjsEditorDiagnostic('arrow-key-alt-reorder', {
+                  result: moved ? 'reordered' : 'not-reordered',
+                  selected: componentDiagnosticId(sel),
+                  parent: componentDiagnosticId(parent),
+                  key: ev.key,
+                  parentDisplay: display,
+                });
+                return true;
+              }
+              const style = sel.getStyle?.() ?? {};
+              const pos = (style as Record<string, string>)['position'] ?? 'static';
+              const next: Record<string, string> = { ...(style as Record<string, string>) };
+              if (pos === 'static') next['position'] = 'relative';
+              const nudge = (cur: string | undefined, delta: number): string => {
+                const m = String(cur ?? '0px').match(/^(-?[\d.]+)(px)?$/);
+                const base = m && m[1] ? parseFloat(m[1]) : 0;
+                return `${base + delta}px`;
+              };
+              if (ev.key === 'ArrowUp') next['top'] = nudge(next['top'], -step);
+              else if (ev.key === 'ArrowDown') next['top'] = nudge(next['top'], step);
+              else if (ev.key === 'ArrowLeft') next['left'] = nudge(next['left'], -step);
+              else if (ev.key === 'ArrowRight') next['left'] = nudge(next['left'], step);
+              sel.setStyle(next as Parameters<typeof sel.setStyle>[0]);
+              return true;
+            } catch {
+              return false;
+            }
+          };
           const onKeyDownCanvas = (ev: KeyboardEvent) => {
+            // Show the clone cursor as soon as Alt is pressed (before any drag),
+            // matching Figma's "hold Alt → copy cursor" affordance.
+            if (ev.key === 'Alt' && !ev.repeat) {
+              try {
+                const cdoc = editor.Canvas.getDocument?.();
+                cdoc?.documentElement.classList.add('od-canvas-cursor-clone');
+              } catch { /* ignore */ }
+            }
             // Never hijack keys while the user is typing in an input / the
             // GrapesJS text-edit overlay (contenteditable) — those own the
             // keystroke for editing.
@@ -4595,6 +5274,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
             if (handleCanvasClipboardShortcut(ev)) return;
             if (handleCanvasArrangeShortcut(ev)) return;
+            if (handleCanvasArrowKey(ev)) return;
             if (ev.code === 'Space') {
               // preventDefault is essential: the browser's default for Space
               // is to scroll the page/canvas. With scrollableCanvas enabled
@@ -4693,6 +5373,16 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (panning && panMode === 'space') finishPan();
               else if (!panning) removePanOverlay();
               updatePanCursor();
+            }
+            if (ev.key === 'Alt') {
+              // Only clear the clone cursor if no drag is actively using it
+              // (the drag end / cancel clears it separately).
+              if (!cloneCursorActiveRef.current) {
+                try {
+                  const cdoc = editor.Canvas.getDocument?.();
+                  cdoc?.documentElement.classList.remove('od-canvas-cursor-clone');
+                } catch { /* ignore */ }
+              }
             }
           };
           const onKeyPressCanvas = (ev: KeyboardEvent) => {
@@ -4968,111 +5658,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 } catch { /* ignore */ }
                 return;
               }
-              // Arrow keys: in a flex/grid parent they REORDER the selected
-              // element among siblings (Figma auto-layout behaviour); in a
-              // non-flex parent they nudge position ±1px (Shift=±10px), and
-              // Alt+arrow also reorders. The flex/grid detection reads the
-              // parent's COMPUTED display (see readParentFlexInfo) so layouts
-              // coming from external CSS classes are honoured, not just inline
-              // styles GrapesJS tracks.
-              if (!readOnlyRef.current && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown' || ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
-                try {
-                  const sel = editor.getSelected?.() as Component | undefined;
-                  if (!sel) return;
-                  ev.preventDefault();
-                  const step = ev.shiftKey ? 10 : 1;
-                  const parent = sel.parent?.();
-                  let { display, direction } = readParentFlexInfo(parent);
-                  // When the parent's display couldn't be resolved (cold
-                  // iframe / not materialized), probe its live DOM element so
-                  // an external-CSS flex parent is still recognised.
-                  if (display === 'unknown' && parent) {
-                    const pEl = getElementFromComponent(parent);
-                    const pWin = pEl?.ownerDocument.defaultView ?? null;
-                    if (pEl && pWin) {
-                      try {
-                        const pcs = pWin.getComputedStyle(pEl);
-                        const d = pcs.getPropertyValue('display') || '';
-                        if (d) { display = d; direction = pcs.getPropertyValue('flex-direction') || direction; }
-                      } catch { /* ignore */ }
-                    }
-                  }
-                  const isFlexOrGrid = display === 'flex' || display === 'inline-flex' || display === 'grid' || display === 'inline-grid';
-                  const reorderSibling = (container: Component, forward: boolean) => {
-                    // Move the SELECTED component to the slot adjacent to its
-                    // current neighbour. GrapesJS Component.move() applies
-                    // `sameParent && at > index ? at-1`, so we pass a pre-shift
-                    // index that the adjustment maps to the real target:
-                    //   forward  → target idx+1 → pass idx+2 (at-1 → idx+1)
-                    //   backward → target idx-1 → pass idx-1 (no adjustment)
-                    // This composes correctly across repeated presses: after a
-                    // forward swap sel is at idx+1, the next forward targets
-                    // idx+2, etc.
-                    const comps = container.components();
-                    const idx = (() => {
-                      for (let i = 0; i < comps.length; i += 1) { if (comps.at(i) === sel) return i; }
-                      return -1;
-                    })();
-                    if (idx >= 0) {
-                      const target = forward ? idx + 1 : idx - 1;
-                      if (target < 0 || target >= comps.length) return;
-                      const passAt = forward ? idx + 2 : idx - 1;
-                      try { sel.move(container, { at: passAt }); } catch { /* ignore */ }
-                      editor.select(sel);
-                      return;
-                    }
-                    // Fallback: resolve via the live DOM and move the selected
-                    // element relative to its neighbour.
-                    const selEl = getElementFromComponent(sel);
-                    if (!selEl) return;
-                    const sibEl = forward ? selEl.nextElementSibling : selEl.previousElementSibling;
-                    if (!sibEl) return;
-                    const sibComp = getComponentFromElement(sibEl as Element | null);
-                    if (!sibComp) return;
-                    const sibParent = sibComp.parent?.() ?? container;
-                    const sibComps = sibParent.components?.();
-                    const sibIdx = (() => {
-                      if (!sibComps) return -1;
-                      for (let i = 0; i < sibComps.length; i += 1) { if (sibComps.at(i) === sibComp) return i; }
-                      return -1;
-                    })();
-                    if (sibIdx < 0) return;
-                    try { sel.move(sibParent, { at: forward ? sibIdx + 1 : sibIdx }); } catch { /* ignore */ }
-                    editor.select(sel);
-                  };
-                  if (isFlexOrGrid && parent) {
-                    const isColumn = String(direction).startsWith('column');
-                    // In a column, Up/Down = forward/backward; in a row, Left/Right.
-                    const isMainAxis = isColumn
-                      ? (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')
-                      : (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight');
-                    if (!isMainAxis) return; // cross-axis arrow does nothing in flex
-                    reorderSibling(parent, ev.key === 'ArrowDown' || ev.key === 'ArrowRight');
-                  } else {
-                    // Non-flex parent: nudge position ±1px (Shift=±10px).
-                    // Alt+arrow in non-flex also reorders siblings.
-                    if (ev.altKey && parent) {
-                      reorderSibling(parent, ev.key === 'ArrowDown' || ev.key === 'ArrowRight');
-                    } else {
-                      const style = sel.getStyle?.() ?? {};
-                      const pos = (style as Record<string, string>)['position'] ?? 'static';
-                      const next: Record<string, string> = { ...(style as Record<string, string>) };
-                      if (pos === 'static') next['position'] = 'relative';
-                      const nudge = (cur: string | undefined, delta: number): string => {
-                        const m = String(cur ?? '0px').match(/^(-?[\d.]+)(px)?$/);
-                        const base = m && m[1] ? parseFloat(m[1]) : 0;
-                        return `${base + delta}px`;
-                      };
-                      if (ev.key === 'ArrowUp') next['top'] = nudge(next['top'], -step);
-                      else if (ev.key === 'ArrowDown') next['top'] = nudge(next['top'], step);
-                      else if (ev.key === 'ArrowLeft') next['left'] = nudge(next['left'], -step);
-                      else if (ev.key === 'ArrowRight') next['left'] = nudge(next['left'], step);
-                      sel.setStyle(next as Parameters<typeof sel.setStyle>[0]);
-                    }
-                  }
-                } catch { /* ignore */ }
-                return;
-              }
+              if (handleCanvasArrowKey(ev)) return;
               // Shift+Cmd/Ctrl+G: dissolve the selected flex/grid container —
               // move its children back into the grandparent (at the container's
               // position) and clear the flex/grid display so it becomes a plain
@@ -5649,12 +6235,60 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               moved: boolean;
               cloneDrag: boolean;
               guideEl: HTMLDivElement | null;
+              /**
+               * Flex-child drag mode. When set, the dragged element started as a
+               * flex child; the drag either reorders it within its flex parent
+               * (pointer inside the parent bounds) or detaches it into an
+               * absolute-positioned standalone element (pointer outside).
+               * `flexDetached` flips true once the element has been re-parented
+               * to the root wrapper so updatePositionedToolDrag can switch from
+               * reorder semantics to left/top tracking.
+               */
+              flexChild: Component | null;
+              flexParent: Component | null;
+              flexAxis: GrapesjsLayoutAxis;
+              flexDetached: boolean;
+              flexOriginBox: { left: number; top: number; width: number; height: number } | null;
+              flexDetachedLeft: number;
+              flexDetachedTop: number;
+              /**
+               * Deferred Alt+clone: pointerdown records the intent, but the
+               * clone is only created in updatePositionedToolDrag once the
+               * pointer crosses the drag threshold (so a tap-and-release with
+               * Alt does NOT clone). When true, the drag is a no-op until the
+               * clone materializes.
+               */
+              pendingAltClone: boolean;
+              altCloneSource: Component | null;
+              /** Blue insertion-line overlay shown over a flex container. */
+              insertLineEl: HTMLDivElement | null;
+              /** Flex container currently previewed as the drop target. */
+              insertTarget: Component | null;
+              /** Insertion index within insertTarget (or -1 = append). */
+              insertIndex: number;
+              /** Avoid logging one missing-preview record per pointermove. */
+              insertMissLogged: boolean;
             };
             let positionedToolDrag: PositionedToolDrag | null = null;
 
             const pointForSource = (ev: PointerEvent, source: PointerSource): GrapesjsCanvasPoint | null => (
               source === 'host' ? canvasPointFromHostPointer(ev) : canvasPointFromDocPointer(ev)
             );
+            const clientPointForSource = (ev: PointerEvent, source: PointerSource): GrapesjsCanvasPoint => {
+              if (source !== 'host') return { x: ev.clientX, y: ev.clientY };
+              try {
+                const frame = editor.Canvas.getFrameEl?.();
+                const rect = frame?.getBoundingClientRect?.();
+                if (!rect) return { x: ev.clientX, y: ev.clientY };
+                const zoom = canvasZoomDecimal();
+                return {
+                  x: (ev.clientX - rect.left) / zoom,
+                  y: (ev.clientY - rect.top) / zoom,
+                };
+              } catch {
+                return { x: ev.clientX, y: ev.clientY };
+              }
+            };
 
             const hostPointHitsCanvasChrome = (ev: PointerEvent): boolean => {
               try {
@@ -5751,7 +6385,14 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               ev.stopImmediatePropagation();
               const component = state.component;
               placementInteraction = null;
-              if (state.pendingStyle) commitComponentStyle(component, state.pendingStyle);
+              if (state.moved && state.pendingStyle) {
+                commitComponentStyle(component, state.pendingStyle);
+              } else {
+                // Click without drag → apply the tool's default size so a tap
+                // still creates a usable element (the drag started at 0×0).
+                const defaultStyle = getGrapesjsCanvasToolDefaultStyle(state.tool, state.start, state.mode);
+                commitComponentStyle(component, defaultStyle);
+              }
               clearGrapesjsManagedInlineStyle(component);
               restoreUndoTrackingAfterDrag(state.undoWasTracking);
               refreshSelectionSnapshotRef.current?.();
@@ -5780,7 +6421,11 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (!isGrapesjsPlaceableCanvasTool(tool)) return;
               const flexParent = findFlexPlacementParent(targetComp);
               const mode: GrapesjsCanvasPlacementMode = flexParent ? 'flow' : 'absolute';
-              const inserted = insertPlacedCanvasTool(tool, point, { mode, parent: flexParent });
+              // Insert at 0×0 so the rectangle is invisible until the user
+              // actually drags (draw-to-size). If the user only clicks without
+              // dragging, finishPlacementInteraction applies the tool's default
+              // size. This matches Figma: click = default size, drag = custom.
+              const inserted = insertPlacedCanvasTool(tool, point, { mode, parent: flexParent, width: 0, height: 0 });
               if (!inserted) return;
               const undoWasTracking = stopUndoTrackingForDrag();
               placementInteraction = {
@@ -6020,17 +6665,65 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               sourceBounds: GrapesjsComponentBox;
               items: MultiSelectionItem[];
               moved: boolean;
+              cloneDrag: boolean;
+              /** How the bounding-box drag maps to element styles. */
+              layout: 'positioned' | 'flex';
+              /** Flex parent's main axis — only meaningful when layout === 'flex'. */
+              parentAxis: GrapesjsLayoutAxis;
+              /** Flex parent being resized (gap scaling) — layout === 'flex' only. */
+              flexParent: Component | null;
+              /** Source gap (px) along the parent's main axis — layout === 'flex' only. */
+              sourceGap: number;
+              /** Pending gap patch for flexParent — committed on drag end. */
+              pendingGap: Record<string, string> | null;
             };
             const multiSelectionHandles: MultiSelectionHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
             let multiSelectionOverlay: HTMLDivElement | null = null;
             let multiSelectionSyncRaf = 0;
             let multiSelectionInteraction: MultiSelectionInteraction | null = null;
+            // The flex container that currently wears the dashed outline, so
+            // syncMultiSelectionOverlay can clear it before re-painting.
+            let outlinedFlexContainer: HTMLElement | null = null;
 
             const selectedPositionedSelectionBoxes = (): PositionedSelectionBox[] => {
               const rootRect = canvasDocumentRootRect(editor);
               return selectedPositionedDragComponents()
                 .map((component) => positionedComponentBox(component, rootRect))
                 .filter((box): box is PositionedSelectionBox => Boolean(box));
+            };
+
+            /**
+             * Flex-child analogue of `selectedPositionedSelectionBoxes`.
+             * Returns the selected components that are direct children of a
+             * COMMON flex parent, plus that parent and its axis — so the
+             * bounding-box overlay can render and the drag can map deltas to
+             * `flex-basis`. Mixed-parent selections are rejected (no single
+             * flex context to resize within).
+             */
+            const selectedFlexChildBoxes = (): {
+              boxes: PositionedSelectionBox[];
+              parent: Component | null;
+              axis: GrapesjsLayoutAxis;
+              gap: number;
+            } => {
+              const rootRect = canvasDocumentRootRect(editor);
+              const components = selectedEditableComponents().filter(isGrapesjsFlexChildComponent);
+              if (components.length < 2) return { boxes: [], parent: null, axis: 'row', gap: 0 };
+              const parents = new Set(components.map((c) => c.parent?.() ?? null));
+              if (parents.size !== 1) return { boxes: [], parent: null, axis: 'row', gap: 0 };
+              const parent = components[0]?.parent?.() ?? null;
+              if (!parent) return { boxes: [], parent: null, axis: 'row', gap: 0 };
+              const { direction } = readParentFlexInfo(parent);
+              const axis: GrapesjsLayoutAxis = String(direction).startsWith('column') ? 'column' : 'row';
+              // Measure the flex parent's current gap (px) so a group resize can
+              // scale the gap in lock-step with the children — otherwise the
+              // union of the resized children leaves a fixed gap that the drag
+              // box does not reflect, and the trailing child no longer fills it.
+              const gap = readFlexParentGapPx(parent, axis);
+              const boxes = components
+                .map((component) => positionedComponentBox(component, rootRect))
+                .filter((box): box is PositionedSelectionBox => Boolean(box));
+              return { boxes, parent, axis, gap };
             };
             const clearMultiSelectionMemberOutlines = () => {
               try {
@@ -6039,6 +6732,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 }
               } catch { /* ignore */ }
             };
+            const clearFlexContainerOutline = () => {
+              if (outlinedFlexContainer) {
+                outlinedFlexContainer.classList.remove('od-flex-container-outline');
+                outlinedFlexContainer = null;
+              }
+            };
+
             const setMultiSelectionHostChromeActive = (active: boolean) => {
               try {
                 const toolsEl = (editor.Canvas as unknown as {
@@ -6076,7 +6776,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (multiSelectionOverlay) multiSelectionOverlay.style.display = 'none';
               try { doc.body.classList.remove('od-gjs-multi-selection-active'); } catch { /* ignore */ }
               setMultiSelectionHostChromeActive(false);
-              clearMultiSelectionMemberOutlines();
+              // NOTE: deliberately does NOT clear member outlines here. The
+              // dashed per-member outline is owned by syncMultiSelectionOverlay
+              // and stays up across the < 2 positioned-box case so grouped
+              // (flow) multi-selections keep their outline. syncMultiSelectionOverlay
+              // calls clearMultiSelectionMemberOutlines() itself at the top of
+              // every pass, and the single-select / deselect paths clear it via
+              // their own teardown.
             };
             const renderMultiSelectionOverlay = (bounds: GrapesjsSelectionBounds) => {
               const overlay = ensureMultiSelectionOverlay();
@@ -6093,28 +6799,57 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             };
             const syncMultiSelectionOverlay = () => {
               if (multiSelectionInteraction || readOnlyRef.current || cropModeRef.current) return;
-              const boxes = selectedPositionedSelectionBoxes();
-              if (boxes.length < 2) {
-                hideMultiSelectionOverlay();
-                return;
-              }
-              const bounds = positionedBounds(boxes);
-              if (!bounds) {
-                hideMultiSelectionOverlay();
-                return;
-              }
+              // The dashed per-member outline applies to EVERY selected
+              // element (including non-positioned ones like grouped flex
+              // containers), not just the positioned boxes that own the
+              // draggable bounding box.
+              const allSelected = selectedEditableComponents();
               clearMultiSelectionMemberOutlines();
-              for (const box of boxes) {
-                try {
-                  (getElementFromComponent(box.comp) as HTMLElement | null)?.classList.add('od-multi-selection-member');
-                } catch { /* ignore */ }
+              clearFlexContainerOutline();
+              if (allSelected.length >= 2) {
+                for (const comp of allSelected) {
+                  try {
+                    (getElementFromComponent(comp) as HTMLElement | null)?.classList.add('od-multi-selection-member');
+                  } catch { /* ignore */ }
+                }
               }
-              renderMultiSelectionOverlay({
-                left: bounds.left,
-                top: bounds.top,
-                width: bounds.w,
-                height: bounds.h,
-              });
+              // Absolute-positioned selections own the draggable bounding box.
+              const positionedBoxes = selectedPositionedSelectionBoxes();
+              if (positionedBoxes.length >= 2) {
+                const bounds = positionedBounds(positionedBoxes);
+                if (bounds) {
+                  renderMultiSelectionOverlay({
+                    left: bounds.left,
+                    top: bounds.top,
+                    width: bounds.w,
+                    height: bounds.h,
+                  });
+                  return;
+                }
+              }
+              // Flex-child selections (common flex parent, non-positioned):
+              // render the SAME bounding-box overlay (so the user gets the
+              // solid frame + handles) AND outline the flex container itself
+              // with a dashed frame to convey the flex context.
+              const flex = selectedFlexChildBoxes();
+              if (flex.boxes.length >= 2 && flex.parent) {
+                const bounds = positionedBounds(flex.boxes);
+                if (bounds) {
+                  renderMultiSelectionOverlay({
+                    left: bounds.left,
+                    top: bounds.top,
+                    width: bounds.w,
+                    height: bounds.h,
+                  });
+                  const parentEl = getElementFromComponent(flex.parent) as HTMLElement | null;
+                  if (parentEl) {
+                    parentEl.classList.add('od-flex-container-outline');
+                    outlinedFlexContainer = parentEl;
+                  }
+                  return;
+                }
+              }
+              hideMultiSelectionOverlay();
             };
             const requestMultiSelectionOverlaySync = () => {
               if (multiSelectionSyncRaf) return;
@@ -6158,10 +6893,32 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               state: MultiSelectionInteraction,
               nextBounds: GrapesjsSelectionBounds,
             ) => {
-              for (const item of state.items) {
-                const patch = resizedPositionedBoxStylePatch(item, state.sourceBounds, nextBounds);
-                item.pendingStyle = patch;
-                previewComponentStyle(item.comp, patch);
+              // Move has no equivalent for flex children (left/top breaks the
+              // flex flow). Skip style patches on a flex move but still let the
+              // bounding box follow the cursor so the interaction feels live.
+              const skipPatch = state.layout === 'flex' && state.mode === 'move';
+              if (!skipPatch) {
+                for (const item of state.items) {
+                  const patch = state.layout === 'flex'
+                    ? resizedFlexChildBoxStylePatch(item, state.sourceBounds, nextBounds, state.parentAxis)
+                    : resizedPositionedBoxStylePatch(item, state.sourceBounds, nextBounds);
+                  item.pendingStyle = patch;
+                  previewComponentStyle(item.comp, patch);
+                }
+                // On the flex path the gap is part of the union width, so it
+                // must scale by the same factor as the children — otherwise the
+                // trailing child no longer reaches the drag-box edge. Patch the
+                // parent's `gap` live; finishMultiSelectionOverlayInteraction
+                // commits it via the same pendingStyle mechanism.
+                if (state.layout === 'flex' && state.flexParent) {
+                  const scale = state.parentAxis === 'row'
+                    ? Math.max(1, nextBounds.width) / Math.max(1, state.sourceBounds.w)
+                    : Math.max(1, nextBounds.height) / Math.max(1, state.sourceBounds.h);
+                  const nextGap = Math.max(0, Math.round(state.sourceGap * scale));
+                  const gapPatch: Record<string, string> = { gap: `${nextGap}px` };
+                  previewComponentStyle(state.flexParent, gapPatch);
+                  state.pendingGap = gapPatch;
+                }
               }
               renderMultiSelectionOverlay(nextBounds);
               requestVisibleToolsRefresh();
@@ -6172,15 +6929,38 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               const target = ev.target as Element | null;
               const overlay = target?.closest?.('[data-od-multi-selection-box]');
               if (!overlay || !multiSelectionOverlay?.contains(overlay)) return false;
-              let boxes = selectedPositionedSelectionBoxes();
+              // Prefer positioned selections; fall back to flex children of a
+              // common flex parent so the overlay's drag dispatches to the
+              // flex-aware resize patch instead of writing left/top.
+              let positionedBoxes = selectedPositionedSelectionBoxes();
+              let flexBoxes: PositionedSelectionBox[] = [];
+              let flexAxis: GrapesjsLayoutAxis = 'row';
+              let flexParent: Component | null = null;
+              let sourceGap = 0;
+              if (positionedBoxes.length < 2) {
+                const flex = selectedFlexChildBoxes();
+                flexBoxes = flex.boxes;
+                flexAxis = flex.axis;
+                flexParent = flex.parent;
+                sourceGap = flex.gap;
+              }
+              let boxes = positionedBoxes.length >= 2 ? positionedBoxes : flexBoxes;
+              const layout: 'positioned' | 'flex' = positionedBoxes.length >= 2 ? 'positioned' : 'flex';
+              let cloneDrag = false;
               if (ev.altKey) {
-                const clones = clonePositionedDragComponents(boxes.map((box) => box.comp));
-                if (!clones?.length) return false;
-                try { editor.select(clones.length === 1 ? clones[0] : clones); } catch { /* ignore */ }
-                const rootRect = canvasDocumentRootRect(editor);
-                boxes = clones
-                  .map((component) => positionedComponentBox(component, rootRect))
-                  .filter((box): box is PositionedSelectionBox => Boolean(box));
+                // Clone currently only supports positioned elements (clone
+                // + flex-basis semantics are undefined). Skip cloning on the
+                // flex path so the drag still works as a plain resize.
+                if (layout === 'positioned') {
+                  const clones = clonePositionedDragComponents(boxes.map((box) => box.comp));
+                  if (!clones?.length) return false;
+                  cloneDrag = true;
+                  try { editor.select(clones.length === 1 ? clones[0] : clones); } catch { /* ignore */ }
+                  const rootRect = canvasDocumentRootRect(editor);
+                  boxes = clones
+                    .map((component) => positionedComponentBox(component, rootRect))
+                    .filter((box): box is PositionedSelectionBox => Boolean(box));
+                }
               }
               const sourceBounds = positionedBounds(boxes);
               if (boxes.length < 2 || !sourceBounds) return false;
@@ -6201,7 +6981,19 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 sourceBounds,
                 items: boxes.map((box) => ({ ...box, pendingStyle: null })),
                 moved: false,
+                cloneDrag,
+                layout,
+                parentAxis: flexAxis,
+                flexParent,
+                sourceGap,
+                pendingGap: null,
               };
+              // Move has no meaning for flex children (left/top breaks layout);
+              // only handle-driven resize is supported on the flex path. If the
+              // user grabbed the box body in a flex selection, still allow the
+              // drag to start but apply no style patches (the box will follow
+              // the cursor visually via renderMultiSelectionOverlay but leave
+              // the elements untouched).
               ev.preventDefault();
               ev.stopImmediatePropagation();
               return true;
@@ -6226,7 +7018,12 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               for (const item of state.items) {
                 if (item.pendingStyle) commitComponentStyle(item.comp, item.pendingStyle);
               }
+              if (state.pendingGap && state.flexParent) commitComponentStyle(state.flexParent, state.pendingGap);
               try { editor.select(state.items.map((item) => item.comp)); } catch { /* ignore */ }
+              // See finishPositionedToolDrag: suppress the trailing click so the
+              // Alt+drag clones stay selected instead of being replaced by the
+              // original element the drag started on.
+              if (state.cloneDrag && state.moved) suppressNextClick();
               refreshSelectionSnapshotRef.current?.();
               scheduleEmitRef.current?.();
               requestVisibleToolsRefresh();
@@ -6239,6 +7036,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               for (const item of state.items) {
                 if (item.pendingStyle) commitComponentStyle(item.comp, item.pendingStyle);
               }
+              if (state.pendingGap && state.flexParent) commitComponentStyle(state.flexParent, state.pendingGap);
               refreshSelectionSnapshotRef.current?.();
               scheduleEmitRef.current?.();
               requestVisibleToolsRefresh();
@@ -6284,6 +7082,427 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 startTop: origin.top,
                 pendingStyle: null,
               };
+            };
+            /**
+             * Re-parent a flex child to the canvas root wrapper and convert it
+             * to an absolutely-positioned standalone element at the given box
+             * (canvas-document coordinates). Clears `flex-basis` so the explicit
+             * width/height drive the size, mirroring `dissolveGrapesjsFlexSelection`.
+             * Returns the element's new left/top origin so the drag can track it.
+             */
+            const detachFlexChildToAbsolute = (
+              child: Component,
+              box: { left: number; top: number; width: number; height: number },
+            ): { left: number; top: number } => {
+              const rootWrapper = getRootWrapperComponent(editor);
+              if (rootWrapper) {
+                try {
+                  child.move(rootWrapper, { at: rootWrapper.components().length });
+                } catch { /* keep current parent on failure */ }
+              }
+              const style = getComponentStyleRecord(child);
+              delete style['flex-basis'];
+              delete style.flexBasis;
+              child.setStyle?.({
+                ...style,
+                position: 'absolute',
+                left: `${Math.max(0, Math.round(box.left))}px`,
+                top: `${Math.max(0, Math.round(box.top))}px`,
+                width: `${Math.max(1, Math.round(box.width))}px`,
+                height: `${Math.max(1, Math.round(box.height))}px`,
+              } as Parameters<typeof child.setStyle>[0]);
+              setComponentAttributes(child, { 'data-od-position-mode': 'absolute' });
+              return { left: Math.max(0, Math.round(box.left)), top: Math.max(0, Math.round(box.top)) };
+            };
+            /**
+             * Find the sibling insertion index within `parent` for the cursor
+             * position, so a flex child being dragged inside its container
+             * reorders to follow the pointer (Figma-style). Returns the index
+             * to pass to `child.move(parent, { at })`, or null when no reorder
+             * is warranted (e.g. pointer outside the parent).
+             */
+            const flexReorderIndexAtPoint = (
+              parent: Component,
+              child: Component,
+              clientX: number,
+              clientY: number,
+              axis: GrapesjsLayoutAxis,
+            ): number | null => {
+              const parentEl = getElementFromComponent(parent) as HTMLElement | null;
+              if (!parentEl) return null;
+              const pRect = parentEl.getBoundingClientRect();
+              if (
+                clientX < pRect.left - 4 || clientX > pRect.right + 4
+                || clientY < pRect.top - 4 || clientY > pRect.bottom + 4
+              ) return null;
+              const siblings = directComponentChildren(parent).filter((sib) => sib !== child);
+              for (let i = 0; i < siblings.length; i += 1) {
+                const sibEl = getElementFromComponent(siblings[i]) as HTMLElement | null;
+                if (!sibEl) continue;
+                const sRect = sibEl.getBoundingClientRect();
+                if (sRect.width <= 0 || sRect.height <= 0) continue;
+                const midpoint = axis === 'row'
+                  ? sRect.left + sRect.width / 2
+                  : sRect.top + sRect.height / 2;
+                const cursor = axis === 'row' ? clientX : clientY;
+                if (cursor < midpoint) {
+                  const sib = siblings[i];
+                  if (sib) return directComponentIndex(parent, sib);
+                }
+              }
+              // Past the last sibling's midpoint → append after the last one.
+              const last = siblings[siblings.length - 1];
+              const lastIdx = last ? directComponentIndex(parent, last) : -1;
+              return lastIdx >= 0 ? lastIdx + 1 : parent.components().length;
+            };
+            const pointerInsideRect = (clientX: number, clientY: number, rect: DOMRect, tolerance = 4): boolean => (
+              isPointInsideGrapesjsClientRect(clientX, clientY, rect, tolerance)
+            );
+            /**
+             * Resolve the flex container under the cursor (excluding the
+             * element being dragged), so a deferred Alt+clone can preview the
+             * insertion point. Uses elementsFromPoint to skip the dragged
+             * clone's own element and find the first flex container beneath.
+             * Prefers the DEEPEST flex container that actually has GrapesJS
+             * child components (so the insertion index/line is meaningful).
+             */
+            const flexContainerAtPoint = (
+              clientX: number,
+              clientY: number,
+              excludeComp: Component | null,
+            ): Component | null => {
+              const cdoc = editor.Canvas.getDocument?.();
+              const win = cdoc?.defaultView ?? null;
+              if (!cdoc || !win) return null;
+              const excludeEl = excludeComp ? getElementFromComponent(excludeComp) : null;
+              const stack = (cdoc as unknown as { elementsFromPoint?: (x: number, y: number) => Element[] })
+                .elementsFromPoint?.(clientX, clientY) ?? [];
+              // Collect all flex ancestors in the hit stack (excluding the
+              // dragged element). Pick the deepest one that has real child
+              // components — a wrapper flex with 0 GrapesJS children (common
+              // for canvas-tool frames whose content is unregistered) gives a
+              // useless insertion index of 0 and a line at the container edge.
+              let best: Component | null = null;
+              let bestDepth = -1;
+              for (const el of stack) {
+                if (excludeEl && (el === excludeEl || excludeEl.contains(el) || el.contains(excludeEl))) continue;
+                const comp = getComponentFromElement(el);
+                if (!comp) continue;
+                if (!isFlexDisplay(componentDisplay(comp))) continue;
+                const kids = directComponentChildren(comp).filter((c) => c !== excludeComp);
+                if (kids.length === 0) continue;
+                const depth = componentDepth(comp);
+                if (depth > bestDepth) {
+                  bestDepth = depth;
+                  best = comp;
+                }
+              }
+              return best;
+            };
+            /** Ensure the insertion-line overlay element exists and return it. */
+            const ensureInsertLineEl = (): HTMLDivElement | null => {
+              const cdoc = editor.Canvas.getDocument?.();
+              if (!cdoc) return null;
+              let el = cdoc.querySelector<HTMLDivElement>('[data-od-insert-line]');
+              if (!el) {
+                el = cdoc.createElement('div');
+                el.setAttribute('data-od-insert-line', 'true');
+                el.setAttribute('aria-hidden', 'true');
+                el.style.cssText = 'position:absolute;z-index:2147483646;background:#4f83ff;pointer-events:none;display:none;box-shadow:0 0 0 1px rgba(255,255,255,0.9);';
+                cdoc.body.appendChild(el);
+              }
+              return el;
+            };
+            /**
+             * Show/move/hide the blue insertion line for a deferred-clone drag.
+             * Computes the gap between the two siblings the cursor falls
+             * between and draws a line there; when over a flex container with
+             * no siblings, draws a line at the start. Clears the preview when
+             * the cursor is not over a flex container.
+             */
+            const updateFlexInsertLinePreview = (
+              state: PositionedToolDrag,
+              clientX: number,
+              clientY: number,
+            ) => {
+              const dragged = state.items[0]?.component ?? null;
+              const hitTarget = flexContainerAtPoint(clientX, clientY, dragged);
+              const sourceParentEl = state.flexParent ? getElementFromComponent(state.flexParent) as HTMLElement | null : null;
+              const target = resolveGrapesjsFlexInsertTarget({
+                sourceParent: state.flexParent,
+                sourceParentRect: sourceParentEl?.getBoundingClientRect?.() ?? null,
+                fallbackTarget: hitTarget,
+                clientX,
+                clientY,
+              });
+              const lineEl = ensureInsertLineEl();
+              if (!target || !lineEl) {
+                if (state.insertTarget || !state.insertMissLogged) {
+                  recordGrapesjsEditorDiagnostic('flex-insert-preview', {
+                    result: target ? 'missing-line' : 'missing-target',
+                    fallbackTarget: componentDiagnosticId(hitTarget),
+                    sourceParent: componentDiagnosticId(state.flexParent),
+                    sourceParentContainsPointer: sourceParentEl
+                      ? isPointInsideGrapesjsClientRect(clientX, clientY, sourceParentEl.getBoundingClientRect())
+                      : false,
+                    previousTarget: componentDiagnosticId(state.insertTarget),
+                    previousIndex: state.insertIndex,
+                    dragged: componentDiagnosticId(dragged),
+                    cursor: { x: Math.round(clientX), y: Math.round(clientY) },
+                  });
+                }
+                state.insertMissLogged = true;
+                hideFlexInsertLine(state);
+                return;
+              }
+              const targetEl = getElementFromComponent(target) as HTMLElement | null;
+              if (!targetEl) { hideFlexInsertLine(state); return; }
+              const { direction } = readParentFlexInfo(target);
+              const axis: GrapesjsLayoutAxis = String(direction).startsWith('column') ? 'column' : 'row';
+              const tRect = targetEl.getBoundingClientRect();
+              const childEntries = resolveGrapesjsFlexInsertChildEntries({ target, targetEl, dragged });
+              const childEls = childEntries.entries;
+              const rootRect = canvasDocumentRootRect(editor);
+              const draggedRect = dragged ? (getElementFromComponent(dragged) as HTMLElement | null)?.getBoundingClientRect?.() ?? null : null;
+              const previewDraggedRect = resolveGrapesjsPreviewRectFromDragItem({
+                item: state.items[0] ?? null,
+                fallbackRect: draggedRect,
+              });
+              const childRects = childEls.map((entry) => entry.el.getBoundingClientRect());
+              const insertAt = resolveGrapesjsFlexInsertIndexFromRects({
+                axis,
+                clientX,
+                clientY,
+                draggedRect: previewDraggedRect,
+                childRects,
+              });
+              const previousTarget = state.insertTarget;
+              const previousIndex = state.insertIndex;
+              state.insertTarget = target;
+              state.insertIndex = insertAt;
+              // Compute the line geometry (between sibling[i-1] and sibling[i]).
+              let lineLeft: number;
+              let lineTop: number;
+              let lineW: number;
+              let lineH: number;
+              const prevEl = insertAt > 0 ? childEls[insertAt - 1]?.el : null;
+              const nextEl = insertAt < childEls.length ? childEls[insertAt]?.el : null;
+              if (axis === 'row') {
+                lineH = tRect.height;
+                const y0 = tRect.top - (rootRect?.top ?? 0);
+                lineTop = y0;
+                let xCenter: number;
+                if (prevEl && nextEl) {
+                  // Gap midpoint = right edge of previous sibling to left edge of next.
+                  const a = prevEl.getBoundingClientRect();
+                  const b = nextEl.getBoundingClientRect();
+                  xCenter = (a.right + b.left) / 2;
+                } else if (prevEl) {
+                  xCenter = prevEl.getBoundingClientRect().right + 2;
+                } else if (nextEl) {
+                  xCenter = nextEl.getBoundingClientRect().left - 2;
+                } else {
+                  xCenter = tRect.left + 2;
+                  lineH = Math.max(lineH, 1);
+                }
+                lineLeft = xCenter - 1 - (rootRect?.left ?? 0);
+                lineW = 2;
+              } else {
+                lineW = tRect.width;
+                const x0 = tRect.left - (rootRect?.left ?? 0);
+                lineLeft = x0;
+                let yCenter: number;
+                if (prevEl && nextEl) {
+                  // Gap midpoint = bottom edge of previous sibling to top edge of next.
+                  const a = prevEl.getBoundingClientRect();
+                  const b = nextEl.getBoundingClientRect();
+                  yCenter = (a.bottom + b.top) / 2;
+                } else if (prevEl) {
+                  yCenter = prevEl.getBoundingClientRect().bottom + 2;
+                } else if (nextEl) {
+                  yCenter = nextEl.getBoundingClientRect().top - 2;
+                } else {
+                  yCenter = tRect.top + 2;
+                  lineW = Math.max(lineW, 1);
+                }
+                lineTop = yCenter - 1 - (rootRect?.top ?? 0);
+                lineH = 2;
+              }
+              lineEl.style.display = 'block';
+              lineEl.style.left = `${Math.round(lineLeft)}px`;
+              lineEl.style.top = `${Math.round(lineTop)}px`;
+              lineEl.style.width = `${Math.max(1, Math.round(lineW))}px`;
+              lineEl.style.height = `${Math.max(1, Math.round(lineH))}px`;
+              if (state.insertLineEl !== lineEl) state.insertLineEl = lineEl;
+              if (previousTarget !== target || previousIndex !== insertAt) {
+                state.insertMissLogged = false;
+                recordGrapesjsEditorDiagnostic('flex-insert-preview', {
+                  result: 'shown',
+                  previewKind: 'drop-onto-flex',
+                  dragged: componentDiagnosticId(dragged),
+                  target: componentDiagnosticId(target),
+                  axis,
+                  childCount: childEls.length,
+                  childSource: childEntries.source,
+                  modelChildCount: childEntries.modelChildCount,
+                  modelElementCount: childEntries.modelElementCount,
+                  domChildCount: childEntries.domChildCount,
+                  insertAt,
+                  cursor: { x: Math.round(clientX), y: Math.round(clientY) },
+                  dragCenter: previewDraggedRect
+                    ? {
+                        x: Math.round(previewDraggedRect.left + (previewDraggedRect.width ?? previewDraggedRect.right - previewDraggedRect.left) / 2),
+                        y: Math.round(previewDraggedRect.top + (previewDraggedRect.height ?? previewDraggedRect.bottom - previewDraggedRect.top) / 2),
+                      }
+                    : null,
+                  line: {
+                    left: Math.round(lineLeft),
+                    top: Math.round(lineTop),
+                    width: Math.max(1, Math.round(lineW)),
+                    height: Math.max(1, Math.round(lineH)),
+                  },
+                });
+              }
+            };
+            const hideFlexInsertLine = (state: PositionedToolDrag) => {
+              if (state.insertLineEl) {
+                state.insertLineEl.style.display = 'none';
+              }
+              state.insertTarget = null;
+              state.insertIndex = -1;
+            };
+            /**
+             * Preview the insertion index + blue line for a NON-detached flex
+             * child being dragged inside its own parent (reorder). Computes the
+             * gap between siblings under the cursor and draws the line there,
+             * without moving the element (the move happens on release). This is
+             * the in-flex analogue of updateFlexInsertLinePreview (which is for
+             * a detached standalone element dropped onto an arbitrary flex).
+             */
+            const previewFlexInsertIndex = (
+              state: PositionedToolDrag,
+              parent: Component,
+              clientX: number,
+              clientY: number,
+              axis: GrapesjsLayoutAxis,
+              draggedPreviewRect: GrapesjsClientRectLike | null = null,
+            ) => {
+              const parentEl = getElementFromComponent(parent) as HTMLElement | null;
+              const lineEl = state.insertLineEl;
+              if (!parentEl || !lineEl) {
+                if (!state.insertMissLogged) {
+                  recordGrapesjsEditorDiagnostic('flex-insert-preview', {
+                    result: parentEl ? 'missing-line' : 'missing-parent-element',
+                    previewKind: 'reorder-within-parent',
+                    dragged: componentDiagnosticId(state.flexChild),
+                    target: componentDiagnosticId(parent),
+                    cursor: { x: Math.round(clientX), y: Math.round(clientY) },
+                  });
+                }
+                state.insertMissLogged = true;
+                hideFlexInsertLine(state);
+                return;
+              }
+              const tRect = parentEl.getBoundingClientRect();
+              const dragged = state.flexChild;
+              const childEntries = resolveGrapesjsFlexInsertChildEntries({ target: parent, targetEl: parentEl, dragged });
+              const childEls = childEntries.entries;
+              const childRects = childEls.map((entry) => entry.el.getBoundingClientRect());
+              const insertAt = resolveGrapesjsFlexInsertIndexFromRects({
+                axis,
+                clientX,
+                clientY,
+                draggedRect: draggedPreviewRect,
+                childRects,
+              });
+              const previousTarget = state.insertTarget;
+              const previousIndex = state.insertIndex;
+              state.insertTarget = parent;
+              state.insertIndex = insertAt;
+              const rootRect = canvasDocumentRootRect(editor);
+              const prevEl = insertAt > 0 ? childEls[insertAt - 1]?.el ?? null : null;
+              const nextEl = insertAt < childEls.length ? childEls[insertAt]?.el ?? null : null;
+              let lineLeft: number;
+              let lineTop: number;
+              let lineW: number;
+              let lineH: number;
+              if (axis === 'row') {
+                lineH = tRect.height;
+                lineTop = tRect.top - (rootRect?.top ?? 0);
+                let xCenter: number;
+                if (prevEl && nextEl) {
+                  const a = prevEl.getBoundingClientRect();
+                  const b = nextEl.getBoundingClientRect();
+                  xCenter = (a.right + b.left) / 2;
+                } else if (prevEl) {
+                  xCenter = prevEl.getBoundingClientRect().right + 2;
+                } else if (nextEl) {
+                  xCenter = nextEl.getBoundingClientRect().left - 2;
+                } else {
+                  xCenter = tRect.left + 2;
+                }
+                lineLeft = xCenter - 1 - (rootRect?.left ?? 0);
+                lineW = 2;
+              } else {
+                lineW = tRect.width;
+                lineLeft = tRect.left - (rootRect?.left ?? 0);
+                let yCenter: number;
+                if (prevEl && nextEl) {
+                  const a = prevEl.getBoundingClientRect();
+                  const b = nextEl.getBoundingClientRect();
+                  yCenter = (a.bottom + b.top) / 2;
+                } else if (prevEl) {
+                  yCenter = prevEl.getBoundingClientRect().bottom + 2;
+                } else if (nextEl) {
+                  yCenter = nextEl.getBoundingClientRect().top - 2;
+                } else {
+                  yCenter = tRect.top + 2;
+                }
+                lineTop = yCenter - 1 - (rootRect?.top ?? 0);
+                lineH = 2;
+              }
+              lineEl.style.display = 'block';
+              lineEl.style.left = `${Math.round(lineLeft)}px`;
+              lineEl.style.top = `${Math.round(lineTop)}px`;
+              lineEl.style.width = `${Math.max(1, Math.round(lineW))}px`;
+              lineEl.style.height = `${Math.max(1, Math.round(lineH))}px`;
+              if (previousTarget !== parent || previousIndex !== insertAt) {
+                state.insertMissLogged = false;
+                recordGrapesjsEditorDiagnostic('flex-insert-preview', {
+                  result: 'shown',
+                  previewKind: 'reorder-within-parent',
+                  dragged: componentDiagnosticId(state.flexChild),
+                  target: componentDiagnosticId(parent),
+                  axis,
+                  childCount: childEls.length,
+                  childSource: childEntries.source,
+                  modelChildCount: childEntries.modelChildCount,
+                  modelElementCount: childEntries.modelElementCount,
+                  domChildCount: childEntries.domChildCount,
+                  insertAt,
+                  cursor: { x: Math.round(clientX), y: Math.round(clientY) },
+                  dragCenter: draggedPreviewRect
+                    ? {
+                        x: Math.round(draggedPreviewRect.left + (draggedPreviewRect.width ?? draggedPreviewRect.right - draggedPreviewRect.left) / 2),
+                        y: Math.round(draggedPreviewRect.top + (draggedPreviewRect.height ?? draggedPreviewRect.bottom - draggedPreviewRect.top) / 2),
+                      }
+                    : null,
+                  line: {
+                    left: Math.round(lineLeft),
+                    top: Math.round(lineTop),
+                    width: Math.max(1, Math.round(lineW)),
+                    height: Math.max(1, Math.round(lineH)),
+                  },
+                });
+              }
+            };
+            /** Remove the clone cursor class from the iframe root. */
+            const clearCloneCursor = () => {
+              cloneCursorActiveRef.current = false;
+              try {
+                const cdoc = editor.Canvas.getDocument?.();
+                cdoc?.documentElement.classList.remove('od-canvas-cursor-clone');
+              } catch { /* ignore */ }
             };
             const updatePositionedDragGuide = (state: PositionedToolDrag, nextLeft: number, nextTop: number) => {
               if (!state.cloneDrag) return;
@@ -6336,25 +7555,120 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               const compAtPoint = source === 'host'
                 ? componentFromHostPoint(ev.clientX, ev.clientY)
                 : getComponentFromElement(targetEl);
-              const comp = findGrapesjsPositionedDragComponent(compAtPoint);
-              if (!comp) return false;
               const point = pointForSource(ev, source);
               if (!point) return false;
+              // Flex-child drag: when the user selected (or clicked) a single
+              // flex child, drag THAT child rather than its positioned ancestor.
+              // Release inside the parent reorders; release outside detaches it
+              // into an absolute-positioned standalone element. Multi-selection
+              // still goes through the multi-selection overlay path instead.
+              // Alt+drag clones the child into its flex parent FIRST (so the
+              // clone inherits the same flex sizing) and then drags the clone —
+              // no immediate detach, so dropping back inside the container
+              // leaves it as a flex child.
+              const isSingleSelection = selectedEditableComponents().length <= 1;
+              const flexChildCandidate = compAtPoint && isGrapesjsFlexChildComponent(compAtPoint) ? compAtPoint : null;
+              if (flexChildCandidate && isSingleSelection) {
+                const flexParent = flexChildCandidate.parent?.() ?? null;
+                if (flexParent) {
+                  const { direction } = readParentFlexInfo(flexParent);
+                  const flexAxis: GrapesjsLayoutAxis = String(direction).startsWith('column') ? 'column' : 'row';
+                  // For Alt+drag, clone the child as a sibling within the same
+                  // flex parent so its size is driven by flex layout (matching
+                  // the source) instead of being detached with a measured box.
+                  let dragTarget = flexChildCandidate;
+                  let cloneDrag = false;
+                  // Alt+clone is DEFERRED: pointerdown records the intent, the
+                  // clone is only created once the pointer moves past the
+                  // drag threshold (updatePositionedToolDrag). Until then the
+                  // source element stays put — no premature copy.
+                  const deferAltClone = !!ev.altKey;
+                  if (!deferAltClone) {
+                    // (non-alt flex drag — cloneDrag stays false, reorder/detach)
+                  }
+                  const rootRect = canvasDocumentRootRect(editor);
+                  const originBox = componentBox(dragTarget, rootRect);
+                  positionedToolDrag = {
+                    component: dragTarget,
+                    items: [{
+                      component: dragTarget,
+                      startLeft: originBox?.left ?? 0,
+                      startTop: originBox?.top ?? 0,
+                      pendingStyle: null,
+                    }],
+                    source,
+                    start: point,
+                    startLeft: originBox?.left ?? 0,
+                    startTop: originBox?.top ?? 0,
+                    moved: false,
+                    cloneDrag,
+                    guideEl: null,
+                    flexChild: dragTarget,
+                    flexParent,
+                    flexAxis,
+                    flexDetached: false,
+                    flexOriginBox: originBox ? {
+                      left: originBox.left, top: originBox.top, width: originBox.w, height: originBox.h,
+                    } : null,
+                    flexDetachedLeft: 0,
+                    flexDetachedTop: 0,
+                    // Deferred Alt+clone: created in update once threshold passes.
+                    pendingAltClone: deferAltClone,
+                    altCloneSource: deferAltClone ? flexChildCandidate : null,
+                    insertLineEl: null,
+                    insertTarget: null,
+                    insertIndex: -1,
+                    insertMissLogged: false,
+                  };
+                  recordGrapesjsEditorDiagnostic('flex-drag-start', {
+                    child: componentDiagnosticId(dragTarget),
+                    parent: componentDiagnosticId(flexParent),
+                    axis: flexAxis,
+                    source,
+                    altKey: ev.altKey,
+                    pendingAltClone: deferAltClone,
+                    point: { x: Math.round(point.x), y: Math.round(point.y) },
+                    originBox: originBox ? {
+                      left: Math.round(originBox.left),
+                      top: Math.round(originBox.top),
+                      width: Math.round(originBox.w),
+                      height: Math.round(originBox.h),
+                    } : null,
+                  });
+                  // On pointerdown select the source (the clone, once created,
+                  // gets selected when it materializes).
+                  ev.preventDefault();
+                  ev.stopImmediatePropagation();
+                  if (!deferAltClone) {
+                    try { editor.select(dragTarget); } catch { /* ignore */ }
+                  }
+                  return true;
+                }
+              }
+              const comp = findGrapesjsPositionedDragComponent(compAtPoint);
+              if (!comp) return false;
               const selectedPositioned = selectedPositionedDragComponents();
               let dragComponents = selectedPositioned.includes(comp) ? selectedPositioned : [comp];
               let cloneDrag = false;
               if (ev.altKey) {
-                const clones = clonePositionedDragComponents(dragComponents);
+                // Alt+drag clones whatever the user ACTUALLY selected — not
+                // the positioned ancestor `findGrapesjsPositionedDragComponent`
+                // resolves for coordinate math. (Flex-child Alt+clone is handled
+                // by the flex-child branch above, which keeps the clone in the
+                // flex parent. This path only runs for absolute elements.)
+                const concreteSelection = selectedEditableComponents();
+                const cloneTargets = concreteSelection.length > 0 ? concreteSelection : dragComponents;
+                const clones = clonePositionedDragComponents(cloneTargets);
                 if (!clones?.length) return false;
-                const primaryIndex = Math.max(0, dragComponents.indexOf(comp));
+                const primaryIndex = compAtPoint ? Math.max(0, cloneTargets.indexOf(compAtPoint)) : 0;
                 dragComponents = clones;
                 cloneDrag = true;
-                try { editor.select(clones.length === 1 ? clones[0] : clones); } catch { /* ignore */ }
                 const primaryClone = clones[primaryIndex] ?? clones[0];
                 if (primaryClone) dragComponents = [
                   primaryClone,
                   ...clones.filter((clone) => clone !== primaryClone),
                 ];
+                try { editor.select(clones.length === 1 ? clones[0] : clones); } catch { /* ignore */ }
               }
               const rootRect = canvasDocumentRootRect(editor);
               const items = dragComponents.map((component) => positionedDragItem(component, rootRect));
@@ -6370,6 +7684,19 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 moved: false,
                 cloneDrag,
                 guideEl: null,
+                flexChild: null,
+                flexParent: null,
+                flexAxis: 'row',
+                flexDetached: false,
+                flexOriginBox: null,
+                flexDetachedLeft: 0,
+                flexDetachedTop: 0,
+                pendingAltClone: false,
+                altCloneSource: null,
+                insertLineEl: null,
+                insertTarget: null,
+                insertIndex: -1,
+                insertMissLogged: false,
               };
               ev.preventDefault();
               ev.stopImmediatePropagation();
@@ -6387,10 +7714,163 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               state.moved = true;
               ev.preventDefault();
               ev.stopImmediatePropagation();
+              const previewClient = clientPointForSource(ev, state.source);
+              // Deferred Alt+clone: the pointer crossed the threshold, so NOW
+              // create the clone as a standalone absolute element that tracks
+              // the cursor. Dropping over a flex container later re-parents it
+              // into that container at the insertion line.
+              if (state.pendingAltClone && state.altCloneSource) {
+                const source = state.altCloneSource;
+                // Measure the SOURCE BEFORE cloning. Once the clone is inserted
+                // as a flex sibling, the source's rendered width shrinks (the
+                // two now share the flex space), which produced mismatched
+                // clone sizes. The pre-clone box is the size the copy should be.
+                const rr = canvasDocumentRootRect(editor);
+                const ob = componentBox(source, rr);
+                const clones = clonePositionedDragComponents([source]);
+                const clone = clones?.[0] ?? null;
+                state.pendingAltClone = false;
+                state.altCloneSource = null;
+                if (clone) {
+                  const box = ob
+                    ? { left: ob.left + (point.x - state.start.x), top: ob.top + (point.y - state.start.y), width: ob.w, height: ob.h }
+                    : state.flexOriginBox
+                      ? { left: state.flexOriginBox.left + (point.x - state.start.x), top: state.flexOriginBox.top + (point.y - state.start.y), width: state.flexOriginBox.width, height: state.flexOriginBox.height }
+                      : null;
+                  if (box) {
+                    const detached = detachFlexChildToAbsolute(clone, box);
+                    state.flexChild = clone;
+                    // Keep the source flex parent as a preferred drop target.
+                    // The clone is temporarily detached for drag tracking, but
+                    // if the pointer remains inside this parent it should still
+                    // preview and commit as an in-flex insertion.
+                    state.flexParent = source.parent?.() ?? null;
+                    state.flexDetached = true;
+                    state.flexDetachedLeft = detached.left;
+                    state.flexDetachedTop = detached.top;
+                    state.component = clone;
+                    state.items = [{
+                      component: clone,
+                      startLeft: detached.left,
+                      startTop: detached.top,
+                      pendingStyle: null,
+                    }];
+                    state.start = point;
+                    state.startLeft = detached.left;
+                    state.startTop = detached.top;
+                    try { editor.select(clone); } catch { /* ignore */ }
+                    recordGrapesjsEditorDiagnostic('flex-drag-alt-clone-materialized', {
+                      source: componentDiagnosticId(source),
+                      clone: componentDiagnosticId(clone),
+                    detached: true,
+                    sourceParent: componentDiagnosticId(state.flexParent),
+                      box: {
+                        left: Math.round(box.left),
+                        top: Math.round(box.top),
+                        width: Math.round(box.width),
+                        height: Math.round(box.height),
+                      },
+                      start: { x: Math.round(state.start.x), y: Math.round(state.start.y) },
+                    });
+                  }
+                }
+                // Show the clone cursor while an Alt-clone drag is live.
+                cloneCursorActiveRef.current = true;
+                try {
+                  const cdoc = editor.Canvas.getDocument?.();
+                  cdoc?.documentElement.classList.add('od-canvas-cursor-clone');
+                } catch { /* ignore */ }
+              }
               const dx = point.x - state.start.x;
               const dy = point.y - state.start.y;
               let primaryLeft = state.startLeft;
               let primaryTop = state.startTop;
+              // Flex-child drag: reorder inside the parent, or detach to absolute
+              // when the pointer leaves the parent bounds.
+              if (state.flexChild && state.flexParent && state.flexOriginBox) {
+                const parentEl = getElementFromComponent(state.flexParent) as HTMLElement | null;
+                if (parentEl) {
+                  const pRect = parentEl.getBoundingClientRect();
+                  const inside = pointerInsideRect(previewClient.x, previewClient.y, pRect);
+                  if (!state.flexDetached && !inside) {
+                    // Detach: re-parent to root wrapper + absolute placement.
+                    // Re-measure the live box NOW (not the pointerdown snapshot)
+                    // so width/height match the element's current flex-rendered
+                    // size — the snapshot can drift if the layout changed during
+                    // the drag, and a stale size was producing wrong-sized clones.
+                    const rr = canvasDocumentRootRect(editor);
+                    const liveBox = componentBox(state.flexChild, rr);
+                    const box = liveBox
+                      ? { left: liveBox.left + dx, top: liveBox.top + dy, width: liveBox.w, height: liveBox.h }
+                      : state.flexOriginBox
+                        ? { left: state.flexOriginBox.left + dx, top: state.flexOriginBox.top + dy, width: state.flexOriginBox.width, height: state.flexOriginBox.height }
+                        : null;
+                    if (!box) return;
+                    const detached = detachFlexChildToAbsolute(state.flexChild, box);
+                    state.flexDetached = true;
+                    state.flexDetachedLeft = detached.left;
+                    state.flexDetachedTop = detached.top;
+                    // Rebase the drag so subsequent left/top math is relative to
+                    // the detached origin, not the old flex box.
+                    state.start = point;
+                    state.startLeft = detached.left;
+                    state.startTop = detached.top;
+                    const item = state.items[0];
+                    if (item) {
+                      item.startLeft = detached.left;
+                      item.startTop = detached.top;
+                      item.pendingStyle = {
+                        left: `${detached.left}px`,
+                        top: `${detached.top}px`,
+                      };
+                      previewComponentStyle(item.component, item.pendingStyle);
+                      primaryLeft = detached.left;
+                      primaryTop = detached.top;
+                    }
+                    recordGrapesjsEditorDiagnostic('flex-drag-detach', {
+                      child: componentDiagnosticId(state.flexChild),
+                      previousParent: componentDiagnosticId(state.flexParent),
+                      box: {
+                        left: Math.round(box.left),
+                        top: Math.round(box.top),
+                        width: Math.round(box.width),
+                        height: Math.round(box.height),
+                      },
+                      detachedOrigin: detached,
+                      cursor: { x: Math.round(ev.clientX), y: Math.round(ev.clientY) },
+                      previewCursor: { x: Math.round(previewClient.x), y: Math.round(previewClient.y) },
+                    });
+                    updatePositionedDragGuide(state, primaryLeft, primaryTop);
+                    requestVisibleToolsRefresh();
+                    return;
+                  }
+                  if (!state.flexDetached && inside) {
+                    // Still inside the flex parent: show the insertion line at
+                    // the cursor position (preview only — do NOT live-reorder
+                    // every move, which was jittery and swapped siblings on a
+                    // tiny nudge). The actual move happens on release.
+                    const lineEl = ensureInsertLineEl();
+                    if (lineEl) state.insertLineEl = lineEl;
+                    const draggedRect = (getElementFromComponent(state.flexChild) as HTMLElement | null)?.getBoundingClientRect?.() ?? null;
+                    const previewDraggedRect = resolveGrapesjsPreviewRectFromDragItem({
+                      item: state.items[0] ?? null,
+                      fallbackRect: draggedRect,
+                      deltaLeft: dx,
+                      deltaTop: dy,
+                    });
+                    previewFlexInsertIndex(
+                      state,
+                      state.flexParent,
+                      previewClient.x,
+                      previewClient.y,
+                      state.flexAxis,
+                      previewDraggedRect,
+                    );
+                    requestVisibleToolsRefresh();
+                    return;
+                  }
+                }
+              }
               for (const item of state.items) {
                 const nextLeft = Math.max(0, Math.round(item.startLeft + dx));
                 const nextTop = Math.max(0, Math.round(item.startTop + dy));
@@ -6404,6 +7884,12 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 }
                 previewComponentStyle(item.component, item.pendingStyle);
               }
+              // Insertion-line preview: when dragging a standalone (detached)
+              // element, detect the flex container under the cursor and show a
+              // blue line where the element would be inserted on release.
+              if (state.flexDetached && state.items[0]) {
+                updateFlexInsertLinePreview(state, previewClient.x, previewClient.y);
+              }
               updatePositionedDragGuide(state, primaryLeft, primaryTop);
               requestVisibleToolsRefresh();
             };
@@ -6412,16 +7898,115 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (!positionedToolDrag) return;
               updatePositionedToolDrag(ev);
               const state = positionedToolDrag;
-              removePositionedDragGuide(positionedToolDrag);
-              positionedToolDrag = null;
-              for (const item of state.items) {
-                if (item.pendingStyle) commitComponentStyle(item.component, item.pendingStyle);
+              const wasCloneDrag = state.cloneDrag;
+              const didMove = state.moved;
+              removePositionedDragGuide(state);
+              recordGrapesjsEditorDiagnostic('positioned-drag-finish', {
+                pendingAltClone: state.pendingAltClone,
+                flexDetached: state.flexDetached,
+                flexChild: componentDiagnosticId(state.flexChild),
+                flexParent: componentDiagnosticId(state.flexParent),
+                insertTarget: componentDiagnosticId(state.insertTarget),
+                insertIndex: state.insertIndex,
+                cloneDrag: state.cloneDrag,
+                moved: didMove,
+                itemCount: state.items.length,
+              });
+              // If the pointer never crossed the threshold (a tap, not a drag)
+              // AND this was a deferred Alt+clone that never materialized, there
+              // is nothing to commit — a plain Alt+click must NOT clone.
+              if (state.pendingAltClone && !state.flexDetached) {
+                recordGrapesjsEditorDiagnostic('positioned-drag-commit', {
+                  result: 'ignored-pending-alt-click',
+                  flexChild: componentDiagnosticId(state.flexChild),
+                  flexParent: componentDiagnosticId(state.flexParent),
+                });
+                positionedToolDrag = null;
+                hideFlexInsertLine(state);
+                clearCloneCursor();
+                return;
               }
+              // Non-detached flex reorder: the child stayed in its parent
+              // during the drag (pointer never left). Move it to the previewed
+              // insertion index. GrapesJS handles the same-parent index shift.
+              if (!state.flexDetached && state.flexChild && state.insertTarget && state.insertIndex >= 0) {
+                try {
+                  state.flexChild.move(state.insertTarget, { at: Math.max(0, state.insertIndex) });
+                } catch { /* ignore */ }
+                recordGrapesjsEditorDiagnostic('positioned-drag-commit', {
+                  result: 'reordered-within-flex',
+                  child: componentDiagnosticId(state.flexChild),
+                  target: componentDiagnosticId(state.insertTarget),
+                  requestedIndex: Math.max(0, state.insertIndex),
+                  afterIndex: directComponentIndex(state.insertTarget, state.flexChild),
+                  flexDetached: state.flexDetached,
+                });
+                refreshSelectionSnapshotRef.current?.();
+                scheduleEmitRef.current?.();
+                requestVisibleToolsRefresh();
+              } else if (state.insertTarget && state.flexDetached) {
+                const dragged = state.items[0]?.component ?? null;
+                if (dragged) {
+                  const { direction } = readParentFlexInfo(state.insertTarget);
+                  const dropAxis: GrapesjsLayoutAxis = String(direction).startsWith('column') ? 'column' : 'row';
+                  const style = getComponentStyleRecord(dragged);
+                  delete style.position;
+                  delete style.left;
+                  delete style.top;
+                  // Preserve the element's size in flex-appropriate terms:
+                  // main axis → flex-basis (so it keeps its size in the flow),
+                  // cross axis → keep width/height.
+                  if (dropAxis === 'row') {
+                    if (style.width) style['flex-basis'] = style.width;
+                  } else if (style.height) {
+                    style['flex-basis'] = style.height;
+                  }
+                  try {
+                    dragged.setStyle?.(style as Parameters<typeof dragged.setStyle>[0]);
+                  } catch { /* ignore */ }
+                  setComponentAttributes(dragged, { 'data-od-position-mode': 'flow' });
+                  try {
+                    dragged.move(state.insertTarget, { at: Math.max(0, state.insertIndex) });
+                  } catch { /* ignore */ }
+                  recordGrapesjsEditorDiagnostic('positioned-drag-commit', {
+                    result: 'inserted-into-flex',
+                    child: componentDiagnosticId(dragged),
+                    target: componentDiagnosticId(state.insertTarget),
+                    requestedIndex: Math.max(0, state.insertIndex),
+                    afterIndex: directComponentIndex(state.insertTarget, dragged),
+                    dropAxis,
+                  });
+                }
+              } else {
+                for (const item of state.items) {
+                  if (item.pendingStyle) commitComponentStyle(item.component, item.pendingStyle);
+                }
+                recordGrapesjsEditorDiagnostic('positioned-drag-commit', {
+                  result: 'absolute-position',
+                  items: state.items.map((item) => ({
+                    component: componentDiagnosticId(item.component),
+                    pendingStyle: item.pendingStyle,
+                  })),
+                  flexDetached: state.flexDetached,
+                  insertTarget: componentDiagnosticId(state.insertTarget),
+                });
+              }
+              hideFlexInsertLine(state);
+              clearCloneCursor();
+              positionedToolDrag = null;
               try {
                 editor.select(state.items.length === 1
                   ? state.items[0]?.component
                   : state.items.map((item) => item.component));
               } catch { /* ignore */ }
+              // A clone-drag (Alt+drag copy) leaves the clone selected, but the
+              // browser follows the pointerup with a click on the ORIGINAL
+              // element — which would re-select it and drop the clone. Suppress
+              // that trailing click whenever we moved the pointer (a zero-move
+              // clone drag shouldn't swallow a legit tap-to-select). Also
+              // suppress for flex-child drags so the trailing click doesn't
+              // re-select the flex parent (plain click selects the container).
+              if ((wasCloneDrag || !!state.flexChild) && didMove) suppressNextClick();
               refreshSelectionSnapshotRef.current?.();
               scheduleEmitRef.current?.();
               requestVisibleToolsRefresh();
@@ -6432,6 +8017,8 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (!state) return;
               positionedToolDrag = null;
               removePositionedDragGuide(state);
+              hideFlexInsertLine(state);
+              clearCloneCursor();
               if (state.items.some((item) => item.pendingStyle)) {
                 for (const item of state.items) {
                   if (item.pendingStyle) commitComponentStyle(item.component, item.pendingStyle);
@@ -6442,6 +8029,15 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               }
             };
             let suppressClickAfterMarquee = false;
+            // Suppress the synthetic click the browser fires after a pointer
+            // drag (clone-drag, positioned-drag, multi-select resize). Without
+            // this the trailing click re-selects the original element the drag
+            // started on and clobbers the selection the drag end just committed
+            // (e.g. the clone after an Alt+drag copy).
+            const suppressNextClick = () => {
+              suppressClickAfterMarquee = true;
+              setTimeout(() => { suppressClickAfterMarquee = false; }, 0);
+            };
 
             const onClick = (ev: MouseEvent) => {
               if (readOnlyRef.current) return;
@@ -6486,13 +8082,35 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               // the container itself is selected via the default fall-through.
               // Grid ancestors never capture the click.
               const comp = getComponentFromElement(ev.target as Element | null);
+              const targetEl = ev.target as Element | null;
+              const canvasBodyEl = getCanvasBodyElFromEditor(editor);
+              // True "blank canvas": the click landed on the iframe <body>
+              // itself (no component under the cursor) OR resolved to the root
+              // wrapper component (no parent). Only then deselect — a normal
+              // non-flex element (rectangle, text) must NOT be deselected here.
+              const clickedCanvasBody = !comp || (canvasBodyEl && targetEl === canvasBodyEl);
+              const clickedRootWrapper = !!comp && !comp.parent?.();
+              if (clickedCanvasBody || clickedRootWrapper) {
+                try {
+                  if (editor.getSelected?.()) {
+                    ev.preventDefault();
+                    ev.stopImmediatePropagation();
+                    editor.select(undefined);
+                  }
+                } catch { /* ignore */ }
+                return;
+              }
+              // Plain click selects the component actually under the cursor.
+              // If the pointer is on a flex child (content), that child is
+              // selected; if it lands on the flex container's own gap/padding
+              // area, the container is selected (because that's the element
+              // the pointer is on). Drilling into nested flex is via
+              // double-click. This matches the new flex-child drag model.
               if (!comp) return;
-              const ancestor = findNearestFlexAncestor(comp);
-              if (!ancestor) return;
               ev.preventDefault();
               ev.stopImmediatePropagation();
               // No event arg → avoids GrapesJS's Cmd/Shift multi-select branch.
-              editor.select(ancestor);
+              editor.select(comp);
             };
             const onHostChromeClick = (ev: MouseEvent) => {
               if (readOnlyRef.current || cropModeRef.current) return;
@@ -6540,25 +8158,12 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 clearChildHover();
                 return;
               }
-              // The element actually under the cursor (the flex child). Tag it
-              // with the dashed outline. Skip when the pointer is directly on
-              // the flex container itself (no child to outline).
-              const childEl = getElementFromComponent(comp) as HTMLElement | null;
-              if (childEl && childEl !== lastChildHoverEl) {
-                clearChildHover();
-                childEl.classList.add(FLEX_CHILD_HOVER_CLASS);
-                lastChildHoverEl = childEl;
-              }
-              // Redirect the editor hover to the flex container. GrapesJS
-              // listens for `mouseover` on the body in the BUBBLE phase; this
-              // capture-phase handler runs first, so stopImmediatePropagation
-              // prevents GrapesJS from marking the child as hovered, and
-              // setHovered then drives the .gjs-hovered box onto the container.
-              ev.stopImmediatePropagation();
-              try {
-                (editor as unknown as { setHovered?: (cmp: Component | null) => void })
-                  .setHovered?.(ancestor);
-              } catch { /* ignore */ }
+              // The hover now tracks the actual child under the cursor (matching
+              // the click-selects-child model). The dashed outline that used to
+              // mark the child is redundant with the native hover box, so we no
+              // longer tag a separate `od-flex-child-hover` element — let
+              // GrapesJS's `.gjs-hovered` fall on the child directly.
+              clearChildHover();
             };
             const onMouseOut = (ev: MouseEvent) => {
               // Only clear when leaving the canvas document entirely (relatedTarget
@@ -6615,14 +8220,25 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 onImageEditRequestRef.current?.();
                 return;
               }
-              // Single-click selected the outer flex ancestor; double-click
-              // "enters" one level by selecting the actual component under the
-              // cursor (not its first child — that would descend too far and
-              // break the flex-arrow-key reorder, whose parent must be the
-              // flex container the user just left).
+              // Single-click already selects the actual component under the
+              // cursor (including flex children). Double-click now drills UP:
+              // it selects the nearest flex ancestor, so nested flex containers
+              // are reached by repeated double-clicks (child → parent flex →
+              // grandparent flex …). This is the inverse of the old behavior
+              // (where single-click selected the ancestor and dblclick entered).
+              {
+                const current = editor.getSelected?.();
+                const flexAncestor = findNearestFlexAncestor(comp);
+                if (flexAncestor && current !== flexAncestor) {
+                  ev.preventDefault();
+                  ev.stopImmediatePropagation();
+                  editor.select(flexAncestor);
+                  return;
+                }
+              }
+              // No flex ancestor to drill up to: keep the current selection.
               ev.preventDefault();
               ev.stopImmediatePropagation();
-              editor.select(comp);
             };
 
             // Cmd/Ctrl + right-click → layer-stack context menu. Builds the
@@ -7145,10 +8761,13 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
             const comp = first as Component;
             const el = getElementFromComponent(comp);
+            const computedStyles = readElementStyles(el);
             const styles = mergeSelectionSnapshotStyles(
-              readElementStyles(el),
+              computedStyles,
               getComponentStyleRecord(comp),
             );
+            if (computedStyles.width) styles.__odComputedWidth = computedStyles.width;
+            if (computedStyles.height) styles.__odComputedHeight = computedStyles.height;
             let tagName = 'div';
             try { tagName = (comp.get('tagName') as string) ?? 'div'; } catch { /* ignore */ }
             let componentType = '';

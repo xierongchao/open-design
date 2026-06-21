@@ -4250,7 +4250,16 @@ function HtmlViewer({
     const requestId = analytics.newRequestId();
     const artifactId = anonymizeArtifactId({ projectId, fileName: file.name });
     const artifactKind = artifactKindToTracking({ fileKind: file.kind ?? null });
-    const trackingFormat = format as Exclude<typeof format, 'image'>;
+    // Deploy targets (vercel / cloudflare_pages) are not first-class analytics
+    // export formats upstream; collapse them to 'html' for tracking so the
+    // share-option funnel stays on the canonical export format axis. 'image'
+    // is excluded to match the original tracking surface.
+    const deployFormatAlias = 'html' as const;
+    const trackingFormat = (
+      format === 'vercel' || format === 'cloudflare_pages' || format === 'image'
+        ? deployFormatAlias
+        : format
+    ) as 'pdf' | 'pptx' | 'zip' | 'html' | 'markdown' | 'template' | 'share_link' | 'share_page';
     trackShareOptionPopoverClick(
       analytics.track,
       {
@@ -4309,7 +4318,7 @@ function HtmlViewer({
       | 'preview'
       | 'source'
       | 'tweaks'
-      | 'draw'
+      | 'mark'
       | 'comment'
       | 'pods'
       | 'inspect'
@@ -8238,7 +8247,7 @@ function HtmlViewer({
   }
 
   function activateDrawTool() {
-    fireArtifactToolbarClick('draw');
+    fireArtifactToolbarClick('mark');
     setGrapesjsCanvasTool('cursor');
     const next = !drawOverlayOpen;
     if (!next) {

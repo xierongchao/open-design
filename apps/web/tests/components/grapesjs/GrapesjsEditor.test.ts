@@ -42,6 +42,10 @@ import {
   insertGrapesjsIconComponent,
   resizeGrapesjsPositionedSelectionToBounds,
   resolveGrapesjsPositionedToolDragOrigin,
+  resolveGrapesjsFlexInsertTarget,
+  resolveGrapesjsFlexInsertIndexFromRects,
+  resolveGrapesjsFlexInsertChildEntries,
+  resolveGrapesjsPreviewRectFromDragItem,
   isGrapesjsCanvasChromeTarget,
   scheduleGrapesjsPlacementChange,
   shouldHandleGrapesjsImagePaste,
@@ -722,7 +726,7 @@ describe('GrapesjsEditor flex auto-layout dissolve', () => {
     expect(parent.components().get(0)).toBe(child);
   });
 
-  it('does not force originally flow children to absolute positioning when dissolving auto-layout', () => {
+  it('restores flow wrapper children to absolute positioning when dissolving auto-layout', () => {
     const parent = fakeComponent({ rect: fakeDomRect(0, 0, 800, 600) });
     const wrapper = fakeComponent({
       attrs: {
@@ -752,8 +756,56 @@ describe('GrapesjsEditor flex auto-layout dissolve', () => {
     } as never)).toBe(true);
 
     expect(child.parent()).toBe(parent);
-    expect(child.getStyle()).not.toHaveProperty('position');
-    expect(child.getAttributes()['data-od-position-mode']).toBe('flow');
+    expect(child.getStyle()).toMatchObject({
+      position: 'absolute',
+      left: '20px',
+      top: '30px',
+      width: '64px',
+      height: '36px',
+    });
+    expect(child.getAttributes()['data-od-position-mode']).toBe('absolute');
+  });
+
+  it('dissolves the nearest auto-layout wrapper when a child is selected', () => {
+    const parent = fakeComponent({ rect: fakeDomRect(0, 0, 800, 600) });
+    const wrapper = fakeComponent({
+      attrs: {
+        'data-od-auto-layout-wrapper': 'true',
+        'data-od-position-mode': 'absolute',
+      },
+      style: { display: 'flex', position: 'absolute', left: '20px', top: '30px' },
+      rect: fakeDomRect(20, 30, 240, 80),
+    });
+    const child = fakeComponent({
+      attrs: {
+        'data-od-canvas-tool': 'rectangle',
+        'data-od-position-mode': 'flow',
+      },
+      style: {
+        width: '64px',
+        height: '36px',
+      },
+      rect: fakeDomRect(96, 48, 64, 36),
+    });
+    wrapper.move(parent);
+    child.move(wrapper);
+    const select = vi.fn();
+
+    expect(dissolveGrapesjsFlexSelection({
+      getSelected: () => child,
+      select,
+    } as never)).toBe(true);
+
+    expect(child.parent()).toBe(parent);
+    expect(child.getStyle()).toMatchObject({
+      position: 'absolute',
+      left: '96px',
+      top: '48px',
+      width: '64px',
+      height: '36px',
+    });
+    expect(parent.components().get(0)).toBe(child);
+    expect(select).toHaveBeenCalledWith(child);
   });
 
   it('wraps absolute children in an absolute flex container relative to the canvas body', () => {
@@ -795,8 +847,8 @@ describe('GrapesjsEditor flex auto-layout dissolve', () => {
       position: 'absolute',
       left: '20px',
       top: '30px',
-      width: '144px',
-      height: '36px',
+      width: 'fit-content',
+      height: 'fit-content',
     });
     expect(first.parent()).toBe(wrapper);
     expect(second.parent()).toBe(wrapper);
@@ -1397,6 +1449,150 @@ describe('GrapesjsEditor style clipboard', () => {
     })).toEqual({ left: 320, top: 180 });
   });
 
+  it('keeps the source flex parent as the drop target while an Alt clone is still inside it', () => {
+    expect(resolveGrapesjsFlexInsertTarget({
+      sourceParent: 'source-flex',
+      sourceParentRect: fakeDomRect(300, 100, 600, 360),
+      fallbackTarget: null,
+      clientX: 480,
+      clientY: 260,
+    })).toBe('source-flex');
+  });
+
+  it('falls back to the hit flex target once an Alt clone leaves its source flex parent', () => {
+    expect(resolveGrapesjsFlexInsertTarget({
+      sourceParent: 'source-flex',
+      sourceParentRect: fakeDomRect(300, 100, 600, 360),
+      fallbackTarget: 'other-flex',
+      clientX: 1000,
+      clientY: 260,
+    })).toBe('other-flex');
+  });
+
+  it('uses the dragged clone center, not the pointer offset, to choose the flex insertion slot', () => {
+    expect(resolveGrapesjsFlexInsertIndexFromRects({
+      axis: 'row',
+      clientX: 110,
+      clientY: 160,
+      draggedRect: fakeDomRect(250, 120, 100, 80),
+      childRects: [
+        fakeDomRect(100, 100, 100, 100),
+        fakeDomRect(240, 100, 100, 100),
+        fakeDomRect(380, 100, 100, 100),
+      ],
+    })).toBe(2);
+  });
+
+  it('falls back to the pointer when the dragged clone rect is unavailable', () => {
+    expect(resolveGrapesjsFlexInsertIndexFromRects({
+      axis: 'row',
+      clientX: 110,
+      clientY: 160,
+      draggedRect: null,
+      childRects: [
+        fakeDomRect(100, 100, 100, 100),
+        fakeDomRect(240, 100, 100, 100),
+        fakeDomRect(380, 100, 100, 100),
+      ],
+    })).toBe(0);
+  });
+
+  it('uses pending drag style to build the visual preview rect before DOM layout catches up', () => {
+    const previewRect = resolveGrapesjsPreviewRectFromDragItem({
+      item: {
+        startLeft: 100,
+        startTop: 100,
+        pendingStyle: { left: '390px', top: '100px' },
+      },
+      fallbackRect: fakeDomRect(220, 100, 100, 100),
+    });
+
+    expect(resolveGrapesjsFlexInsertIndexFromRects({
+      axis: 'row',
+      clientX: 120,
+      clientY: 160,
+      draggedRect: previewRect,
+      childRects: [
+        fakeDomRect(100, 100, 100, 100),
+        fakeDomRect(240, 100, 100, 100),
+        fakeDomRect(520, 100, 100, 100),
+      ],
+    })).toBe(2);
+  });
+
+  it('uses explicit drag delta to preview an in-flex child before writing pending style', () => {
+    const previewRect = resolveGrapesjsPreviewRectFromDragItem({
+      item: {
+        startLeft: 100,
+        startTop: 100,
+        pendingStyle: null,
+      },
+      fallbackRect: fakeDomRect(120, 100, 100, 100),
+      deltaLeft: 290,
+      deltaTop: 0,
+    });
+
+    expect(resolveGrapesjsFlexInsertIndexFromRects({
+      axis: 'row',
+      clientX: 130,
+      clientY: 160,
+      draggedRect: previewRect,
+      childRects: [
+        fakeDomRect(100, 100, 100, 100),
+        fakeDomRect(240, 100, 100, 100),
+        fakeDomRect(520, 100, 100, 100),
+      ],
+    })).toBe(2);
+  });
+
+  it('falls back to direct DOM children when flex siblings have no component element view yet', () => {
+    const targetEl = {
+      nodeType: 1,
+      children: [] as HTMLElement[],
+    } as unknown as HTMLElement;
+    const parent = fakeComponent({ el: targetEl });
+    const first = fakeComponent({ rect: null });
+    const second = fakeComponent({ rect: null });
+    const third = fakeComponent({ rect: null });
+    first.move(parent);
+    second.move(parent);
+    third.move(parent);
+    const firstEl = {
+      nodeType: 1,
+      __gjsv: { model: first },
+      getBoundingClientRect: () => fakeDomRect(100, 100, 100, 100),
+    } as unknown as HTMLElement;
+    const secondEl = {
+      nodeType: 1,
+      __gjsv: { model: second },
+      getBoundingClientRect: () => fakeDomRect(240, 100, 100, 100),
+    } as unknown as HTMLElement;
+    const thirdEl = {
+      nodeType: 1,
+      __gjsv: { model: third },
+      getBoundingClientRect: () => fakeDomRect(520, 100, 100, 100),
+    } as unknown as HTMLElement;
+    (targetEl as unknown as { children: HTMLElement[] }).children = [firstEl, secondEl, thirdEl];
+
+    const resolved = resolveGrapesjsFlexInsertChildEntries({
+      target: parent as never,
+      targetEl,
+      dragged: null,
+    });
+
+    expect(resolved.source).toBe('dom');
+    expect(resolved.modelChildCount).toBe(3);
+    expect(resolved.modelElementCount).toBe(0);
+    expect(resolved.domChildCount).toBe(3);
+    expect(resolveGrapesjsFlexInsertIndexFromRects({
+      axis: 'row',
+      clientX: 130,
+      clientY: 160,
+      draggedRect: fakeDomRect(390, 100, 100, 100),
+      childRects: resolved.entries.map((entry) => entry.el.getBoundingClientRect()),
+    })).toBe(2);
+  });
+
   it('clears DOM inline styles after promoting canvas tool styles into GrapesJS CSS rules', () => {
     const removeProperty = vi.fn();
     const removeAttribute = vi.fn();
@@ -1579,6 +1775,14 @@ describe('GrapesjsEditor arrange shortcuts', () => {
       key: '˙',
       code: 'KeyH',
     } as KeyboardEvent)).toBe('h');
+    expect(grapesjsShortcutLetterFromEvent({
+      key: 'ç',
+      code: 'KeyC',
+    } as KeyboardEvent)).toBe('c');
+    expect(grapesjsShortcutLetterFromEvent({
+      key: '√',
+      code: 'KeyV',
+    } as KeyboardEvent)).toBe('v');
   });
 });
 

@@ -333,7 +333,7 @@ describe('StylePanel', () => {
     expect(heightMode.value).toBe('fill');
   });
 
-  it('adds an adaptive sizing option only for text selections', () => {
+  it('adds an adaptive sizing option for text and auto-layout selections', () => {
     renderPanel({}, {
       componentType: 'text',
       canvasTool: 'text',
@@ -344,6 +344,38 @@ describe('StylePanel', () => {
 
     expect(Array.from(widthMode.options).map((option) => option.textContent)).toEqual(['固定', '适应', '撑满']);
     expect(Array.from(heightMode.options).map((option) => option.textContent)).toEqual(['固定', '适应', '撑满']);
+  });
+
+  it('shows grouped flex containers as adaptive size and switches to fixed after editing width or height', () => {
+    const { applyStyle } = renderPanel({
+      display: 'flex',
+      flexDirection: 'row',
+      flexWrap: 'nowrap',
+      width: 'fit-content',
+      height: 'fit-content',
+      __odComputedWidth: '801px',
+      __odComputedHeight: '375px',
+    });
+
+    const widthInput = screen.getByRole('spinbutton', { name: '宽' });
+    const heightInput = screen.getByRole('spinbutton', { name: '高' });
+    const widthMode = screen.getByRole('combobox', { name: '宽调整模式' }) as HTMLSelectElement;
+    const heightMode = screen.getByRole('combobox', { name: '高调整模式' }) as HTMLSelectElement;
+
+    expect(Array.from(widthMode.options).map((option) => option.textContent)).toEqual(['固定', '适应', '撑满']);
+    expect(Array.from(heightMode.options).map((option) => option.textContent)).toEqual(['固定', '适应', '撑满']);
+    expect((widthInput as HTMLInputElement).value).toBe('801');
+    expect((heightInput as HTMLInputElement).value).toBe('375');
+    expect(widthMode.value).toBe('hug');
+    expect(heightMode.value).toBe('hug');
+
+    fireEvent.change(widthInput, { target: { value: '802' } });
+    fireEvent.change(heightInput, { target: { value: '376' } });
+
+    expect(applyStyle).toHaveBeenCalledWith({ width: '802px' });
+    expect(applyStyle).toHaveBeenCalledWith({ height: '376px' });
+    expect(widthMode.value).toBe('fixed');
+    expect(heightMode.value).toBe('fixed');
   });
 
   it('expands the four-corner and four-side controls', () => {

@@ -187,6 +187,7 @@ export interface Dict {
   'settings.onboardingRolePm': string;
   'settings.onboardingRoleDesigner': string;
   'settings.onboardingRoleEngineer': string;
+  'settings.onboardingRoleMarketing': string;
   'settings.onboardingRoleAgency': string;
   'settings.onboardingRoleGrowth': string;
   'settings.onboardingRoleOps': string;
@@ -3300,4 +3301,5 @@ export interface Dict {
   'preview.replicateContentDesc': string;
   'preview.usePluginOnly': string;
   'preview.usePluginOnlyDesc': string;
+  'settings.onboardingSkip': string;
 }

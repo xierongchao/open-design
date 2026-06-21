@@ -273,6 +273,7 @@ function isGradient(value: string | undefined): boolean {
 function DimensionControl({
   axis,
   value,
+  displayValue,
   tagName,
   allowHug,
   modeOverride,
@@ -281,6 +282,7 @@ function DimensionControl({
 }: {
   axis: '宽' | '高';
   value: string;
+  displayValue?: string;
   tagName?: string;
   allowHug: boolean;
   modeOverride?: DimensionMode | null;
@@ -295,9 +297,10 @@ function DimensionControl({
   const options = allowHug
     ? DIMENSION_MODE_OPTIONS
     : DIMENSION_MODE_OPTIONS.filter((option) => option.value !== 'hug');
+  const scrubValue = effectiveMode === 'fixed' ? value : (displayValue ?? value);
   return (
     <div className={styles.dimensionControl}>
-      <NumberScrub label={axis} prefix={axis === '宽' ? 'W' : 'H'} value={value} unit="px" min={0} onChange={onValueChange} />
+      <NumberScrub label={axis} prefix={axis === '宽' ? 'W' : 'H'} value={scrubValue} unit="px" min={0} onChange={onValueChange} />
       <CompactSelect
         label={`${axis}调整模式`}
         value={effectiveMode}
@@ -838,6 +841,7 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
     TEXT_TAGS.has((selection?.tagName ?? '').toLowerCase()) ||
     selection?.componentType === 'text' ||
     selection?.canvasTool === 'text';
+  const allowHugDimensions = isTextElement || autoLayoutActive;
   // selectedColors is declared above (before the no-selection early return)
   // so the hook order stays stable across selected/unselected renders.
   const effectContext = () => ({
@@ -1120,19 +1124,21 @@ export function StylePanel({ editorRef, selection, imageEditSignal }: StylePanel
             <DimensionControl
               axis="宽"
               value={style.width ?? 'auto'}
+              displayValue={style.__odComputedWidth}
               tagName={selection?.tagName}
-              allowHug={isTextElement}
+              allowHug={allowHugDimensions}
               modeOverride={widthMode}
-              onValueChange={(value) => apply({ width: value })}
+              onValueChange={(value) => { setWidthMode('fixed'); apply({ width: value }); }}
               onModeChange={(mode) => { setWidthMode(mode); setDimensionMode('width', mode); }}
             />
             <DimensionControl
               axis="高"
               value={style.height ?? 'auto'}
+              displayValue={style.__odComputedHeight}
               tagName={selection?.tagName}
-              allowHug={isTextElement}
+              allowHug={allowHugDimensions}
               modeOverride={heightMode}
-              onValueChange={(value) => apply({ height: value })}
+              onValueChange={(value) => { setHeightMode('fixed'); apply({ height: value }); }}
               onModeChange={(mode) => { setHeightMode(mode); setDimensionMode('height', mode); }}
             />
             <IconButton
