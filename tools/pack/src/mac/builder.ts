@@ -148,6 +148,12 @@ export async function runElectronBuilder(
     npmRebuild: false,
     productName: identity.productName,
     icon: macResources.icon,
+    protocols: [
+      {
+        name: PRODUCT_NAME,
+        schemes: ["od"],
+      },
+    ],
     publish: [
       {
         provider: "generic",

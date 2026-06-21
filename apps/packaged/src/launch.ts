@@ -9,7 +9,10 @@ import { PackagedPathAccessError } from "./errors.js";
 import type { PackagedNamespacePaths } from "./paths.js";
 
 export type PackagedSingleInstanceApp = {
-  on: (event: "second-instance", listener: () => void) => unknown;
+  on: (
+    event: "second-instance",
+    listener: (event: unknown, commandLine: string[], workingDirectory: string) => void,
+  ) => unknown;
   quit: () => void;
   requestSingleInstanceLock: () => boolean;
 };
@@ -116,14 +119,14 @@ export function applyPackagedElectronPathOverrides(
 
 export function claimPackagedSingleInstanceLock(
   electronApp: PackagedSingleInstanceApp,
-  onSecondInstance: () => void,
+  onSecondInstance: (commandLine: string[]) => void,
 ): boolean {
   if (!electronApp.requestSingleInstanceLock()) {
     electronApp.quit();
     return false;
   }
-  electronApp.on("second-instance", () => {
-    onSecondInstance();
+  electronApp.on("second-instance", (_event, commandLine) => {
+    onSecondInstance(commandLine);
   });
   return true;
 }

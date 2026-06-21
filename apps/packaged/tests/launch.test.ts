@@ -11,8 +11,15 @@ vi.mock("electron", () => ({
 import { PackagedPathAccessError } from "../src/errors.js";
 import {
   claimPackagedSingleInstanceLock,
+  type PackagedSingleInstanceApp,
   verifyPackagedDataRootWritable,
 } from "../src/launch.js";
+
+type SecondInstanceListener = (
+  event: unknown,
+  commandLine: string[],
+  workingDirectory: string,
+) => void;
 
 describe("verifyPackagedDataRootWritable", () => {
   it("accepts a writable dataRoot", async () => {
@@ -53,9 +60,9 @@ describe("verifyPackagedDataRootWritable", () => {
 
 describe("claimPackagedSingleInstanceLock", () => {
   it("registers a second-instance focus callback when the lock is acquired", () => {
-    const listeners = new Map<string, () => void>();
-    const app = {
-      on: vi.fn((event: string, listener: () => void) => {
+    const listeners = new Map<string, SecondInstanceListener>();
+    const app: PackagedSingleInstanceApp = {
+      on: vi.fn((event: "second-instance", listener: SecondInstanceListener) => {
         listeners.set(event, listener);
         return app;
       }),
@@ -65,12 +72,37 @@ describe("claimPackagedSingleInstanceLock", () => {
     const focusExisting = vi.fn();
 
     expect(claimPackagedSingleInstanceLock(app, focusExisting)).toBe(true);
-    listeners.get("second-instance")?.();
+    listeners.get("second-instance")?.({}, ["Open Design"], "/tmp");
 
     expect(app.requestSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(app.on).toHaveBeenCalledWith("second-instance", expect.any(Function));
     expect(app.quit).not.toHaveBeenCalled();
-    expect(focusExisting).toHaveBeenCalledTimes(1);
+    expect(focusExisting).toHaveBeenCalledWith(["Open Design"]);
+  });
+
+  it("forwards second-instance command lines so protocol callbacks reach the running app", () => {
+    const listeners = new Map<string, SecondInstanceListener>();
+    const app: PackagedSingleInstanceApp = {
+      on: vi.fn((event: "second-instance", listener: SecondInstanceListener) => {
+        listeners.set(event, listener);
+        return app;
+      }),
+      quit: vi.fn(),
+      requestSingleInstanceLock: vi.fn(() => true),
+    };
+    const onSecondInstance = vi.fn();
+
+    expect(claimPackagedSingleInstanceLock(app, onSecondInstance)).toBe(true);
+    listeners.get("second-instance")?.(
+      {},
+      ["Open Design", "od://cloud-schedule-auth?token=t&state=s"],
+      "/tmp",
+    );
+
+    expect(onSecondInstance).toHaveBeenCalledWith([
+      "Open Design",
+      "od://cloud-schedule-auth?token=t&state=s",
+    ]);
   });
 
   it("quits the duplicate process before packaged sidecars start when the lock is held", () => {

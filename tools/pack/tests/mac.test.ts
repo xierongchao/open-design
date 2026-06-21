@@ -268,6 +268,7 @@ describe("runElectronBuilder", () => {
       mac?: {
         notarize?: boolean;
       };
+      protocols?: Array<{ name: string; schemes: string[] }>;
     };
   }
 
@@ -290,6 +291,22 @@ describe("runElectronBuilder", () => {
 
       expect(builderConfig.afterSign).toBeUndefined();
       expect(builderConfig.mac?.notarize).toBe(false);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("declares the od URL scheme for browser-to-app authorization callbacks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const builderConfig = await prepareElectronBuilderConfig(root, {});
+
+      expect(builderConfig.protocols).toEqual([
+        {
+          name: "Open Design",
+          schemes: ["od"],
+        },
+      ]);
     } finally {
       await rm(root, { force: true, recursive: true });
     }

@@ -33,12 +33,23 @@ import {
 } from "./logging.js";
 import { resolvePackagedNamespacePaths } from "./paths.js";
 import { packagedEntryUrl, registerOdProtocol } from "./protocol.js";
+import {
+  OPEN_DESIGN_PROTOCOL_SCHEME,
+  createCloudScheduleAuthCallbackBroker,
+  findCloudScheduleAuthCallbackUrl,
+} from "./auth-window.js";
 import { startPackagedSidecars } from "./sidecars.js";
 import { syncWindowsUninstallDisplayVersion } from "./windows-lifecycle.js";
 
 let packagedLogger: PackagedDesktopLogger | null = null;
 let pendingSecondInstanceFocus = false;
 let showExistingDesktop: (() => void) | null = null;
+const authCallbackBroker = createCloudScheduleAuthCallbackBroker();
+
+app.on("open-url", (event, url) => {
+  if (!authCallbackBroker.emit(url)) return;
+  event.preventDefault();
+});
 
 function createPackagedDesktopStamp(namespace: string): SidecarStamp {
   return {
@@ -104,7 +115,12 @@ async function main(): Promise<void> {
   attachPackagedDesktopProcessLogging({ logger: packagedLogger, paths, stamp });
   applyPackagedElectronPathOverrides(paths);
   applyPackagedUpdaterEnv(activeConfig.updateMetadataUrl);
-  if (!claimPackagedSingleInstanceLock(app, () => {
+  if (!claimPackagedSingleInstanceLock(app, (commandLine) => {
+    const authCallbackUrl = findCloudScheduleAuthCallbackUrl(commandLine);
+    if (authCallbackUrl != null) {
+      authCallbackBroker.emit(authCallbackUrl);
+      return;
+    }
     if (showExistingDesktop == null) {
       pendingSecondInstanceFocus = true;
       return;
@@ -115,6 +131,15 @@ async function main(): Promise<void> {
   }
   const identity = await writePackagedDesktopIdentity({ paths, stamp });
   await app.whenReady();
+  try {
+    app.setAsDefaultProtocolClient(OPEN_DESIGN_PROTOCOL_SCHEME);
+  } catch (error) {
+    packagedLogger?.warn("failed to register Open Design URL protocol", { error });
+  }
+  const initialAuthCallbackUrl = findCloudScheduleAuthCallbackUrl(process.argv);
+  if (initialAuthCallbackUrl != null) {
+    authCallbackBroker.emit(initialAuthCallbackUrl);
+  }
 
   // Show the brand splash IMMEDIATELY, before we await the daemon/web sidecars
   // below. Cold boot otherwise leaves the user staring at no window at all for
@@ -171,6 +196,29 @@ async function main(): Promise<void> {
   // gate, which is a no-op when the label is already current).
   setSplashStage(splash.window, "workspace");
   registerOdProtocol(sidecars.web.url ?? "http://127.0.0.1:0");
+
+  // Cloud-schedule (云档期) authorization gate. Runs AFTER the splash is on
+  // screen and the sidecars are up, but BEFORE the desktop main window is
+  // created. Shows a codex-style auth page; on CTA it opens the real
+  // cloud-schedule login page. A returning user with a persisted token skips
+  // the gate. If the user closes the auth window without authorizing, the
+  // app exits — Open Design requires authorization to proceed.
+  const { runAuthGate } = await import("./auth-runtime.js");
+  const authResult = await runAuthGate({
+    onAuthCallback: (callback) => authCallbackBroker.subscribe(callback),
+    dataRoot: paths.dataRoot,
+    splashWindow: splash.window,
+  });
+  if (!authResult.authorized) {
+    packagedLogger?.info("cloud-schedule authorization cancelled; exiting");
+    app.quit();
+    return;
+  }
+  // The auth gate hid the splash while the auth page was on screen. Restore
+  // it so the brand animation masks the remaining main-window boot.
+  if (!splash.window.isDestroyed()) {
+    splash.window.show();
+  }
 
   const { runDesktopMain } = await import("@open-design/desktop/main");
   await runDesktopMain(runtime, {

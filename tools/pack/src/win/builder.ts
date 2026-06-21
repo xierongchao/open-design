@@ -205,6 +205,12 @@ async function runElectronBuilderRaw(
       warningsAsErrors: false,
     },
     productName: PRODUCT_NAME,
+    protocols: [
+      {
+        name: PRODUCT_NAME,
+        schemes: ["od"],
+      },
+    ],
     publish: [{ provider: "generic", url: "https://updates.invalid/open-design" }],
     win: {
       artifactName: `${PRODUCT_NAME}-${namespaceToken}.\${ext}`,
