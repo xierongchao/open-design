@@ -251,25 +251,22 @@ export function createCloudScheduleAuthCallbackBroker(): CloudScheduleAuthCallba
 }
 
 // ---------------------------------------------------------------------------
-// Inline authorization page HTML (codex-style)
+// Inline authorization page HTML (self-contained, no external assets)
 // ---------------------------------------------------------------------------
 
 /**
- * The default Open Design mark as inline SVG markup. Embedded directly so the
- * auth page is fully self-contained (no external asset fetch before the web
- * sidecar is up).
+ * The default brand logo as an inline SVG markup string (拓者 white wordmark).
+ * The fill is `#fff` so it reads on the `#0d0d0d` dark background. Embedded
+ * directly so the authorization page is fully self-contained (no external
+ * asset fetch before the web sidecar is up).
  */
 export const DEFAULT_AUTH_LOGO_SVG =
-  '<svg width="82" height="82" viewBox="19 18.7266 82 82" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Open Design"><path d="M101 59.7266C101 95.3019 95.5753 100.727 60 100.727C24.4247 100.727 19 95.3019 19 59.7266C19 24.1512 24.4247 18.7266 60 18.7266C95.5753 18.7266 101 24.1512 101 59.7266Z" fill="#202020"/><path fill-rule="evenodd" clip-rule="evenodd" d="M59.8885 34.4258C73.8627 34.4258 85.191 45.7541 85.191 59.7283C85.191 73.7025 73.8627 85.0309 59.8885 85.0309H37.9523C36.0891 85.0309 34.5861 83.528 34.586 81.6648C34.586 76.0216 34.5859 64.7754 34.5859 59.7283C34.5859 45.7541 45.9143 34.4258 59.8885 34.4258ZM59.8886 39.4864C48.7092 39.4864 39.6465 48.5491 39.6465 59.7284C39.6465 70.9078 48.7092 79.9704 59.8886 79.9704C71.0679 79.9704 80.1305 70.9078 80.1306 59.7284C80.1306 48.5491 71.0679 39.4864 59.8886 39.4864Z" fill="white"/><path d="M58.3164 71.6047L50.602 51.3039C50.3524 50.6469 50.994 50.0028 51.6467 50.2553L71.957 58.113C72.7928 58.4364 72.5625 59.6841 71.667 59.6841H59.8788V71.3146C59.8788 72.2163 58.6364 72.447 58.3164 71.6047Z" fill="white"/></svg>';
+  '<svg viewBox="0 0 169.3 83.14" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Open Design"><polygon fill="#fff" points="95.35 45.32 95.58 45.32 116.88 45.32 119.41 21.33 167.04 21.33 169.3 0 100.28 0 98.18 21.33 96.24 38.89 51.3 38.91 53.13 21.33 88.3 21.33 90.52 0 2.3 0 0 21.33 29.13 21.33 26.77 45.32 25.53 58.42 49.27 58.42 94.73 58.42 94.12 58.42 93.44 64.73 48.61 64.73 24.81 64.73 22.72 82.9 46.72 82.9 47.94 71.16 92.88 71.16 91.62 83.14 160.49 83.14 162.44 64.69 130.91 64.69 130.91 64.73 114.83 64.71 116.18 51.96 94.88 51.96 94.87 51.99 49.92 52 50.62 45.32 95.35 45.32"/></svg>';
 
 /**
- * Build the HTML for the inline authorization page. The page is
- * self-contained: no external assets, no fetch — it only renders the brand
- * surface and writes a console marker when the CTA is clicked.
- *
- * Logo resolution order: `logoSvg` (inline markup, preferred for the crisp
- * vector wordmark) → `logoDataUrl` (raster PNG data URL) → the bundled white
- * 拓者 wordmark (`DEFAULT_AUTH_LOGO_SVG`).
+ * Build the HTML for the inline authorization page. The page is self-contained:
+ * no external assets, no fetch — it renders the brand surface (拓者 white logo)
+ * on a dark background and a single CTA to start cloud-schedule authorization.
  *
  * Animation philosophy follows the root AGENTS.md: enter ~200ms with
  * `cubic-bezier(0.23, 1, 0.32, 1)`, never scale from 0.
@@ -291,13 +288,13 @@ export function buildAuthPageHtml(options: {
 <title>Open Design</title>
 <style>
   :root {
-    color-scheme: light;
-    --bg: #fbfbfa;
-    --text: #151515;
-    --text-muted: #7a7a76;
-    --accent: #0b0b0b;
-    --accent-hover: #222222;
-    --border: #e7e4df;
+    color-scheme: dark;
+    --bg: #0d0d0d;
+    --text: #f5f5f5;
+    --text-muted: #a8a8a8;
+    --accent: #ffffff;
+    --accent-hover: #e8e8e8;
+    --border: #2a2a2a;
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -317,14 +314,14 @@ export function buildAuthPageHtml(options: {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 64px 48px 44px;
-    gap: 30px;
+    padding: 48px 40px;
+    gap: 28px;
   }
   .auth-brand {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 20px;
+    gap: 22px;
     opacity: 0;
     transform: translateY(10px);
     animation: auth-enter 420ms var(--ease-out) 80ms forwards;
@@ -332,17 +329,17 @@ export function buildAuthPageHtml(options: {
   .auth-logo {
     display: block;
   }
+  /* Horizontal wordmark (拓者 white logo) — sized by height. */
   .auth-logo--svg {
-    width: 54px;
-    height: 54px;
+    height: 56px;
+    width: auto;
     display: block;
   }
   .auth-logo--svg svg {
     height: 100%;
-    width: 100%;
+    width: auto;
     display: block;
   }
-  /* Raster fallback (PNG) — square-ish icon. */
   .auth-logo--img {
     width: 76px;
     height: 76px;
@@ -353,19 +350,19 @@ export function buildAuthPageHtml(options: {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     text-align: center;
   }
   .auth-welcome {
-    font-size: 27px;
-    font-weight: 650;
-    letter-spacing: 0;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
   }
   .auth-subtitle {
     font-size: 14px;
     color: var(--text-muted);
-    line-height: 1.65;
-    max-width: 380px;
+    line-height: 1.5;
+    max-width: 360px;
   }
   .auth-actions {
     display: flex;
@@ -373,18 +370,18 @@ export function buildAuthPageHtml(options: {
     align-items: center;
     gap: 14px;
     width: 100%;
-    max-width: 360px;
+    max-width: 320px;
     opacity: 0;
     transform: translateY(10px);
     animation: auth-enter 420ms var(--ease-out) 180ms forwards;
   }
   .auth-btn {
     width: 100%;
-    height: 48px;
+    height: 46px;
     border: none;
-    border-radius: 9px;
+    border-radius: 10px;
     background: var(--accent);
-    color: #ffffff;
+    color: #0d0d0d;
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
@@ -393,6 +390,12 @@ export function buildAuthPageHtml(options: {
   }
   .auth-btn:hover { background: var(--accent-hover); }
   .auth-btn:active { transform: scale(0.98); }
+  .auth-btn:disabled {
+    background: #3a3a3a;
+    color: var(--text-muted);
+    cursor: not-allowed;
+    transform: none;
+  }
   .auth-hint {
     font-size: 12px;
     color: var(--text-muted);
@@ -409,12 +412,12 @@ export function buildAuthPageHtml(options: {
     ${logoHtml}
     <div class="auth-titles">
       <h1 class="auth-welcome">欢迎使用 Open Design</h1>
-      <p class="auth-subtitle">使用云档期账号完成授权后，将自动回到 Open Design 主界面。</p>
+      <p class="auth-subtitle">使用云档期账号授权登录以继续</p>
     </div>
   </div>
   <div class="auth-actions">
     <button class="auth-btn" id="login-btn" type="button">使用云档期授权登录</button>
-    <p class="auth-hint">将在系统浏览器中打开云档期登录页面</p>
+    <p class="auth-hint">点击后将打开云档期登录页面完成授权</p>
   </div>
 </div>
 <script>
@@ -422,8 +425,10 @@ export function buildAuthPageHtml(options: {
     var btn = document.getElementById('login-btn');
     if (!btn) return;
     btn.addEventListener('click', function () {
-      btn.textContent = '重新打开云档期登录页';
-      // Signal the main process via a console marker (no preload required).
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.textContent = '正在打开登录页...';
+      // Signal the main main process via a console marker (no preload required).
       // The main process observes console-message for this exact string.
       console.log('${AUTH_OPEN_LOGIN_MARKER}');
     });

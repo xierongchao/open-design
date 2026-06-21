@@ -426,6 +426,13 @@ export interface Dict {
   'settings.privacyDataDeletionHint': string;
   'settings.about': string;
   'settings.aboutHint': string;
+  'settings.account': string;
+  'settings.accountHint': string;
+  'settings.accountAbout': string;
+  'settings.accountAboutHint': string;
+  'settings.accountSignOutTitle': string;
+  'settings.accountSignOutHint': string;
+  'settings.accountSignOut': string;
   'settings.appVersion': string;
   'settings.appChannel': string;
   'settings.appRuntime': string;

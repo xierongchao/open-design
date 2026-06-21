@@ -367,6 +367,14 @@ export type DesktopRuntimeOptions = {
   rendererLogPath?: string | null;
   requestQuit?: () => void;
   /**
+   * Absolute path to the cloud-schedule (云档期) auth data root. When set,
+   * the runtime registers an `od:auth:sign-out` IPC handler that clears the
+   * persisted auth token and relaunches the app so the authorization window
+   * reappears. Omitted by runtimes that do not run the auth gate (tools-dev,
+   * tests); the renderer feature-detects via the host bridge.
+   */
+  cloudAuthDataRoot?: string;
+  /**
    * Optional pre-created splash window. The packaged entry creates the splash
    * BEFORE awaiting the daemon/web sidecars so the brand animation is on screen
    * in parallel with startup (no black no-window gap). When omitted (tools-dev,
@@ -2001,6 +2009,39 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     if (visible) petWindow.showInactive();
     else petWindow.hide();
   });
+
+  // Cloud-schedule (云档期) auth sign-out. Clears the persisted auth token
+  // under the namespace data root and relaunches the app so the
+  // authorization window reappears. Only registered when the runtime is
+  // given a cloudAuthDataRoot (packaged builds that run the auth gate); the
+  // renderer feature-detects via the host bridge so the settings entry is
+  // hidden on hosts without the gate.
+  ipcMain.removeHandler("od:auth:sign-out");
+  if (typeof options.cloudAuthDataRoot === "string" && options.cloudAuthDataRoot.length > 0) {
+    const cloudAuthPath = join(options.cloudAuthDataRoot, "cloud-auth.json");
+    ipcMain.handle("od:auth:sign-out", async (event): Promise<OpenDesignHostActionResult> => {
+      requireMainWindowSender(event);
+      try {
+        const { unlink } = await import("node:fs/promises");
+        try {
+          await unlink(cloudAuthPath);
+        } catch (error) {
+          // Missing file is fine — the user may never have persisted a token.
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        // Relaunch on the next tick so the IPC response is flushed to the
+        // renderer before the process exits (otherwise the settings dialog
+        // shows a stale "signing out…" state if the quit is synchronous).
+        setTimeout(() => {
+          app.relaunch();
+          app.exit(0);
+        }, 0);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+    });
+  }
 
   ipcMain.removeHandler('od:print-pdf');
   ipcMain.handle('od:print-pdf', async (_event, html: unknown, nonce: unknown, options: unknown): Promise<void> => {

@@ -257,6 +257,9 @@ async function main(): Promise<void> {
       controls.show();
     },
     preloadPath: join(app.getAppPath(), "preload.cjs"),
+    // Pass the cloud-auth data root so the desktop runtime can register the
+    // `od:auth:sign-out` IPC handler (clears the persisted token + relaunches).
+    cloudAuthDataRoot: paths.dataRoot,
     update: {
       currentVersion: activeConfig.appVersion,
       downloadRoot: paths.updateRoot,

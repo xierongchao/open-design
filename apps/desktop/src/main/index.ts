@@ -130,6 +130,13 @@ export type DesktopMainOptions = {
    */
   discoverDaemonUrl?: () => Promise<string | null>;
   preloadPath?: string;
+  /**
+   * Absolute path to the cloud-schedule (云档期) auth data root. Forwarded to
+   * the runtime so it can register the `od:auth:sign-out` IPC handler that
+   * clears the persisted auth token and relaunches the app. Omitted by
+   * runtimes that do not run the auth gate (tools-dev, tests).
+   */
+  cloudAuthDataRoot?: string;
   onDesktopReady?: (controls: { show(): void }) => void;
   /**
    * Optional pre-created splash window. The packaged entry creates it before
@@ -681,6 +688,7 @@ export async function runDesktopMain(
     registerDesktopAuthWithDaemon: () => registerDesktopAuthWithDaemon(runtime, desktopAuthSecret),
     rendererLogPath,
     requestQuit: shutdownAndExit,
+    cloudAuthDataRoot: options.cloudAuthDataRoot,
     splashWindow: options.splashWindow,
     splashStartedAt: options.splashStartedAt,
     updater,

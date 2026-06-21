@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 import { Button, VisuallyHidden } from '@open-design/components';
+import { isCloudAuthSignOutAvailable, signOutCloudAuth } from '@open-design/host';
 import { validateBaseUrl } from '@open-design/contracts/api/connectionTest';
 import {
   agentIdToTracking,
@@ -1181,6 +1182,23 @@ export function SettingsDialog({
   }, []);
   const [showApiKey, setShowApiKey] = useState(false);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
+  // Cloud-schedule (云档期) auth: the sign-out entry only exists in packaged
+  // builds that run the auth gate. Feature-detect once; keep a busy flag so
+  // the button shows "loading" while the main process clears the token and
+  // relaunches (the relaunch kills this renderer).
+  const cloudAuthSignOutAvailable = isCloudAuthSignOutAvailable();
+  const [cloudAuthSigningOut, setCloudAuthSigningOut] = useState(false);
+  const handleCloudAuthSignOut = useCallback(async () => {
+    if (cloudAuthSigningOut) return;
+    setCloudAuthSigningOut(true);
+    // signOutCloudAuth clears the persisted token and relaunches the app.
+    // The renderer is torn down by the relaunch; we only reach the catch /
+    // reset on failure (e.g. host bridge absent).
+    const result = await signOutCloudAuth();
+    if (!result.ok) {
+      setCloudAuthSigningOut(false);
+    }
+  }, [cloudAuthSigningOut]);
   // Scroll the right-hand content pane back to the top whenever the user
   // picks a different settings section. Without this, switching from a
   // long section the user had scrolled (e.g. Library) into a short one
@@ -2841,7 +2859,7 @@ export function SettingsDialog({
     // 'library' is opened via EntryShell route — SettingsDialog doesn't
     // render it but SettingsSection must accept the token (see type def).
     library: { title: '', subtitle: '' },
-    about: { title: t('settings.about'), subtitle: t('settings.aboutHint') },
+    about: { title: t('settings.accountAbout'), subtitle: t('settings.accountAboutHint') },
   };
   const activeHeader = sectionHeader[activeSection];
   const installedAgents = agents.filter((a) => a.available);
@@ -3336,8 +3354,8 @@ export function SettingsDialog({
             >
               <Icon name="settings" size={18} />
               <span>
-                <strong>{t('settings.about')}</strong>
-                <small>{t('settings.aboutHint')}</small>
+                <strong>{t('settings.accountAbout')}</strong>
+                <small>{t('settings.accountAboutHint')}</small>
               </span>
             </button>
           </aside>
@@ -4734,6 +4752,21 @@ export function SettingsDialog({
                 </div>
                 <ExportDiagnosticsRow />
               </div>
+              {cloudAuthSignOutAvailable ? (
+                <div className="settings-field-group settings-field-group--account">
+                  <div className="settings-field-label">
+                    <strong>{t('settings.accountSignOutTitle')}</strong>
+                    <small>{t('settings.accountSignOutHint')}</small>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    onClick={handleCloudAuthSignOut}
+                    disabled={cloudAuthSigningOut}
+                  >
+                    {cloudAuthSigningOut ? t('common.loading') : t('settings.accountSignOut')}
+                  </Button>
+                </div>
+              ) : null}
             </section>
           ) : null}
           {aboutToast ? (

@@ -240,6 +240,19 @@ const browser = {
   },
 };
 
+// Cloud-schedule (云档期) auth gate. `signOut` clears the persisted token and
+// relaunches the app so the authorization window reappears. Optional on the
+// host bridge type; the renderer feature-detects before showing the entry.
+const auth = {
+  signOut: async (): Promise<OpenDesignHostActionResult> => {
+    try {
+      return await ipcRenderer.invoke('od:auth:sign-out');
+    } catch (error) {
+      return actionFailure(reasonFromError(error));
+    }
+  },
+};
+
 const capture = {
   page: async (options?: OpenDesignHostCaptureOptions): Promise<OpenDesignHostCaptureResult> => {
     try {
@@ -297,6 +310,7 @@ const hostBridge = {
     platform: process.platform,
     ...(osLocale !== undefined ? { osLocale } : {}),
   },
+  auth,
   shell,
   browser,
   capture,

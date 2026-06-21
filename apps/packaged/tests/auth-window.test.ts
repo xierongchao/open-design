@@ -287,17 +287,14 @@ describe('buildAuthPageHtml', () => {
     const html = buildAuthPageHtml({ logoDataUrl: 'data:image/png;base64,AAAA' });
     expect(html).toContain('src="data:image/png;base64,AAAA"');
     expect(html).toContain('<img class="auth-logo auth-logo--img"');
-    // The vector wordmark span element is not rendered when a raster logo
-    // is given. (The .auth-logo--svg CSS rule is always in the stylesheet,
-    // so assert on the rendered element markup instead.)
     expect(html).not.toContain('<span class="auth-logo auth-logo--svg"');
   });
 
-  it('uses the bundled Open Design mark SVG when no logo is provided', () => {
+  it('uses the bundled 拓者 wordmark SVG when no logo is provided', () => {
     const html = buildAuthPageHtml({});
     expect(html).toContain('auth-logo--svg');
     expect(html).toContain('aria-label="Open Design"');
-    expect(html).toContain('viewBox="19 18.7266 82 82"');
+    expect(html).toContain('viewBox="0 0 169.3 83.14"');
   });
 
   it('renders a custom inline SVG when logoSvg is provided', () => {
@@ -307,18 +304,15 @@ describe('buildAuthPageHtml', () => {
     expect(html).toContain('<circle cx="5" cy="5" r="4"');
   });
 
-  it('uses the codex-style light background and welcome copy', () => {
+  it('uses the dark background and authorization copy', () => {
     const html = buildAuthPageHtml({});
-    expect(html).toContain('--bg: #fbfbfa');
+    expect(html).toContain('--bg: #0d0d0d');
     expect(html).toContain('欢迎使用 Open Design');
     expect(html).toContain('使用云档期授权登录');
-    expect(html).toContain('使用云档期账号完成授权后，将自动回到 Open Design 主界面。');
-    expect(html).toContain('将在系统浏览器中打开云档期登录页面');
   });
 
   it('omits any register button (single CTA only)', () => {
     const html = buildAuthPageHtml({});
-    // The page must have exactly one button.
     const buttonMatches = html.match(/<button/g) ?? [];
     expect(buttonMatches).toHaveLength(1);
     expect(html.toLowerCase()).not.toContain('注册');

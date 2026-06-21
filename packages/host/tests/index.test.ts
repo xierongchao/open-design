@@ -13,6 +13,7 @@ import {
   getHostUpdaterStatus,
   getOpenDesignHost,
   installHostUpdater,
+  isCloudAuthSignOutAvailable,
   isOpenDesignHostAvailable,
   isOpenDesignHostBridge,
   normalizeOpenDesignHostProjectImportResult,
@@ -22,6 +23,7 @@ import {
   openHostProjectPath,
   quitHostAfterUpdaterInstallerOpen,
   setHostPetVisible,
+  signOutCloudAuth,
   subscribeHostUpdater,
 } from "../src/index.js";
 import { createMockOpenDesignHost, installMockOpenDesignHost } from "../src/testing.js";
@@ -231,6 +233,38 @@ describe("open-design host contract", () => {
     expect(pickAndImport).toHaveBeenCalledWith({ skillId: "skill-1" });
     expect(print).toHaveBeenCalledWith("<html></html>", "nonce", { deck: true });
     expect(setVisible).toHaveBeenCalledWith(true);
+  });
+
+  it("signs out of the cloud-schedule auth gate via the host bridge", async () => {
+    const signOut = vi.fn(async (): Promise<{ ok: true }> => ({ ok: true }));
+    const scope: Record<string, unknown> = {};
+    scope[OPEN_DESIGN_HOST_GLOBAL] = createMockOpenDesignHost({
+      auth: { signOut },
+    });
+
+    expect(isCloudAuthSignOutAvailable(scope)).toBe(true);
+    await expect(signOutCloudAuth(scope)).resolves.toEqual({ ok: true });
+    expect(signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports cloud auth sign-out unavailable when the host omits the auth namespace", async () => {
+    const scope: Record<string, unknown> = {};
+    scope[OPEN_DESIGN_HOST_GLOBAL] = createMockOpenDesignHost({});
+
+    expect(isCloudAuthSignOutAvailable(scope)).toBe(false);
+    await expect(signOutCloudAuth(scope)).resolves.toMatchObject({
+      ok: false,
+      reason: expect.any(String),
+    });
+  });
+
+  it("reports cloud auth sign-out unavailable when there is no host at all", async () => {
+    const scope: Record<string, unknown> = {};
+    expect(isCloudAuthSignOutAvailable(scope)).toBe(false);
+    await expect(signOutCloudAuth(scope)).resolves.toMatchObject({
+      ok: false,
+      reason: expect.any(String),
+    });
   });
 
   it("routes updater status, actions, and subscriptions through package-owned helpers", async () => {

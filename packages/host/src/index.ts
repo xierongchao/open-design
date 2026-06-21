@@ -265,6 +265,12 @@ export type OpenDesignHostUpdaterResult =
 export type OpenDesignHostUpdaterStatusListener = (status: OpenDesignHostUpdaterStatusSnapshot) => void;
 
 export type OpenDesignHostBridge = {
+  // The whole namespace is optional so older host builds (without the
+  // cloud-schedule auth gate) still satisfy the bridge shape; callers
+  // feature-detect via `isCloudAuthSignOutAvailable` before use.
+  auth?: {
+    signOut(): Promise<OpenDesignHostActionResult>;
+  };
   browser: {
     clearData(options?: OpenDesignHostBrowserClearDataOptions): Promise<OpenDesignHostActionResult>;
   };
@@ -511,6 +517,34 @@ export async function clearHostBrowserData(
   if (host == null) return unavailable("Open Design host is not available");
   try {
     return await host.browser.clearData(options);
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
+ * Whether the host supports signing out of the cloud-schedule auth gate. Used
+ * by the settings UI to show/hide the "Sign out" entry — it only exists in
+ * packaged builds where the auth gate runs. Web and non-gated hosts report
+ * false and the settings section is hidden.
+ */
+export function isCloudAuthSignOutAvailable(scope: OpenDesignHostGlobalScope = globalThis): boolean {
+  const host = getOpenDesignHost(scope);
+  return host?.auth?.signOut != null && typeof host.auth.signOut === "function";
+}
+
+/**
+ * Sign out of the cloud-schedule (云档期) auth gate. Clears the persisted
+ * auth token and relaunches the app so the authorization window reappears.
+ * Returns `ok: false` when the host does not support sign-out (web, or an
+ * older packaged build without the auth gate).
+ */
+export async function signOutCloudAuth(scope: OpenDesignHostGlobalScope = globalThis): Promise<OpenDesignHostActionResult> {
+  const host = getOpenDesignHost(scope);
+  if (host == null) return unavailable("Open Design host is not available");
+  if (host.auth?.signOut == null) return unavailable("cloud auth sign-out is not available in this host");
+  try {
+    return await host.auth.signOut();
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : String(error));
   }

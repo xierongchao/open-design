@@ -82,15 +82,15 @@ export async function runAuthGate(options: AuthGateOptions): Promise<AuthGateRes
           options.splashWindow.hide();
         }
         const win = new BrowserWindow({
-          width: 900,
-          height: 640,
+          width: 460,
+          height: 620,
           resizable: false,
           minimizable: false,
           maximizable: false,
           fullscreenable: false,
           frame: true,
           title: "Open Design",
-          backgroundColor: "#fbfbfa",
+          backgroundColor: "#0d0d0d",
           show: true,
           autoHideMenuBar: true,
           center: true,
