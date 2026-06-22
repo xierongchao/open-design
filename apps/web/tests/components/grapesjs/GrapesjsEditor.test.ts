@@ -16,12 +16,15 @@ import {
   calculateCanvasFitToViewport,
   calculateGrapesjsRadiusHandleInset,
   calculateGrapesjsSelectionStrokeRect,
+  calculateGrapesjsTableColumnAddButtonPosition,
   createGrapesjsComponentClipboardState,
   clearGrapesjsManagedInlineStyle,
   clipboardHasImageFile,
   dissolveGrapesjsFlexSelection,
+  duplicateGrapesjsTableColumnFromCell,
   firstGrapesjsClipboardImageFile,
   getGrapesjsCanvasToolDragStyle,
+  getGrapesjsHostSelectionOverrideCss,
   isGrapesjsEditorEditing,
   getGrapesjsIframeSelectionOutlineCss,
   getGrapesjsIframeSelectionStyleCss,
@@ -65,7 +68,7 @@ import {
 import { GRAPESJS_SHORTCUT_GROUPS } from '../../../src/components/grapesjs/shortcuts';
 
 describe('GrapesjsEditor canvas fit', () => {
-  it('centers the HTML frame vertically when it fits inside the canvas', () => {
+  it('centers the HTML frame horizontally and vertically when it fits inside the canvas', () => {
     expect(calculateCanvasFitToViewport({
       frameWidth: 390,
       frameHeight: 891,
@@ -73,12 +76,12 @@ describe('GrapesjsEditor canvas fit', () => {
       canvasHeight: 1200,
     })).toEqual({
       zoom: 100,
-      x: 0,
-      y: 155,
+      x: 305,
+      y: 154.5,
     });
   });
 
-  it('keeps a taller HTML frame top-aligned instead of hiding the top content', () => {
+  it('keeps a near-full-height HTML frame centered in GrapesJS translated coordinates', () => {
     expect(calculateCanvasFitToViewport({
       frameWidth: 390,
       frameHeight: 1192,
@@ -86,8 +89,8 @@ describe('GrapesjsEditor canvas fit', () => {
       canvasHeight: 1200,
     })).toEqual({
       zoom: 100,
-      x: 0,
-      y: 0,
+      x: 305,
+      y: 4,
     });
   });
 });
@@ -115,6 +118,55 @@ describe('GrapesjsEditor zoom style vars', () => {
       canvasHairline: '2px',
       screenHairline: '1px',
     });
+  });
+});
+
+describe('GrapesjsEditor table column tools', () => {
+  it('positions the column add button above the selected header and keeps it larger than the resize handle', () => {
+    expect(calculateGrapesjsTableColumnAddButtonPosition({
+      rect: { left: 120, top: 80, width: 260, height: 64 },
+    })).toEqual({ left: 366, top: 38 });
+  });
+
+  it('duplicates the current table column to the right and keeps the new header selected', () => {
+    const table = fakeComponent({ tagName: 'table' });
+    const thead = fakeComponent({ tagName: 'thead' });
+    const tbody = fakeComponent({ tagName: 'tbody' });
+    const headerRow = fakeComponent({ tagName: 'tr' });
+    const bodyRow = fakeComponent({ tagName: 'tr' });
+    const firstHeader = fakeComponent({
+      tagName: 'th',
+      attrs: { 'data-cell': 'header-a' },
+      style: { color: '#00843d' },
+    });
+    const secondHeader = fakeComponent({ tagName: 'th', attrs: { 'data-cell': 'header-b' } });
+    const firstBody = fakeComponent({ tagName: 'td', attrs: { 'data-cell': 'body-a' } });
+    const secondBody = fakeComponent({ tagName: 'td', attrs: { 'data-cell': 'body-b' } });
+    const select = vi.fn();
+    const scheduleEmit = vi.fn();
+
+    thead.move(table);
+    tbody.move(table);
+    headerRow.move(thead);
+    bodyRow.move(tbody);
+    firstHeader.move(headerRow);
+    secondHeader.move(headerRow);
+    firstBody.move(bodyRow);
+    secondBody.move(bodyRow);
+
+    expect(duplicateGrapesjsTableColumnFromCell(firstHeader as never, {
+      select: select as never,
+      scheduleEmit,
+    })).toBe(true);
+
+    expect(headerRow.components().length).toBe(3);
+    expect(bodyRow.components().length).toBe(3);
+    expect(headerRow.components().at(1)?.getAttributes()).toMatchObject({ 'data-cell': 'header-a' });
+    expect(headerRow.components().at(2)).toBe(secondHeader);
+    expect(bodyRow.components().at(1)?.getAttributes()).toMatchObject({ 'data-cell': 'body-a' });
+    expect(bodyRow.components().at(2)).toBe(secondBody);
+    expect(select).toHaveBeenCalledWith(headerRow.components().at(1));
+    expect(scheduleEmit).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -471,6 +523,37 @@ describe('GrapesjsEditor iframe selection CSS', () => {
     expect(hoverBlock).toContain('outline-offset: calc(-1 * var(--od-gjs-hairline, 1px)) !important;');
   });
 
+  it('turns off iframe hover outlines on the selected element so table cells do not show two blue boxes', () => {
+    const css = getGrapesjsIframeSelectionOutlineCss();
+    const selectedHoverBlock = css.match(/html body \.gjs-selected\.gjs-hovered,[^}]*\}/)?.[0] ?? '';
+
+    expect(selectedHoverBlock).toContain('html body .gjs-selected.gjs-hovered');
+    expect(selectedHoverBlock).toContain('outline: 0 !important;');
+    expect(selectedHoverBlock).toContain('outline-offset: 0 !important;');
+  });
+
+  it('turns off GrapesJS host highlighter and resizer frame lines so table selections only show one stroke', () => {
+    const css = getGrapesjsHostSelectionOverrideCss();
+    const highlighterBlock = css.match(/\.gjs-cv-canvas \.gjs-highlighter,[^}]*\}/)?.[0] ?? '';
+    const resizerBlock = css.match(/\.gjs-resizer,[^}]*\}/)?.[0] ?? '';
+
+    expect(highlighterBlock).toContain('.gjs-cv-canvas .gjs-highlighter-sel');
+    expect(highlighterBlock).toContain('display: none !important;');
+    expect(highlighterBlock).toContain('outline: 0 !important;');
+    expect(highlighterBlock).toContain('box-shadow: none !important;');
+    expect(resizerBlock).toContain('.gjs-resizer::before');
+    expect(resizerBlock).toContain('.gjs-resizer::after');
+    expect(resizerBlock).toContain('background: transparent !important;');
+  });
+
+  it('keeps the table column add hover visually stable instead of scaling into the resize handle', () => {
+    const css = getGrapesjsHostSelectionOverrideCss();
+    const hoverBlock = css.match(/\.od-col-add-btn:hover \{[^}]*\}/)?.[0] ?? '';
+
+    expect(hoverBlock).toContain('transform: none;');
+    expect(hoverBlock).toContain('background: #2563eb;');
+  });
+
   it('can render element-picker selection outlines in green', () => {
     const css = getGrapesjsIframeSelectionOutlineCss('element-selection');
 
@@ -536,11 +619,11 @@ describe('GrapesjsEditor iframe selection CSS', () => {
 });
 
 type FakeGrapesjsComponent = {
-  append(definition: { attributes?: Record<string, string>; style?: Record<string, string> }, opts?: { at?: number }): FakeGrapesjsComponent[];
+  append(definition: FakeGrapesjsComponent | { attributes?: Record<string, string>; style?: Record<string, string> }, opts?: { at?: number }): FakeGrapesjsComponent[];
   clone(): FakeGrapesjsComponent;
   components(): {
     length: number;
-    add(definition: { attributes?: Record<string, string>; style?: Record<string, string> }, opts?: { at?: number }): FakeGrapesjsComponent[];
+    add(definition: FakeGrapesjsComponent | { attributes?: Record<string, string>; style?: Record<string, string> }, opts?: { at?: number }): FakeGrapesjsComponent[];
     at(index: number): FakeGrapesjsComponent | null;
     get(index: number): FakeGrapesjsComponent | null;
   };
@@ -578,6 +661,7 @@ function fakeComponent(options: {
   rect?: DOMRect | null;
   el?: HTMLElement | null;
   mergeStyleUpdates?: boolean;
+  tagName?: string;
   type?: string;
 } = {}): FakeGrapesjsComponent {
   let parent: FakeGrapesjsComponent | null = null;
@@ -594,11 +678,13 @@ function fakeComponent(options: {
   );
   const comp: FakeGrapesjsComponent = {
     append(definition, opts) {
-      const child = fakeComponent({
-        attrs: definition.attributes,
-        style: definition.style,
-        rect: fakeDomRect(0, 0, 1, 1),
-      });
+      const child = isFakeGrapesjsComponent(definition)
+        ? definition
+        : fakeComponent({
+            attrs: definition.attributes,
+            style: definition.style,
+            rect: fakeDomRect(0, 0, 1, 1),
+          });
       child.move(comp, opts);
       return [child];
     },
@@ -607,6 +693,7 @@ function fakeComponent(options: {
         attrs: { ...attrs },
         style: { ...style },
         rect: options.rect,
+        tagName: options.tagName,
         type: options.type,
       });
     },
@@ -620,6 +707,7 @@ function fakeComponent(options: {
     }),
     get(key) {
       if (key === 'type') return options.type;
+      if (key === 'tagName') return options.tagName;
       return undefined;
     },
     getAttributes: () => attrs,
@@ -668,6 +756,14 @@ function fakeComponent(options: {
   };
   (comp as unknown as { __children: FakeGrapesjsComponent[] }).__children = children;
   return comp;
+}
+
+function isFakeGrapesjsComponent(value: unknown): value is FakeGrapesjsComponent {
+  return Boolean(
+    value &&
+    typeof (value as FakeGrapesjsComponent).components === 'function' &&
+    typeof (value as FakeGrapesjsComponent).move === 'function',
+  );
 }
 
 describe('GrapesjsEditor flex auto-layout dissolve', () => {

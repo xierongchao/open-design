@@ -2252,7 +2252,6 @@ export function calculateCanvasFitToViewport({
     return { zoom: 100, x: 0, y: 0 };
   }
   const availableWidth = Math.max(1, canvasWidth - padding);
-  const availableHeight = Math.max(1, canvasHeight - padding);
   const widthRatio = frameWidth > 0 ? availableWidth / frameWidth : 1;
   const shouldFit = frameWidth > availableWidth;
   const nextZoom = shouldFit
@@ -2260,11 +2259,22 @@ export function calculateCanvasFitToViewport({
     : 100;
   const zoom = Number.isFinite(nextZoom) ? nextZoom : 100;
   const zoomScale = zoom / 100;
-  const scaledHeight = frameHeight * zoomScale;
-  const y = scaledHeight <= availableHeight
-    ? Math.max(0, Math.round((canvasHeight - scaledHeight) / 2))
-    : 0;
-  return { zoom, x: 0, y };
+  // Center the frame in the canvas. GrapesJS' infiniteCanvas renders the
+  // frame through `scale(z) translate(x/z, y/z)` with a transform-origin at
+  // the `__frames` container's center (== canvas center, since the container
+  // fills the canvas). For a frame whose top-left sits at (0,0) inside that
+  // container, the on-screen top-left resolves to `canvasCenter * (1 - z) + c`,
+  // so to land it at the centered offset `(canvas - scaledFrame) / 2` the
+  // coordinate must be `z * (canvas - frame) / 2`. Returning `x: 0` (the old
+  // behavior) left the frame pinned near the canvas center / clipping on the
+  // right and bottom in non-fullscreen layouts, which read as "偏右下".
+  const x = zoomScale * (canvasWidth - frameWidth) / 2;
+  const y = zoomScale * (canvasHeight - frameHeight) / 2;
+  return {
+    zoom,
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+  };
 }
 
 export function getGrapesjsZoomStyleVars(zoom: number): {
@@ -2320,6 +2330,11 @@ export function getGrapesjsIframeSelectionOutlineCss(tone: GrapesjsSelectionTone
                   .gjs-hovered {
                     outline: var(--od-gjs-hairline, 1px) solid ${selectionColor} !important;
                     outline-offset: calc(-1 * var(--od-gjs-hairline, 1px)) !important;
+                  }
+                  html body .gjs-selected.gjs-hovered,
+                  .gjs-selected.gjs-hovered {
+                    outline: 0 !important;
+                    outline-offset: 0 !important;
                   }
                   .gjs-com-dashed * {
                     outline-width: var(--od-gjs-hairline, 1px) !important;
@@ -2412,6 +2427,35 @@ export function getGrapesjsSelectionStrokeCss(): string {
                 pointer-events: none;
                 z-index: 10;
                 display: none;
+              }
+  `;
+}
+
+export function getGrapesjsHostSelectionOverrideCss(): string {
+  return `
+              .gjs-cv-canvas .gjs-highlighter,
+              .gjs-cv-canvas .gjs-highlighter-sel {
+                display: none !important;
+                outline: 0 !important;
+                outline-offset: 0 !important;
+                box-shadow: none !important;
+                border: 0 !important;
+                background: transparent !important;
+              }
+              .gjs-resizer,
+              .gjs-resizer::before,
+              .gjs-resizer::after {
+                background: transparent !important;
+                border: 0 !important;
+                outline: 0 !important;
+                box-shadow: none !important;
+                pointer-events: none !important;
+              }
+              .od-col-add-btn:hover {
+                transform: none;
+                background: #2563eb !important;
+                border:2px solid #fff !important;
+                box-shadow: 0 2px 8px rgba(15, 23, 42, 0.28) !important;
               }
   `;
 }
@@ -2545,6 +2589,135 @@ function isTextInputTarget(target: EventTarget | null): boolean {
   return false;
 }
 
+/**
+ * Walk a component's ancestor chain (inclusive of `start`) and return the
+ * first component for which `test` returns true, else null. Used to resolve
+ * structural ancestors like a cell's enclosing <table> without relying on
+ * `comp.parents()` availability quirks across GrapesJS builds.
+ */
+function findAncestorComponent(
+  start: Component | null | undefined,
+  test: (comp: Component) => boolean,
+): Component | null {
+  let node: Component | null | undefined = start;
+  let guard = 0;
+  while (node && guard < 100) {
+    guard += 1;
+    try {
+      if (test(node)) return node;
+    } catch { /* ignore — keep walking */ }
+    const next = node.parent?.();
+    if (!next || next === node) break;
+    node = next;
+  }
+  return null;
+}
+
+function readComponentTagName(comp: Component | null | undefined): string {
+  try {
+    return String(comp?.get?.('tagName') ?? '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+export function getGrapesjsTableCellColumnIndex(cell: Component): number {
+  const tag = readComponentTagName(cell);
+  if (tag !== 'th' && tag !== 'td') return -1;
+  try {
+    const row = cell.parent?.();
+    const siblings = row?.components?.();
+    if (!siblings) return -1;
+    for (let i = 0; i < siblings.length; i += 1) {
+      if (siblings.at(i) === cell) return i;
+    }
+  } catch { /* ignore */ }
+  return -1;
+}
+
+function collectGrapesjsTableRows(table: Component): Component[] {
+  const rows: Component[] = [];
+  const walk = (comp: Component) => {
+    try {
+      const children = comp.components?.();
+      if (!children) return;
+      for (let i = 0; i < children.length; i += 1) {
+        const child = children.at(i);
+        if (!child) continue;
+        const tag = readComponentTagName(child);
+        if (tag === 'tr') {
+          rows.push(child);
+        } else if (tag === 'thead' || tag === 'tbody' || tag === 'tfoot') {
+          walk(child);
+        }
+      }
+    } catch { /* ignore */ }
+  };
+  walk(table);
+  return rows;
+}
+
+export function duplicateGrapesjsTableColumnFromCell(
+  cell: Component,
+  options: {
+    scheduleEmit?: () => void;
+    select?: (comp: Component) => void;
+    undoManager?: { start?: () => unknown; stop?: () => unknown };
+  } = {},
+): boolean {
+  const tag = readComponentTagName(cell);
+  if (tag !== 'th' && tag !== 'td') return false;
+  const colIndex = getGrapesjsTableCellColumnIndex(cell);
+  if (colIndex < 0) return false;
+  const table = findAncestorComponent(cell, (comp) => readComponentTagName(comp) === 'table');
+  if (!table) return false;
+  const rows = collectGrapesjsTableRows(table);
+  if (!rows.length) return false;
+  let inserted = 0;
+  try {
+    options.undoManager?.stop?.();
+    options.undoManager?.start?.();
+    for (const row of rows) {
+      const cells = row.components?.();
+      const source = cells?.at(colIndex);
+      if (!cells || !source) continue;
+      let cloned: Component | null = null;
+      try {
+        const result = source.clone?.();
+        cloned = (Array.isArray(result) ? result[0] : result) as Component | null;
+      } catch { /* ignore */ }
+      if (!cloned) continue;
+      try {
+        stripGrapesjsClipboardStableIds(cloned);
+        (cells as unknown as { add?: (component: unknown, opts?: { at?: number }) => unknown }).add?.(cloned, { at: colIndex + 1 });
+        inserted += 1;
+      } catch { /* ignore */ }
+    }
+    if (inserted === 0) return false;
+    const headerRow = rows.find((row) => readComponentTagName(row.components?.()?.at(0) as Component | null) === 'th');
+    const newHeader = headerRow?.components?.()?.at(colIndex + 1) as Component | null | undefined;
+    if (newHeader) options.select?.(newHeader);
+    options.scheduleEmit?.();
+    return true;
+  } finally {
+    options.undoManager?.stop?.();
+  }
+}
+
+export function calculateGrapesjsTableColumnAddButtonPosition(input: {
+  rect: Pick<GrapesjsSelectionStrokeRectSource, 'left' | 'top' | 'width' | 'height'>;
+  buttonSize?: number;
+  gap?: number;
+}): { left: number; top: number } {
+  const buttonSize = input.buttonSize ?? 28;
+  const gap = input.gap ?? 28;
+  const half = buttonSize / 2;
+  return {
+    left: Math.round(input.rect.left + input.rect.width - half),
+    top: Math.round(input.rect.top - half - gap),
+  };
+}
+
 const GRAPESJS_CANVAS_CHROME_SELECTOR = [
   '.gjs-resizer',
   '.gjs-resizer-h',
@@ -2553,6 +2726,7 @@ const GRAPESJS_CANVAS_CHROME_SELECTOR = [
   '.od-radius-badge',
   '.od-dimension-badge',
   '.od-selection-stroke',
+  '.od-col-add-btn',
   '[data-od-multi-selection-box]',
   '[data-od-multi-selection-handle]',
   '[data-od-multi-selection-badge]',
@@ -2917,6 +3091,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
     const lastExternalHtmlRef = useRef<string>(html);
     const lastEmittedRef = useRef<string>('');
     const readOnlyRef = useRef<boolean>(readOnly);
+    // Tracks whether a table cell is currently being inline-edited so the
+    // column-add button and other selection chrome hide during text entry.
+    const cellEditingRef = useRef(false);
     const onChangeRef = useRef(onChange);
     const onDirtyChangeRef = useRef(onDirtyChange);
     const onSaveRef = useRef(onSave);
@@ -3502,6 +3679,54 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 display: none;
               }
               ${getGrapesjsSelectionStrokeCss()}
+              /* Inline text-edit state for table cells (th/td). Their text is a
+                 raw text node — not a GrapesJS text component — so we edit it
+                 in place via contenteditable on the cell element itself. The
+                 outline tint matches the canvas selection accent. */
+              .od-gjs-cell-editing,
+              .od-gjs-cell-editing:focus {
+                outline: 2px solid var(--gjs-color-blue, #1595ff) !important;
+                outline-offset: -2px !important;
+                background: #fff !important;
+                cursor: text;
+              }
+              .od-gjs-cell-editing[data-od-cell-placeholder='true']::before {
+                content: attr(data-od-cell-placeholder-text);
+                color: var(--gjs-font-color, #999);
+                opacity: 0.6;
+              }
+              /* Floating blue circular + button shown at the top-right of a
+                 selected <th> to duplicate its column. Lives in the canvas
+                 tools layer so it scales with zoom like the other chrome.
+                 The white ring keeps it legible over any cell background. */
+              .od-col-add-btn {
+                position: absolute;
+                width: 28px;
+                height: 28px;
+                padding: 0;
+                border: 2px solid #fff;
+                border-radius: 50%;
+                background: rgb(59, 130, 246);
+                color: #fff;
+                font: 700 18px/24px system-ui, sans-serif;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                box-shadow: 0 1px 4px rgba(15, 23, 42, 0.3);
+                z-index: 80;
+                box-sizing: border-box;
+                pointer-events: auto !important;
+                touch-action: none;
+                transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+              }
+              .od-col-add-btn:hover { transform: scale(1.1); }
+              .od-col-add-btn:active { transform: scale(0.96); }
+              .od-col-add-btn svg { width: 14px; height: 14px; display: block; pointer-events: none; }
+              .od-gjs-element-selection-mode .od-col-add-btn { display: none !important; }
+              .od-gjs-multi-selection-active .od-col-add-btn { display: none !important; }
+              .od-gjs-cell-editing ~ .od-col-add-btn,
+              .od-col-add-btn[hidden] { display: none !important; }
               .od-gjs-multi-selection-active .gjs-resizer,
               .od-gjs-multi-selection-active .gjs-resizer-h,
               .od-gjs-multi-selection-active .od-radius-handle,
@@ -3575,6 +3800,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 display: none !important;
                 pointer-events: none !important;
               }
+              ${getGrapesjsHostSelectionOverrideCss()}
             `;
             doc.head?.appendChild(overrideStyle);
           } catch { /* ignore */ }
@@ -3718,6 +3944,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             badge.textContent = `${cssW} × ${cssH}`;
             badge.style.display = 'block';
             positionRadiusHandles();
+            positionColAddBtn();
           };
           const hideDimensionBadge = () => {
             if (dimensionBadge) dimensionBadge.style.display = 'none';
@@ -3727,7 +3954,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
           editor.on('component:deselected', hideDimensionBadge);
           editor.on('component:selected', () => {
             // Ensure the badge shows even when tools:update fires before the
-            // badge element existed (first selection right after load).
+            // badge element existed (first selection after load).
             if (selectionChromeRef.current === 'element-selection') {
               hideDimensionBadge();
               return;
@@ -3736,6 +3963,7 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             const stroke = ensureSelectionStroke();
             if (stroke) syncSelectionStrokePlacement(stroke);
             positionRadiusHandles();
+            positionColAddBtn();
             try {
               const doc = editor.Canvas.getDocument?.();
               if (doc) upsertGrapesjsIframeSelectionStyle(doc, FLEX_CHILD_HOVER_CLASS, selectionToneRef.current);
@@ -3996,6 +4224,211 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             }
           }
           editor.on('component:deselected', hideRadiusHandles);
+          // ── Table column-add: floating blue circular + button shown above a
+          //    selected <th>. Clicking duplicates that column (header + every
+          //    body cell in the same column position). Lives in the canvas
+          //    tools layer so it scales with zoom like the other chrome.
+          let colAddBtn: HTMLButtonElement | null = null;
+          const ensureColAddBtn = () => {
+            if (colAddBtn) return colAddBtn;
+            try {
+              const toolsEl = (editor.Canvas as unknown as { getToolsEl?: () => HTMLElement | null }).getToolsEl?.();
+              if (!toolsEl) return null;
+              const hostDoc = toolsEl.ownerDocument;
+              const btn = hostDoc.createElement('button');
+              btn.type = 'button';
+              btn.className = 'od-col-add-btn';
+              btn.setAttribute('aria-label', 'Duplicate column');
+              btn.setAttribute('aria-hidden', 'true');
+              btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+              // Stop the pointerdown + click at the button so they don't bubble
+              // into the canvas's marquee/click-select handlers (the button sits
+              // in the host tools layer; without this its pointerdown can still
+              // reach host-level capture listeners).
+              const stopButtonEvent = (ev: Event) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+              };
+              btn.addEventListener('pointerdown', stopButtonEvent, true);
+              btn.addEventListener('pointerup', stopButtonEvent, true);
+              btn.addEventListener('mousedown', stopButtonEvent, true);
+              btn.addEventListener('dblclick', stopButtonEvent, true);
+              btn.addEventListener('dragstart', stopButtonEvent, true);
+              btn.addEventListener('click', (ev) => {
+                stopButtonEvent(ev);
+                duplicateSelectedHeaderColumn();
+              }, true);
+              toolsEl.appendChild(btn);
+              colAddBtn = btn;
+              return btn;
+            } catch {
+              return null;
+            }
+          };
+          const hideColAddBtn = () => {
+            if (colAddBtn) colAddBtn.style.display = 'none';
+          };
+          const duplicateSelectedHeaderColumn = () => {
+            const selected = editor.getSelected?.() as Component | undefined;
+            if (!selected) return;
+            duplicateGrapesjsTableColumnFromCell(selected, {
+              scheduleEmit: () => scheduleEmitRef.current?.(),
+              select: (comp) => editor.select(comp),
+              undoManager: editor.UndoManager,
+            });
+          };
+          /**
+           * Position the + button at the top-right corner of a selected <th>,
+           * lifted above the top/right corner so it clears the resize
+           * handles. Hidden for non-header cells, multi-selection,
+           * element-selection mode, and during cell editing.
+           */
+          const positionColAddBtn = () => {
+            if (
+              selectionChromeRef.current === 'element-selection' ||
+              readOnlyRef.current
+            ) {
+              hideColAddBtn();
+              return;
+            }
+            const selected = editor.getSelected?.() as Component | undefined;
+            if (!selected) { hideColAddBtn(); return; }
+            // Hide while a cell is being inline-edited.
+            if (cellEditingRef.current) { hideColAddBtn(); return; }
+            let tag = '';
+            try { tag = String(selected.get('tagName') ?? '').toLowerCase(); } catch { /* ignore */ }
+            if (tag !== 'th') { hideColAddBtn(); return; }
+            // Only show when a single cell is selected.
+            const selectedCount = (() => { try { return editor.getSelectedAll?.().length ?? 0; } catch { return 0; } })();
+            if (selectedCount > 1) { hideColAddBtn(); return; }
+            const el = getElementFromComponent(selected) as HTMLElement | null;
+            const toolsEl = (editor.Canvas as unknown as { getToolsEl?: () => HTMLElement | null }).getToolsEl?.();
+            const frameEl = editor.Canvas.getFrameEl?.() as HTMLElement | null | undefined;
+            if (!el || !toolsEl || !frameEl) { hideColAddBtn(); return; }
+            const rect = calculateGrapesjsSelectionStrokeRect({
+              elementRect: el.getBoundingClientRect?.(),
+              frameRect: frameEl.getBoundingClientRect?.(),
+              toolsRect: toolsEl.getBoundingClientRect?.(),
+              zoom: readCanvasZoomDecimal(),
+            });
+            if (!rect) { hideColAddBtn(); return; }
+            const btn = ensureColAddBtn();
+            if (!btn) return;
+            // Place the button OUTSIDE the cell, just above the top edge and
+            // aligned to the right edge. Sitting it on the cell itself meant a
+            // click on it also hit the <th> (triggering cell select/edit), so
+            // the button never received its own click. The vertical gap puts
+            // the button in the blank canvas space above the
+            // row, and the right alignment keeps it clear of the top-right
+            // resize handle.
+            const point = calculateGrapesjsTableColumnAddButtonPosition({ rect });
+            btn.style.left = `${point.left}px`;
+            btn.style.top = `${point.top}px`;
+            btn.style.display = 'flex';
+          };
+          editor.on('component:selected', positionColAddBtn);
+          editor.on('component:deselected', hideColAddBtn);
+          // ── Table cell inline text edit ────────────────────────────────
+          // A table cell (type 'cell', <th>/<td>) stores its text as a raw
+          // DOM text node, not a GrapesJS text component — so dblclick can't
+          // engage the RTE. We edit the text in place: flip the cell element
+          // to contenteditable, focus + select-all, then on blur/Enter/Esc
+          // commit the new text back into the cell component's content and
+          // disable editing. The commit goes through component.set('content')
+          // so it round-trips through the autosave path.
+          let cellEditingCell: Component | null = null;
+          let cellEditingEl: HTMLElement | null = null;
+          const stopCellEditingListeners: Array<() => void> = [];
+          const detachCellEditingListeners = () => {
+            while (stopCellEditingListeners.length) {
+              try { stopCellEditingListeners.pop()?.(); } catch { /* ignore */ }
+            }
+          };
+          const endCellEditing = (commit: boolean) => {
+            const cell = cellEditingCell;
+            const el = cellEditingEl;
+            cellEditingCell = null;
+            cellEditingEl = null;
+            cellEditingRef.current = false;
+            detachCellEditingListeners();
+            if (!cell || !el) return;
+            try {
+              if (commit) {
+                const next = el.textContent ?? '';
+                try {
+                  // Replace the cell's children with a single text node —
+                  // exactly the structure we started from, so the file
+                  // round-trips cleanly. Passing a string to components()
+                  // resets the children to that parsed content.
+                  cell.components?.(next);
+                } catch { /* ignore */ }
+                scheduleEmitRef.current?.();
+              }
+            } catch { /* ignore */ }
+            try {
+              el.classList.remove('od-gjs-cell-editing');
+              el.removeAttribute('data-od-cell-placeholder');
+              el.removeAttribute('data-od-cell-placeholder-text');
+              el.removeAttribute('contenteditable');
+              el.blur();
+            } catch { /* ignore */ }
+            // Re-select the cell so the + button / selection chrome return.
+            try { editor.select(cell); } catch { /* ignore */ }
+          };
+          const beginCellEditing = (cell: Component): boolean => {
+            const el = getElementFromComponent(cell) as HTMLElement | null;
+            if (!el) return false;
+            // Replace any prior in-flight edit (defensive — should never happen
+            // because dblclick is blocked while editing).
+            if (cellEditingEl && cellEditingEl !== el) endCellEditing(true);
+            cellEditingCell = cell;
+            cellEditingEl = el;
+            cellEditingRef.current = true;
+            hideColAddBtn();
+            const win = el.ownerDocument.defaultView;
+            try {
+              // Flag empty cells so a placeholder shows until the user types.
+              if (!(el.textContent ?? '').trim()) {
+                el.setAttribute('data-od-cell-placeholder', 'true');
+                el.setAttribute('data-od-cell-placeholder-text', ' ');
+              }
+              el.classList.add('od-gjs-cell-editing');
+              el.setAttribute('contenteditable', 'true');
+              el.focus();
+              // Select all existing text so typing replaces it (spreadsheet-like).
+              const selection = win?.getSelection?.();
+              if (selection && win) {
+                const range = el.ownerDocument.createRange();
+                range.selectNodeContents(el);
+                selection.removeAllRanges();
+                selection.addRange(range);
+              }
+            } catch { /* ignore */ }
+            // Commit listeners: blur, Enter (commit), Escape (cancel), and a
+            // host pointerdown outside the cell.
+            const onBlur = () => endCellEditing(true);
+            const onKeyDown = (ev: KeyboardEvent) => {
+              if (ev.key === 'Enter' && !ev.shiftKey) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                endCellEditing(true);
+              } else if (ev.key === 'Escape') {
+                ev.preventDefault();
+                ev.stopPropagation();
+                endCellEditing(false);
+              } else if (ev.key === 'Tab') {
+                ev.preventDefault();
+                ev.stopPropagation();
+                endCellEditing(true);
+              }
+            };
+            el.addEventListener('blur', onBlur);
+            el.addEventListener('keydown', onKeyDown, true);
+            stopCellEditingListeners.push(() => el.removeEventListener('blur', onBlur));
+            stopCellEditingListeners.push(() => el.removeEventListener('keydown', onKeyDown, true));
+            return true;
+          };
           // ── Spacing guides: draggable padding / gap / margin overlays ──
           // The visible guide is a thin line while the hit target stays large
           // enough to drag. The striped value band and compact value badge only
@@ -8110,6 +8543,19 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
               if (readOnlyRef.current) return;
               const isDeepPick = ev.shiftKey || ev.metaKey || ev.ctrlKey;
               if (!isDeepPick && isTextInputTarget(ev.target)) return;
+              // While a table cell is being inline-edited, any click outside
+              // the cell should commit and exit (handled by the cell's blur
+              // listener); a click inside the cell is normal caret placement
+              // and must NOT trigger selection/marquee logic.
+              if (cellEditingRef.current) {
+                const targetNode = ev.target as Node | null;
+                if (cellEditingEl && targetNode && cellEditingEl.contains(targetNode)) {
+                  ev.preventDefault();
+                  ev.stopImmediatePropagation();
+                  return;
+                }
+                endCellEditing(true);
+              }
               stopGrapesjsTextEditingForPointerTarget(editor, ev.target);
               if (suppressClickAfterMarquee) {
                 ev.preventDefault();
@@ -8285,6 +8731,23 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
                 ev.preventDefault();
                 ev.stopImmediatePropagation();
                 onImageEditRequestRef.current?.();
+                return;
+              }
+              // Table cells (<th>/<td>, GrapesJS type 'cell') hold their text
+              // as a raw text node — there is no text component to engage the
+              // RTE on. Mirror the text-element flow: first dblclick selects
+              // the cell, a second dblclick enters inline contenteditable mode
+              // (see beginCellEditing/endCellEditing). The cell itself is the
+              // editing surface; committing writes back into the component.
+              if (type === 'cell') {
+                const current = editor.getSelected?.();
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+                if (current !== comp) {
+                  editor.select(comp);
+                  return;
+                }
+                beginCellEditing(comp);
                 return;
               }
               // Single-click already selects the actual component under the
@@ -8792,6 +9255,9 @@ export const GrapesjsEditor = forwardRef<GrapesjsEditorHandle, GrapesjsEditorPro
             detachRadiusHandles = null;
             detachSpacingHandles?.();
             detachSpacingHandles = null;
+            try { endCellEditing(true); } catch { /* ignore */ }
+            try { colAddBtn?.remove(); } catch { /* ignore */ }
+            colAddBtn = null;
           };
 
           // Dirty + change signal. We debounce so drag/style updates don't

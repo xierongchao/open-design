@@ -4753,11 +4753,11 @@ export function SettingsDialog({
                 <ExportDiagnosticsRow />
               </div>
               {cloudAuthSignOutAvailable ? (
-                <div className="settings-field-group settings-field-group--account">
-                  <div className="settings-field-label">
-                    <strong>{t('settings.accountSignOutTitle')}</strong>
-                    <small>{t('settings.accountSignOutHint')}</small>
-                  </div>
+              <div className="settings-about-diagnostics">
+                <div className="settings-about-diagnostics-text">
+                  <h4>{t('settings.accountSignOutTitle')}</h4>
+                  <p className="hint">{t('settings.accountSignOutHint')}</p>
+                </div>
                   <Button
                     variant="ghost"
                     onClick={handleCloudAuthSignOut}
@@ -4765,7 +4765,20 @@ export function SettingsDialog({
                   >
                     {cloudAuthSigningOut ? t('common.loading') : t('settings.accountSignOut')}
                   </Button>
-                </div>
+              </div>
+                // <div className="settings-field-group settings-field-group--account">
+                //   <div className="settings-field-label">
+                //     <strong>{t('settings.accountSignOutTitle')}</strong>
+                //     <small>{t('settings.accountSignOutHint')}</small>
+                //   </div>
+                //   <Button
+                //     variant="ghost"
+                //     onClick={handleCloudAuthSignOut}
+                //     disabled={cloudAuthSigningOut}
+                //   >
+                //     {cloudAuthSigningOut ? t('common.loading') : t('settings.accountSignOut')}
+                //   </Button>
+                // </div>
               ) : null}
             </section>
           ) : null}

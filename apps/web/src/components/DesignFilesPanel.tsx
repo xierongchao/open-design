@@ -111,6 +111,21 @@ interface FolderDragTarget {
 
 type FolderOrderMap = Record<string, string[]>;
 
+// Per-directory file display order, persisted the same way folder order is:
+// a map keyed by parent directory path to an ordered list of full file names.
+// Files absent from the stored list fall back to alphabetical order, so a
+// fresh project renders naturally until the user drags to reorder.
+type FileOrderMap = Record<string, string[]>;
+
+// Drop target for file-on-file reordering. Files have no "inside" mode, so
+// only before/after are valid here.
+type FileDropMode = 'before' | 'after';
+
+interface FileDragTarget {
+  name: string;
+  mode: FileDropMode;
+}
+
 // Display-only refinement of ProjectFileKind. The contract `kind` lumps all
 // source under `code`; the Design Files surface splits CSS/SCSS/etc. into a
 // dedicated "Stylesheets" section to mirror Claude Design. Everything else
@@ -242,6 +257,10 @@ export function DesignFilesPanel({
   const [draggedFolderPath, setDraggedFolderPath] = useState<string | null>(null);
   const [folderDragTarget, setFolderDragTarget] = useState<FolderDragTarget | null>(null);
   const [folderOrder, setFolderOrder] = useState<FolderOrderMap>(() => readFolderOrder(projectId));
+  const [fileOrder, setFileOrder] = useState<FileOrderMap>(() => readFileOrder(projectId));
+  // File-on-file reorder drop target (full file name + before/after). Null
+  // when not hovering a valid file drop zone.
+  const [fileDragTarget, setFileDragTarget] = useState<FileDragTarget | null>(null);
   const [installingFolder, setInstallingFolder] = useState<string | null>(null);
   const [sharingFolder, setSharingFolder] = useState<string | null>(null);
   const [installNotice, setInstallNotice] = useState<ActionNotice | null>(null);
@@ -320,6 +339,7 @@ export function DesignFilesPanel({
 
   useEffect(() => {
     setFolderOrder(readFolderOrder(projectId));
+    setFileOrder(readFileOrder(projectId));
   }, [projectId]);
 
   // Keep the parent's create-target in sync with the folder being viewed, so
@@ -348,11 +368,11 @@ export function DesignFilesPanel({
       entries.push(file);
       grouped.set(directory, entries);
     }
-    for (const entries of grouped.values()) {
-      entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const [directory, entries] of grouped) {
+      entries.sort(sortByFileOrder(fileOrder[directory]));
     }
     return grouped;
-  }, [files]);
+  }, [files, fileOrder]);
   const filesByName = useMemo(() => new Map(files.map((file) => [file.name, file])), [files]);
   // Flat list of every folder (persisted + derived from file paths) for the
   // "Add to folder" picker.
@@ -817,6 +837,45 @@ export function DesignFilesPanel({
     });
   }
 
+  function setOrderedFiles(updater: (prev: FileOrderMap) => FileOrderMap) {
+    setFileOrder((prev) => {
+      const next = updater(prev);
+      writeFileOrder(projectId, next);
+      return next;
+    });
+  }
+
+  // Returns before/after based on cursor Y position within a file row. Files
+  // have no "inside" mode, so the middle band splits evenly instead of
+  // reserving a center zone like folder drops do.
+  function fileDropModeFromEvent(event: ReactDragEvent<HTMLDivElement>): FileDropMode {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!Number.isFinite(event.clientY) || rect.height <= 0 || event.clientY <= 0) {
+      return 'after';
+    }
+    return event.clientY - rect.top < rect.height / 2 ? 'before' : 'after';
+  }
+
+  // Reorder files within a directory. `dir` is the shared parent directory of
+  // both the dragged and anchor files. Only same-directory reordering is
+  // supported; cross-directory moves still go through onMoveFiles.
+  function reorderFilesInDir(
+    dir: string,
+    siblings: ProjectFile[],
+    sourceName: string,
+    anchorName: string,
+    mode: FileDropMode,
+  ) {
+    const list = siblings.map((file) => file.name).filter((name) => name !== sourceName);
+    const idx = list.indexOf(anchorName);
+    if (idx < 0) {
+      list.push(sourceName);
+    } else {
+      list.splice(mode === 'before' ? idx : idx + 1, 0, sourceName);
+    }
+    setOrderedFiles((prev) => ({ ...prev, [dir]: list }));
+  }
+
   function folderDropTargetFromEvent(
     event: ReactDragEvent<HTMLDivElement>,
     targetPath: string,
@@ -1129,11 +1188,21 @@ export function DesignFilesPanel({
     const isSelected = selected.has(file.name);
     const renameState = renaming?.name === file.name ? renaming : null;
     const label = displayNameForPath(file.name, fileAliases);
+    const fileDir = dirnameForPath(file.name);
+    const isFileDropTarget = fileDragTarget?.name === file.name;
+    const fileDropMode = isFileDropTarget ? fileDragTarget!.mode : null;
     return (
       <div
         key={`file:${file.name}`}
         data-testid={`design-file-row-${file.name}`}
-        className={`df-tree-row df-tree-file-row df-file-row ${active ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
+        className={[
+          'df-tree-row',
+          'df-tree-file-row',
+          'df-file-row',
+          active ? 'active' : '',
+          isSelected ? 'selected' : '',
+          isFileDropTarget ? `is-file-drop-${fileDropMode}` : '',
+        ].filter(Boolean).join(' ')}
         style={{ '--df-tree-depth': depth } as CSSProperties}
         draggable={!renameState}
         onContextMenu={(event) => {
@@ -1150,9 +1219,46 @@ export function DesignFilesPanel({
           event.dataTransfer.setData(DESIGN_FILE_DRAG_TYPE, JSON.stringify(names));
           event.dataTransfer.setData('text/plain', names.join('\n'));
         }}
+        onDragEnter={(event) => {
+          if (!isProjectFileDrag(event.dataTransfer)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setFileDragTarget({ name: file.name, mode: fileDropModeFromEvent(event) });
+        }}
+        onDragOver={(event) => {
+          if (!isProjectFileDrag(event.dataTransfer)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.dataTransfer.dropEffect = 'move';
+          setFileDragTarget({ name: file.name, mode: fileDropModeFromEvent(event) });
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+          setFileDragTarget((current) => (current?.name === file.name ? null : current));
+        }}
+        onDrop={(event) => {
+          if (!isProjectFileDrag(event.dataTransfer)) return;
+          const names = readProjectFileDrag(event.dataTransfer);
+          const sourceName = names[0];
+          setFileDragTarget(null);
+          if (!sourceName) return;
+          // Same-directory single-file drop = reorder. Anything else (multi
+          // drag, cross-directory) falls through WITHOUT consuming the event,
+          // so the enclosing folder drop zone can move the files instead.
+          const sourceDir = dirnameForPath(sourceName);
+          if (sourceName === file.name || sourceDir !== fileDir || names.length > 1) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const siblings = filesByDirectory.get(fileDir) ?? [];
+          const mode = fileDropModeFromEvent(event);
+          if (siblings.some((s) => s.name === sourceName)) {
+            reorderFilesInDir(fileDir, siblings, sourceName, file.name, mode);
+          }
+        }}
         onDragEnd={() => {
           setDraggedProjectFiles([]);
           setFolderDropTarget(null);
+          setFileDragTarget(null);
         }}
       >
         <span className="df-tree-indent" aria-hidden />
@@ -1213,6 +1319,13 @@ export function DesignFilesPanel({
             onClick={() => {
               setActiveFile(file.name);
               onOpenFile(file.name);
+            }}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              if (!onSetFileAlias) return;
+              setActiveFile(file.name);
+              onOpenFile(file.name);
+              setRenaming({ name: file.name, draft: label, saving: false });
             }}
           >
             <span className="df-tree-name">{label}</span>
@@ -2597,10 +2710,57 @@ function readEntryBatch(reader: FileSystemDirectoryReader): Promise<FileSystemEn
 const DESIGN_FILE_DRAG_TYPE = 'application/x-open-design-project-files';
 const DESIGN_FOLDER_DRAG_TYPE = 'application/x-open-design-project-folder';
 const FOLDER_ORDER_STORAGE_PREFIX = 'open-design:design-files-folder-order:v1:';
+const FILE_ORDER_STORAGE_PREFIX = 'open-design:design-files-file-order:v1:';
 
 function basenameForPath(name: string): string {
   const slash = name.lastIndexOf('/');
   return slash >= 0 ? name.slice(slash + 1) : name;
+}
+
+// Comparator that honors a stored per-directory order first, falling back to
+// alphabetical by name so a fresh directory still renders predictably.
+// Matches the precedence buildFolderTree uses for folders: entries present in
+// the order list sort before unordered ones, preserving the user's explicit
+// arrangement.
+function sortByFileOrder(order: string[] | undefined) {
+  const index = order ? new Map(order.map((name, i) => [name, i] as const)) : null;
+  return (a: ProjectFile, b: ProjectFile) => {
+    const ai = index?.get(a.name);
+    const bi = index?.get(b.name);
+    if (ai !== undefined && bi !== undefined) return ai - bi;
+    if (ai !== undefined) return -1;
+    if (bi !== undefined) return 1;
+    return a.name.localeCompare(b.name);
+  };
+}
+
+function readFileOrder(projectId: string): FileOrderMap {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(`${FILE_ORDER_STORAGE_PREFIX}${projectId}`);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const next: FileOrderMap = {};
+    for (const [parentPath, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue;
+      next[normalizeFolderPath(parentPath)] = value
+        .filter((name): name is string => typeof name === 'string' && name.length > 0)
+        .filter(Boolean);
+    }
+    return next;
+  } catch {
+    return {};
+  }
+}
+
+function writeFileOrder(projectId: string, orderMap: FileOrderMap): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(`${FILE_ORDER_STORAGE_PREFIX}${projectId}`, JSON.stringify(orderMap));
+  } catch {
+    /* localStorage may be disabled in hardened contexts. */
+  }
 }
 
 function dataTransferHasFiles(dataTransfer: DataTransfer): boolean {
